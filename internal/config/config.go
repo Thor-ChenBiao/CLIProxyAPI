@@ -104,7 +104,18 @@ type Config struct {
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
+	// OAuthCallbacks defines custom callback URLs for OAuth providers.
+	// When set, the OAuth flow will use these URLs instead of localhost.
+	OAuthCallbacks OAuthCallbacksConfig `yaml:"oauth-callbacks,omitempty" json:"oauth-callbacks,omitempty"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
+}
+
+// OAuthCallbacksConfig holds custom callback URLs for OAuth providers.
+type OAuthCallbacksConfig struct {
+	// ClaudeCallbackURL is the custom callback URL for Claude OAuth.
+	// Default is "http://localhost:54545/callback" if not set.
+	ClaudeCallbackURL string `yaml:"claude" json:"claude"`
 }
 
 // TLSConfig holds HTTPS server settings.

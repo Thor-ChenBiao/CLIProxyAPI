@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>贡献 Key - CLIProxyAPI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #333; line-height: 1.6; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .container { max-width: 650px; width: 100%; }
+        .card { background: white; border-radius: 20px; padding: 40px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        h1 { text-align: center; color: #667eea; margin-bottom: 10px; font-size: 2em; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; }
+        .step { background: #f8f9fa; border-radius: 12px; padding: 25px; margin-bottom: 20px; border: 2px solid transparent; transition: all 0.3s; }
+        .step.active { border-color: #667eea; background: #f0f4ff; }
+        .step.completed { border-color: #28a745; background: #f0fff4; }
+        .step-header { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
+        .step-number { background: #667eea; color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; }
+        .step.completed .step-number { background: #28a745; }
+        .step-title { font-weight: bold; color: #333; font-size: 18px; }
+        .step-content { margin-left: 51px; }
+        .step-content p { margin-bottom: 15px; color: #555; }
+        .btn { display: block; width: 100%; padding: 15px 20px; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.3s; text-align: center; text-decoration: none; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5); }
+        .btn-secondary { background: #28a745; color: white; }
+        .btn-secondary:hover { background: #218838; transform: translateY(-2px); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+        .input-group { margin-top: 15px; }
+        textarea { width: 100%; padding: 15px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 14px; font-family: monospace; resize: vertical; min-height: 100px; transition: border-color 0.3s; }
+        textarea:focus { border-color: #667eea; outline: none; }
+        textarea.error { border-color: #dc3545; }
+        .paste-btn { display: inline-flex; align-items: center; gap: 8px; background: #6c757d; color: white; padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; margin-bottom: 10px; }
+        .paste-btn:hover { background: #5a6268; }
+        .result { padding: 20px; border-radius: 12px; margin-top: 25px; display: none; }
+        .result.success { background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); color: #155724; border: 1px solid #c3e6cb; }
+        .result.error { background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%); color: #721c24; border: 1px solid #f5c6cb; }
+        .nav-links { display: flex; justify-content: center; gap: 20px; margin-top: 25px; }
+        .nav-link { color: #667eea; text-decoration: none; font-weight: 500; }
+        .nav-link:hover { text-decoration: underline; }
+        .loading { display: none; text-align: center; padding: 30px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .hidden { display: none !important; }
+        .tip { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 0 10px 10px 0; margin: 15px 0; font-size: 14px; }
+        .tip strong { color: #856404; }
+        .example-url { background: #e9ecef; padding: 10px 15px; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; margin-top: 10px; color: #495057; }
+        .checkmark { color: #28a745; font-size: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🔑 贡献 Key</h1>
+            <p class="subtitle">通过 OAuth 授权贡献你的 Claude 账号，让团队共享使用</p>
+
+            <div id="step1" class="step active">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <div class="step-title">开始 Claude 授权</div>
+                </div>
+                <div class="step-content">
+                    <p>点击下方按钮，系统会打开 Claude 登录页面。请使用你的 Claude 账号登录并完成授权。</p>
+                    <button id="authBtn" class="btn btn-primary" onclick="startAuth()">🚀 开始授权</button>
+                </div>
+            </div>
+
+            <div id="step2" class="step hidden">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <div class="step-title">复制回调地址</div>
+                </div>
+                <div class="step-content">
+                    <div class="tip">
+                        <strong>重要提示：</strong> 授权完成后，新窗口会显示"无法访问此网站"或类似错误页面。
+                        <strong>这是正常的！</strong>请复制浏览器地址栏中的完整地址。
+                    </div>
+
+                    <p>地址栏中的 URL 类似这样：</p>
+                    <div class="example-url">
+                        http://localhost:54545/callback?code=xxxxxx&state=yyyyyy
+                    </div>
+
+                    <div class="input-group">
+                        <button class="paste-btn" onclick="pasteFromClipboard()">📋 从剪贴板粘贴</button>
+                        <textarea id="callbackUrl" placeholder="在这里粘贴完整的回调地址..."></textarea>
+                    </div>
+
+                    <button id="submitBtn" class="btn btn-secondary" onclick="submitCallback()">✅ 提交完成授权</button>
+                </div>
+            </div>
+
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p>正在验证授权信息，请稍候...</p>
+            </div>
+
+            <div id="result" class="result"></div>
+
+            <div class="nav-links">
+                <a href="/" class="nav-link">← 返回教程</a>
+                <a href="/status" class="nav-link">查看 Key 状态 →</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let authState = "";
+
+        async function startAuth() {
+            const btn = document.getElementById("authBtn");
+            const step1 = document.getElementById("step1");
+            btn.disabled = true;
+            btn.textContent = "正在获取授权链接...";
+
+            try {
+                const resp = await fetch("/api/auth-url");
+                const data = await resp.json();
+
+                if (data.error) {
+                    showResult("error", "获取授权链接失败: " + data.error);
+                    btn.disabled = false;
+                    btn.textContent = "🚀 开始授权";
+                    return;
+                }
+
+                authState = data.state;
+
+                // Open auth page
+                const authWindow = window.open(data.url, "_blank", "width=600,height=700");
+
+                // Update UI
+                step1.classList.remove("active");
+                step1.classList.add("completed");
+                btn.innerHTML = '<span class="checkmark">✓</span> 已打开授权页面';
+
+                // Show step 2
+                const step2 = document.getElementById("step2");
+                step2.classList.remove("hidden");
+                step2.classList.add("active");
+
+                // Focus on textarea
+                document.getElementById("callbackUrl").focus();
+
+            } catch (e) {
+                showResult("error", "请求失败: " + e.message);
+                btn.disabled = false;
+                btn.textContent = "🚀 开始授权";
+            }
+        }
+
+        async function pasteFromClipboard() {
+            try {
+                const text = await navigator.clipboard.readText();
+                document.getElementById("callbackUrl").value = text;
+                // Auto-submit if it looks valid
+                if (text.includes("code=") && text.includes("state=")) {
+                    submitCallback();
+                }
+            } catch (e) {
+                // Clipboard access denied, user needs to paste manually
+                document.getElementById("callbackUrl").focus();
+            }
+        }
+
+        async function submitCallback() {
+            const textarea = document.getElementById("callbackUrl");
+            const url = textarea.value.trim();
+
+            textarea.classList.remove("error");
+
+            if (!url) {
+                showResult("error", "请粘贴回调地址");
+                textarea.classList.add("error");
+                textarea.focus();
+                return;
+            }
+
+            if (!url.includes("code=") || !url.includes("state=")) {
+                showResult("error", "地址格式不正确，请确保复制完整的地址（需要包含 code= 和 state= 参数）");
+                textarea.classList.add("error");
+                textarea.focus();
+                return;
+            }
+
+            const btn = document.getElementById("submitBtn");
+            const step2 = document.getElementById("step2");
+            btn.disabled = true;
+            document.getElementById("loading").style.display = "block";
+
+            try {
+                const resp = await fetch("/api/submit-callback", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({callback_url: url})
+                });
+                const data = await resp.json();
+
+                document.getElementById("loading").style.display = "none";
+
+                if (data.error) {
+                    showResult("error", "授权失败: " + data.error);
+                    btn.disabled = false;
+                } else {
+                    step2.classList.remove("active");
+                    step2.classList.add("completed");
+                    step2.querySelector(".step-number").textContent = "✓";
+
+                    showResult("success",
+                        "🎉 <strong>授权成功！</strong><br><br>" +
+                        "账户: <strong>" + (data.account || "已添加") + "</strong><br><br>" +
+                        "你的 Claude Key 已成功注册，现在可以通过 API 使用了。<br>" +
+                        "Key 有效期约 8 小时，过期后请重新授权。"
+                    );
+                }
+            } catch (e) {
+                document.getElementById("loading").style.display = "none";
+                showResult("error", "请求失败: " + e.message);
+                btn.disabled = false;
+            }
+        }
+
+        function showResult(type, message) {
+            const result = document.getElementById("result");
+            result.className = "result " + type;
+            result.innerHTML = message;
+            result.style.display = "block";
+            result.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+
+        // Auto-detect clipboard on page focus (with user permission)
+        document.addEventListener("visibilitychange", function() {
+            if (!document.hidden && document.getElementById("step2").classList.contains("active")) {
+                // Page is visible and step 2 is active, try to read clipboard
+                pasteFromClipboard();
+            }
+        });
+    </script>
+</body>
+</html>

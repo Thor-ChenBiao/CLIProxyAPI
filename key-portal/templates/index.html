@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 能量站</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; }
+        .header .slogan { font-size: 16px; opacity: 0.95; margin-bottom: 10px; }
+        .header .slogan em { font-style: normal; color: #ffd700; }
+        .token-banner { background: rgba(255,255,255,0.15); padding: 15px 0; display: flex; justify-content: center; gap: 60px; }
+        .token-counter { text-align: center; }
+        .token-counter .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; }
+        .token-counter .label { font-size: 12px; opacity: 0.8; margin-top: 3px; }
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
+        .tab:hover { background: #f8f9fa; }
+        .tab.active { background: #667eea; color: white; }
+        .tab-content { display: none; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .tab-content.active { display: block; }
+        .info-box { background: #f0f4ff; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+        .info-box h3 { color: #667eea; margin-bottom: 10px; }
+        .copy-field { display: flex; align-items: center; gap: 10px; background: white; padding: 12px 15px; border-radius: 8px; margin-top: 10px; }
+        .copy-field code { flex: 1; font-family: monospace; color: #333; word-break: break-all; }
+        .copy-btn { background: #667eea; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+        .copy-btn:hover { background: #5a6fd6; }
+        .login-box { text-align: center; padding: 40px 20px; }
+        .login-box h2 { color: #333; margin-bottom: 15px; }
+        .login-box p { color: #666; margin-bottom: 30px; }
+        .btn { display: inline-block; padding: 15px 40px; border: none; border-radius: 10px; font-size: 18px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.3s; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5); }
+        .note { background: #fff3cd; padding: 15px; border-radius: 8px; margin-top: 20px; font-size: 14px; color: #856404; }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
+        .stat { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }
+        .stat.green { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); }
+        .stat.red { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); }
+        .stat .num { font-size: 32px; font-weight: bold; }
+        .stat .label { font-size: 14px; opacity: 0.9; }
+        .key-list { max-height: 400px; overflow-y: auto; }
+        .key-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: background 0.2s; }
+        .key-item:hover { background: #e9ecef; }
+        .key-item.expired { background: #fff5f5; border-left: 4px solid #dc3545; }
+        .key-item.unavailable { background: #fffbf0; border-left: 4px solid #ffc107; }
+        .key-item.active { background: #f0fff4; border-left: 4px solid #28a745; }
+        .key-email { font-weight: 500; }
+        .key-status { padding: 5px 12px; border-radius: 20px; font-size: 12px; }
+        .key-status.active { background: #d4edda; color: #155724; }
+        .key-status.unavailable { background: #fff3cd; color: #856404; }
+        .key-status.expired { background: #f8d7da; color: #721c24; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .refresh-btn { background: #667eea; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; margin-bottom: 15px; }
+        .auth-step { text-align: center; }
+        .step-label { font-size: 16px; color: #333; margin-bottom: 15px; font-weight: 500; }
+        .paste-box { display: flex; gap: 10px; max-width: 500px; margin: 0 auto; }
+        .paste-box input { flex: 1; padding: 12px 15px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; }
+        .paste-box input:focus { border-color: #667eea; outline: none; }
+        .paste-box .btn { padding: 12px 25px; }
+        .hint { font-size: 13px; color: #999; margin-top: 10px; }
+        .result-box { display: inline-flex; align-items: center; gap: 10px; padding: 15px 30px; border-radius: 10px; font-size: 18px; font-weight: 500; }
+        .result-box.success { background: #d4edda; color: #155724; }
+        .result-box.error { background: #f8d7da; color: #721c24; }
+        .result-box .icon { font-size: 24px; }
+        .report-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .report-table th, .report-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+        .report-table th { background: #f8f9fa; color: #667eea; font-weight: 600; }
+        .report-table tr:hover { background: #f8f9fa; }
+        .token-num { font-weight: 600; color: #667eea; }
+        .chart-container { margin: 20px 0; padding: 20px; background: #fafafa; border-radius: 10px; }
+        .chart-container canvas { max-height: 300px; }
+        .view-toggle { display: flex; gap: 10px; margin-bottom: 15px; }
+        .view-btn { padding: 8px 16px; border: 2px solid #667eea; background: white; color: #667eea; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+        .view-btn:hover { background: #f0f4ff; }
+        .view-btn.active { background: #667eea; color: white; }
+        .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .section-title h3 { color: #667eea; margin: 0; }
+        .account-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; }
+        .account-item.no-key { background: #fff9e6; border-left: 4px solid #ffc107; }
+        .account-item.expired { background: #fff5f5; border-left: 4px solid #dc3545; }
+        .account-item.active { background: #f0fff4; border-left: 4px solid #28a745; }
+        .account-info { flex: 1; }
+        .account-name { font-weight: 500; font-size: 15px; }
+        .account-email { font-size: 13px; color: #666; margin-top: 3px; }
+        .account-meta { font-size: 12px; color: #999; margin-top: 3px; }
+        .account-actions { display: flex; gap: 8px; }
+        .action-btn { background: #667eea; color: white; border: none; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+        .action-btn:hover { background: #5a6fd6; transform: translateY(-1px); }
+        .action-btn.warning { background: #ffc107; color: #333; }
+        .action-btn.warning:hover { background: #e0a800; }
+        .action-btn.danger { background: #dc3545; }
+        .action-btn.danger:hover { background: #c82333; }
+        .action-btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <p class="slogan">Token 是 AI 时代的<em>电力</em>，用起来才能创造价值！</p>
+        <div class="token-banner">
+            <div class="token-counter">
+                <div class="value" id="todayTokenCounter">0</div>
+                <div class="label">今日 Tokens</div>
+            </div>
+            <div class="token-counter">
+                <div class="value" id="todayRequestCounter">0</div>
+                <div class="label">今日请求数</div>
+            </div>
+            <div class="token-counter">
+                <div class="value" id="totalTokenCounter">0</div>
+                <div class="label">累计 Tokens</div>
+            </div>
+            <div class="token-counter">
+                <div class="value" id="totalRequestCounter">0</div>
+                <div class="label">累计请求数</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('register')">申请个人 Key</button>
+            <button class="tab" onclick="showTab('login')">分享 OAuth Key</button>
+            <button class="tab" onclick="showTab('status')">Key 状态</button>
+            <button class="tab" onclick="showTab('report')">用量报表</button>
+        </div>
+
+        <div id="register" class="tab-content active">
+            <div class="login-box">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+                    <h2 style="margin: 0;">🔑 申请个人 API Key</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="showTutorialModal()" style="padding: 8px 16px; background: #fff; color: #667eea; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 500; transition: all 0.3s; border: 1px solid #d4ddff; cursor: pointer;" onmouseover="this.style.background='#f8f9fa'; this.style.borderColor='#667eea'" onmouseout="this.style.background='#fff'; this.style.borderColor='#d4ddff'">
+                            📖 使用教程
+                        </button>
+                        <a href="/my-keys" target="_blank" style="display: inline-block; padding: 8px 16px; background: #f0f4ff; color: #667eea; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 500; transition: all 0.3s; border: 1px solid #d4ddff;" onmouseover="this.style.background='#e3ebff'; this.style.borderColor='#667eea'" onmouseout="this.style.background='#f0f4ff'; this.style.borderColor='#d4ddff'">
+                            📊 查看统计
+                        </a>
+                    </div>
+                </div>
+
+                <div style="background: linear-gradient(135deg, #e0e7ff 0%, #f0f4ff 100%); padding: 18px; border-radius: 10px; margin-bottom: 25px; text-align: center; border: 1px solid #d4ddff;">
+                    <div style="font-size: 14px; color: #667eea; font-weight: 600; margin-bottom: 5px;">
+                        💎 剩余可用 Key
+                    </div>
+                    <div style="font-size: 32px; font-weight: 700; color: #667eea; font-family: 'Courier New', monospace;">
+                        <span id="poolUnused">-</span>
+                    </div>
+                </div>
+
+                <div style="max-width: 600px; margin: 0 auto;">
+                    <div style="margin-bottom: 20px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">标识 *</label>
+                        <input type="text" id="regIdentifier" placeholder="邮箱 或 描述（如：张三-工作电脑、AI项目测试、产品部）"
+                            style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px;">
+                        <p style="font-size: 13px; color: #999; margin-top: 5px;">用于识别和统计，可以是邮箱、姓名、场景描述等</p>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="registerUserKey()" id="regBtn">申请 API Key</button>
+                </div>
+
+                <!-- Skills 推荐 -->
+                <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 22px; border-radius: 12px; margin-top: 30px; max-width: 600px; margin-left: auto; margin-right: auto; box-shadow: 0 4px 20px rgba(245, 87, 108, 0.25); border: 2px solid rgba(255,255,255,0.3);">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <div style="font-size: 40px;">🚀</div>
+                        <div style="flex: 1;">
+                            <h3 style="margin: 0 0 8px 0; color: white; font-size: 18px; font-weight: 700;">公司级 Claude Skills</h3>
+                            <p style="margin: 0 0 15px 0; font-size: 14px; color: white; line-height: 1.5;">提升 Claude Code 能力，安装公司定制的技能包</p>
+                            <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 10px 24px; background: white; color: #f5576c; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 700; transition: all 0.3s; box-shadow: 0 2px 10px rgba(0,0,0,0.15);" onmouseover="this.style.transform='translateY(-3px)'; this.style.boxShadow='0 6px 20px rgba(0,0,0,0.25)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 10px rgba(0,0,0,0.15)'">
+                                📦 访问 GitHub 仓库 →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="regResult" style="margin-top: 30px; display: none;"></div>
+
+                <!-- 历史申请的Keys -->
+                <div id="myKeysHistory" style="margin-top: 40px; display: none;">
+                    <h3 style="color: #667eea; margin-bottom: 15px; text-align: center;">📋 我申请过的 Keys</h3>
+                    <div id="myKeysList" style="max-width: 800px; margin: 0 auto;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="login" class="tab-content">
+            <div class="login-box">
+                <h2>分享你的 Claude 账号</h2>
+
+                <div id="step1" class="auth-step">
+                    <p class="step-label">第一步：点击按钮打开授权页面</p>
+                    <button class="btn btn-primary" onclick="startAuth()">打开 Claude 授权</button>
+                </div>
+
+                <div id="step2" class="auth-step" style="display:none; margin-top: 30px;">
+                    <p class="step-label">第二步：授权后页面会显示"无法访问"，复制地址栏的链接粘贴到下方</p>
+                    <div class="paste-box">
+                        <input type="text" id="callbackUrl" placeholder="粘贴 localhost:54545/callback?code=... 链接" />
+                        <button class="btn btn-primary" onclick="submitCallback()">提交</button>
+                    </div>
+                    <p class="hint">提示：链接类似 http://localhost:54545/callback?code=xxxxxx&state=xxxxxx</p>
+                </div>
+
+                <div id="step3" class="auth-step" style="display:none; margin-top: 30px;">
+                    <div class="result-box success">
+                        <span class="icon">✓</span>
+                        <span id="resultMsg">授权成功！</span>
+                    </div>
+                </div>
+
+                <div id="stepError" class="auth-step" style="display:none; margin-top: 30px;">
+                    <div class="result-box error">
+                        <span class="icon">✗</span>
+                        <span id="errorMsg">授权失败</span>
+                    </div>
+                    <button class="btn" style="margin-top:15px;" onclick="resetAuth()">重试</button>
+                </div>
+
+            </div>
+        </div>
+
+        <div id="status" class="tab-content">
+            <div class="section-title">
+                <h3>已注册的 Key</h3>
+                <button class="refresh-btn" onclick="loadKeys()">刷新</button>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <div class="num" id="totalCount">-</div>
+                    <div class="label">总数</div>
+                </div>
+                <div class="stat green">
+                    <div class="num" id="activeCount">-</div>
+                    <div class="label">有效</div>
+                </div>
+                <div class="stat red">
+                    <div class="num" id="expiredCount">-</div>
+                    <div class="label">过期</div>
+                </div>
+            </div>
+            <div id="keyList" class="key-list">
+                <div class="empty">加载中...</div>
+            </div>
+
+            <div class="section-title" style="margin-top: 30px;">
+                <h3>所有账号</h3>
+                <button class="refresh-btn" onclick="loadAccounts()">刷新</button>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <div class="num" id="accountTotal">-</div>
+                    <div class="label">总账号</div>
+                </div>
+                <div class="stat green">
+                    <div class="num" id="accountActive">-</div>
+                    <div class="label">已分享</div>
+                </div>
+                <div class="stat">
+                    <div class="num" id="accountNoKey">-</div>
+                    <div class="label">未分享</div>
+                </div>
+            </div>
+            <div id="accountList" class="key-list">
+                <div class="empty">加载中...</div>
+            </div>
+        </div>
+
+        <div id="report" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; color: #667eea;">📊 用量报表</h2>
+                <a href="/admin/users" target="_blank" style="display: inline-block; padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(102,126,234,0.5)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(102,126,234,0.3)'">
+                    👥 用户用量
+                </a>
+            </div>
+            <button class="refresh-btn" onclick="loadUsageHistory()">🔄 刷新数据</button>
+            <div class="stats">
+                <div class="stat">
+                    <div class="num" id="totalTokens">-</div>
+                    <div class="label">累计 Token</div>
+                </div>
+                <div class="stat green">
+                    <div class="num" id="totalRequests">-</div>
+                    <div class="label">总请求数</div>
+                </div>
+                <div class="stat">
+                    <div class="num" id="successRate">-</div>
+                    <div class="label">成功率</div>
+                </div>
+            </div>
+
+            <div class="section-title">
+                <h3>用量趋势</h3>
+                <div class="view-toggle">
+                    <button class="view-btn active" onclick="setChartView('hour')" id="viewHour">时</button>
+                    <button class="view-btn" onclick="setChartView('day')" id="viewDay">日</button>
+                    <button class="view-btn" onclick="setChartView('month')" id="viewMonth">月</button>
+                    <button class="view-btn" onclick="setChartView('year')" id="viewYear">年</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="usageChart"></canvas>
+            </div>
+
+            <h3 style="margin-bottom: 10px; color: #667eea;">详细数据</h3>
+            <table class="report-table">
+                <thead>
+                    <tr><th>日期</th><th>Token 消耗</th><th>请求数</th></tr>
+                </thead>
+                <tbody id="dailyReport">
+                    <tr><td colspan="3" style="text-align:center;color:#999;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        function showTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('.tab[onclick="showTab(\'' + name + '\')"]').classList.add('active');
+            document.getElementById(name).classList.add('active');
+            if (name === 'status') {
+                loadKeys();
+                loadAccounts();
+            }
+            if (name === 'report') loadUsage();
+        }
+
+        function copyText(id, btn) {
+            const el = document.getElementById(id);
+            const text = el ? el.textContent : '';
+            if (!text) return;
+
+            function showCopied() {
+                if (btn) {
+                    btn.textContent = '已复制';
+                    setTimeout(() => btn.textContent = '复制', 1500);
+                }
+            }
+
+            // Use clipboard API if available (requires HTTPS or localhost)
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(showCopied).catch(() => fallbackCopy(text, showCopied));
+            } else {
+                fallbackCopy(text, showCopied);
+            }
+        }
+
+        function fallbackCopy(text, callback) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                if (callback) callback();
+            } catch (e) {
+                alert('复制失败，请手动复制');
+            }
+            document.body.removeChild(ta);
+        }
+
+        async function startAuth() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '获取中...';
+            try {
+                const resp = await fetch('/api/auth-url');
+                const data = await resp.json();
+                if (data.error) {
+                    alert('获取授权链接失败: ' + data.error);
+                    btn.disabled = false;
+                    btn.textContent = '打开 Claude 授权';
+                } else {
+                    // Open in popup
+                    window.open(data.url, 'claude_auth', 'width=600,height=700');
+                    // Show step 2
+                    document.getElementById('step2').style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = '重新打开授权页';
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '打开 Claude 授权';
+            }
+        }
+
+        async function submitCallback() {
+            const input = document.getElementById('callbackUrl');
+            const url = input.value.trim();
+            if (!url) {
+                alert('请粘贴回调链接');
+                return;
+            }
+            if (!url.includes('code=') || !url.includes('state=')) {
+                alert('链接格式不正确，请确保包含 code 和 state 参数');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/submit-callback', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({callback_url: url})
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    document.getElementById('errorMsg').textContent = data.error;
+                    document.getElementById('step2').style.display = 'none';
+                    document.getElementById('stepError').style.display = 'block';
+                } else {
+                    document.getElementById('resultMsg').textContent = data.message || '授权成功！';
+                    document.getElementById('step2').style.display = 'none';
+                    document.getElementById('step3').style.display = 'block';
+                }
+            } catch (e) {
+                document.getElementById('errorMsg').textContent = '请求失败: ' + e.message;
+                document.getElementById('step2').style.display = 'none';
+                document.getElementById('stepError').style.display = 'block';
+            }
+        }
+
+        function resetAuth() {
+            document.getElementById('step2').style.display = 'none';
+            document.getElementById('step3').style.display = 'none';
+            document.getElementById('stepError').style.display = 'none';
+            document.getElementById('callbackUrl').value = '';
+        }
+
+        async function loadKeys() {
+            try {
+                const resp = await fetch('/api/keys');
+                const data = await resp.json();
+                const keys = data.keys || [];
+
+                let active = 0, expired = 0, unavailable = 0;
+                keys.forEach(k => {
+                    if (k.expired) expired++;
+                    else if (k.unavailable) unavailable++;
+                    else active++;
+                });
+
+                document.getElementById('totalCount').textContent = keys.length;
+                document.getElementById('activeCount').textContent = active;
+                document.getElementById('expiredCount').textContent = expired;
+
+                const list = document.getElementById('keyList');
+                if (keys.length === 0) {
+                    list.innerHTML = '<div class="empty">暂无注册的 Key</div>';
+                } else {
+                    // Sort: active first, then unavailable, then expired
+                    keys.sort((a, b) => {
+                        if (a.expired !== b.expired) return a.expired - b.expired;
+                        if (a.unavailable !== b.unavailable) return a.unavailable - b.unavailable;
+                        return 0;
+                    });
+                    list.innerHTML = keys.map((k, i) => {
+                        const initial = k.email.charAt(0).toUpperCase();
+                        let statusClass = k.expired ? 'expired' : (k.unavailable ? 'unavailable' : 'active');
+                        let statusText = k.expired ? '已过期' : (k.unavailable ? '临时不可用' : '有效');
+                        return '<div class="key-item ' + statusClass + '" onclick="toggleEmail(' + i + ')">' +
+                            '<span class="key-email" id="email-' + i + '" data-full="' + k.email + '">' + initial + '</span>' +
+                            '<span class="key-status ' + statusClass + '">' + statusText + '</span>' +
+                        '</div>';
+                    }).join('');
+                }
+            } catch (e) {
+                document.getElementById('keyList').innerHTML = '<div class="empty">加载失败</div>';
+            }
+        }
+
+        function toggleEmail(idx) {
+            const el = document.getElementById('email-' + idx);
+            const full = el.dataset.full;
+            if (el.textContent === full) {
+                el.textContent = full.charAt(0).toUpperCase();
+            } else {
+                el.textContent = full;
+            }
+        }
+
+        async function loadAccounts() {
+            try {
+                const resp = await fetch('/api/accounts');
+                const data = await resp.json();
+                const accounts = data.accounts || [];
+
+                let active = 0, noKey = 0, expired = 0;
+                accounts.forEach(a => {
+                    if (a.status === 'active') active++;
+                    else if (a.status === 'no_key') noKey++;
+                    else if (a.status === 'expired') expired++;
+                });
+
+                document.getElementById('accountTotal').textContent = accounts.length;
+                document.getElementById('accountActive').textContent = active + expired;
+                document.getElementById('accountNoKey').textContent = noKey;
+
+                const list = document.getElementById('accountList');
+                if (accounts.length === 0) {
+                    list.innerHTML = '<div class="empty">暂无账号数据</div>';
+                } else {
+                    list.innerHTML = accounts.map((a, idx) => {
+                        let statusText = '';
+                        let metaText = '';
+                        let buttons = '';
+
+                        if (a.status === 'no_key') {
+                            statusText = '未分享';
+                            buttons = '<button class="action-btn warning" onclick="sendNotification(\'' + a.claude_email + '\', \'remind_contribute\')">邀请分享</button>';
+                        } else if (a.status === 'expired') {
+                            statusText = '已过期';
+                            metaText = a.hours_left !== null ? '过期于 ' + Math.abs(a.hours_left).toFixed(1) + ' 小时前' : '';
+                            buttons = '<button class="action-btn danger" onclick="sendNotification(\'' + a.claude_email + '\', \'remind_renew\')">提醒续期</button>';
+                        } else if (a.status === 'active') {
+                            statusText = '正常';
+                            metaText = a.hours_left !== null ? '还剩 ' + a.hours_left + ' 小时' : '';
+                            buttons = '<button class="action-btn" disabled>已激活</button>';
+                        }
+
+                        const initial = a.name ? a.name.charAt(0).toUpperCase() : 'U';
+
+                        return '<div class="account-item ' + a.status.replace('_', '-') + '" onclick="toggleAccountInfo(' + idx + ')">' +
+                            '<div class="account-info">' +
+                                '<div class="account-name" id="account-name-' + idx + '" data-full="' + a.name + '" data-email="' + a.claude_email + '">' + initial + '</div>' +
+                                (metaText ? '<div class="account-meta">' + metaText + '</div>' : '') +
+                            '</div>' +
+                            '<div class="account-actions">' +
+                                '<span class="key-status ' + a.status + '">' + statusText + '</span>' +
+                                buttons +
+                            '</div>' +
+                        '</div>';
+                    }).join('');
+                }
+            } catch (e) {
+                console.error('Failed to load accounts:', e);
+                document.getElementById('accountList').innerHTML = '<div class="empty">加载失败</div>';
+            }
+        }
+
+        function toggleAccountInfo(idx) {
+            const el = document.getElementById('account-name-' + idx);
+            const fullName = el.dataset.full;
+            const email = el.dataset.email;
+            const initial = fullName ? fullName.charAt(0).toUpperCase() : 'U';
+
+            if (el.innerHTML === initial) {
+                el.innerHTML = fullName + '<div class="account-email">' + email + '</div>';
+            } else {
+                el.innerHTML = initial;
+            }
+        }
+
+        async function sendNotification(email, type) {
+            if (!confirm('确定发送通知给 ' + email + ' 吗？')) {
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/send-notification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email, type: type })
+                });
+
+                const data = await resp.json();
+                if (data.success) {
+                    alert('通知已发送！');
+                    loadAccounts(); // Reload to update UI
+                } else {
+                    alert('发送失败：' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('发送失败：' + e.message);
+            }
+        }
+
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 10000) return (num / 1000).toFixed(1) + 'K';
+            return num.toLocaleString('zh-CN');
+        }
+
+        function formatNumberFull(num) {
+            // Always show full number with comma separators
+            return num.toLocaleString('zh-CN');
+        }
+
+        // Animated counter effect
+        const counterState = {};
+        function animateCounter(elementId, targetValue) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+
+            const currentValue = counterState[elementId] || 0;
+            counterState[elementId] = targetValue;
+
+            // Check if this is a header token counter
+            const isHeaderCounter = elementId === 'todayTokenCounter' || elementId === 'totalTokenCounter';
+            const formatter = isHeaderCounter ? formatNumberFull : formatNumber;
+
+            if (currentValue === targetValue) {
+                el.textContent = formatter(targetValue);
+                return;
+            }
+
+            const duration = 800; // ms - fast animation for real-time feel
+            const startTime = performance.now();
+            const diff = targetValue - currentValue;
+
+            function update(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                // Easing function
+                const easeOut = 1 - Math.pow(1 - progress, 3);
+                const value = Math.floor(currentValue + diff * easeOut);
+                el.textContent = formatter(value);
+
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                } else {
+                    el.textContent = formatter(targetValue);
+                }
+            }
+            requestAnimationFrame(update);
+        }
+
+        // Chart state
+        let usageChart = null;
+        let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {} };
+        let currentView = 'hour';
+
+        // WebSocket connection
+        const socket = io();
+
+        socket.on('connect', () => {
+            console.log('[WebSocket] Connected');
+        });
+
+        socket.on('usage_update', (data) => {
+            console.log('[WebSocket] Usage update:', data);
+            animateCounter('todayTokenCounter', data.today_tokens || 0);
+            animateCounter('totalTokenCounter', data.total_tokens || 0);
+            animateCounter('todayRequestCounter', data.today_requests || 0);
+            animateCounter('totalRequestCounter', data.total_requests || 0);
+            document.getElementById('totalTokens').textContent = formatNumber(data.total_tokens || 0);
+            document.getElementById('totalRequests').textContent = formatNumber(data.total_requests || 0);
+            const successRate = data.total_requests > 0
+                ? Math.round((data.success_count / data.total_requests) * 100) + '%'
+                : '-';
+            document.getElementById('successRate').textContent = successRate;
+        });
+
+        socket.on('disconnect', () => {
+            console.log('[WebSocket] Disconnected');
+        });
+
+        function setChartView(view) {
+            currentView = view;
+            document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('view' + view.charAt(0).toUpperCase() + view.slice(1)).classList.add('active');
+            renderChart();
+        }
+
+        function renderChart() {
+            const ctx = document.getElementById('usageChart').getContext('2d');
+
+            let labels = [];
+            let tokenData = [];
+            let requestData = [];
+
+            if (currentView === 'hour') {
+                // Hourly view - last 24 hours (convert UTC to China Time UTC+8)
+                const hours = Object.keys(usageData.tokens_by_hour || {}).sort();
+                labels = hours.map(h => {
+                    // h is "HH" format like "03", "04", convert UTC to China Time (UTC+8)
+                    const utcHour = parseInt(h);
+                    const chinaHour = (utcHour + 8) % 24;
+                    return String(chinaHour).padStart(2, '0') + ':00';
+                });
+                tokenData = hours.map(h => usageData.tokens_by_hour[h] || 0);
+                requestData = hours.map(h => usageData.requests_by_hour[h] || 0);
+            } else if (currentView === 'day') {
+                // Last 30 days
+                const sorted = [...usageData.history].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
+                labels = sorted.map(d => d.date.slice(5)); // MM-DD
+                tokenData = sorted.map(d => d.total_tokens);
+                requestData = sorted.map(d => d.total_requests);
+            } else if (currentView === 'month') {
+                // By month
+                const months = Object.keys(usageData.by_month).sort().slice(-12);
+                labels = months.map(m => m.slice(2)); // YY-MM
+                tokenData = months.map(m => usageData.by_month[m].total_tokens);
+                requestData = months.map(m => usageData.by_month[m].total_requests);
+            } else if (currentView === 'year') {
+                // By year
+                const years = Object.keys(usageData.by_year).sort();
+                labels = years;
+                tokenData = years.map(y => usageData.by_year[y].total_tokens);
+                requestData = years.map(y => usageData.by_year[y].total_requests);
+            }
+
+            if (usageChart) {
+                usageChart.destroy();
+            }
+
+            usageChart = new Chart(ctx, {
+                type: (currentView === 'day' || currentView === 'hour') ? 'line' : 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Token 消耗',
+                            data: tokenData,
+                            borderColor: '#667eea',
+                            backgroundColor: (currentView === 'day' || currentView === 'hour') ? 'rgba(102, 126, 234, 0.1)' : 'rgba(102, 126, 234, 0.7)',
+                            fill: (currentView === 'day' || currentView === 'hour'),
+                            tension: 0.3,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: '请求数',
+                            data: requestData,
+                            borderColor: '#28a745',
+                            backgroundColor: (currentView === 'day' || currentView === 'hour') ? 'rgba(40, 167, 69, 0.1)' : 'rgba(40, 167, 69, 0.7)',
+                            fill: (currentView === 'day' || currentView === 'hour'),
+                            tension: 0.3,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    label += formatNumber(context.parsed.y);
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'Tokens' },
+                            ticks: { callback: v => formatNumber(v) }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: '请求数' },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadUsageHistory() {
+            try {
+                // Load history data
+                const histResp = await fetch('/api/usage-history');
+                usageData = await histResp.json();
+
+                // Load current usage for stats
+                const usageResp = await fetch('/api/usage');
+                const usageJson = await usageResp.json();
+                const usage = usageJson.usage || {};
+
+                // Update stats
+                document.getElementById('totalTokens').textContent = formatNumber(usage.total_tokens || 0);
+                document.getElementById('totalRequests').textContent = formatNumber(usage.total_requests || 0);
+                const successRate = usage.total_requests > 0
+                    ? Math.round((usage.success_count / usage.total_requests) * 100) + '%'
+                    : '-';
+                document.getElementById('successRate').textContent = successRate;
+
+                // Update token counters with animation
+                const today = new Date().toISOString().split('T')[0];
+                const tokensByDay = usage.tokens_by_day || {};
+                const requestsByDay = usage.requests_by_day || {};
+                const todayTokens = tokensByDay[today] || 0;
+                const todayRequests = requestsByDay[today] || 0;
+                animateCounter('todayTokenCounter', todayTokens);
+                animateCounter('totalTokenCounter', usage.total_tokens || 0);
+                animateCounter('todayRequestCounter', todayRequests);
+                animateCounter('totalRequestCounter', usage.total_requests || 0);
+
+                // Render chart
+                renderChart();
+
+                // Update table
+                const tbody = document.getElementById('dailyReport');
+                const history = usageData.history || [];
+                if (history.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">暂无数据</td></tr>';
+                } else {
+                    const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
+                    tbody.innerHTML = sorted.map(d =>
+                        '<tr><td>' + d.date + '</td><td class="token-num">' + formatNumber(d.total_tokens) + '</td><td>' + d.total_requests + '</td></tr>'
+                    ).join('');
+                }
+            } catch (e) {
+                console.error('Load usage error:', e);
+                document.getElementById('dailyReport').innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">加载失败</td></tr>';
+            }
+        }
+
+        // Keep old loadUsage for backward compatibility
+        async function loadUsage() {
+            await loadUsageHistory();
+        }
+
+        // ========================================
+        // User Key Registration & localStorage
+        // ========================================
+
+        const STORAGE_KEY = 'my_api_keys';
+
+        function getMyKeys() {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch (e) {
+                console.error('Failed to read localStorage:', e);
+                return [];
+            }
+        }
+
+        function saveMyKey(keyInfo) {
+            try {
+                const keys = getMyKeys();
+                // Check if key already exists
+                if (!keys.find(k => k.key === keyInfo.key)) {
+                    keys.unshift(keyInfo); // Add to beginning
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
+                }
+            } catch (e) {
+                console.error('Failed to save to localStorage:', e);
+            }
+        }
+
+        function removeMyKey(apiKey) {
+            try {
+                const keys = getMyKeys();
+                const filtered = keys.filter(k => k.key !== apiKey);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+                displayMyKeys();
+            } catch (e) {
+                console.error('Failed to remove from localStorage:', e);
+            }
+        }
+
+        async function displayMyKeys() {
+            const keys = getMyKeys();
+            const container = document.getElementById('myKeysHistory');
+            const listDiv = document.getElementById('myKeysList');
+
+            if (keys.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+
+            // Fetch stats for all keys
+            const keysWithStats = await Promise.all(keys.map(async (keyInfo) => {
+                try {
+                    const resp = await fetch('/api/query-by-key', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: keyInfo.key })
+                    });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        return { ...keyInfo, stats: data };
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch stats for', keyInfo.key, e);
+                }
+                return { ...keyInfo, stats: null };
+            }));
+
+            listDiv.innerHTML = keysWithStats.map((item, index) => {
+                const stats = item.stats;
+                const requests = stats ? stats.total_requests : 0;
+                const tokens = stats ? stats.total_tokens : 0;
+
+                return `
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="flex: 1;">
+                                <div style="font-size: 15px; color: #333; margin-bottom: 6px; font-weight: 600;">
+                                    ${item.identifier}
+                                </div>
+                                <div style="font-family: 'Courier New', monospace; font-size: 12px; color: #667eea; background: #f0f4ff; padding: 4px 8px; border-radius: 4px; display: inline-block;">
+                                    ${item.key}
+                                </div>
+                                <div style="font-size: 12px; color: #999; margin-top: 8px;">
+                                    📅 ${new Date(item.created_at).toLocaleString('zh-CN')}
+                                </div>
+                            </div>
+                            <div style="text-align: center; margin: 0 20px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; color: #667eea; font-weight: 600; margin-bottom: 3px;">请求数</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #667eea;">${requests.toLocaleString()}</div>
+                            </div>
+                            <div style="text-align: center; margin-right: 20px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">Tokens</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 6px rgba(102,126,234,0.3)'">
+                                    查看详情
+                                </button>
+                                <button onclick="removeMyKey('${item.key}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function viewKeyDetails(apiKey) {
+            window.open(`/my-keys?key=${apiKey}`, '_blank');
+        }
+
+        async function loadPoolStatus() {
+            try {
+                const resp = await fetch('/api/key-pool-status');
+                const data = await resp.json();
+                document.getElementById('poolUnused').textContent = data.unused || 0;
+            } catch (e) {
+                console.error('Failed to load pool status:', e);
+            }
+        }
+
+        async function registerUserKey() {
+            const identifier = document.getElementById('regIdentifier').value.trim();
+            const btn = document.getElementById('regBtn');
+            const result = document.getElementById('regResult');
+
+            if (!identifier) {
+                alert('请输入标识');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '申请中...';
+            result.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/register-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: identifier, name: identifier, label: identifier })
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    const apiKey = data.api_key;
+                    const claudeCmd = `echo '{"apiKeyHelper":"echo ${apiKey}","env":{"ANTHROPIC_BASE_URL":"http://172.16.70.100:8317"}}' > ~/.claude/settings.json && echo '{"hasCompletedOnboarding":true}' > ~/.claude.json`;
+
+                    // Save to localStorage
+                    saveMyKey({
+                        key: apiKey,
+                        identifier: identifier,
+                        created_at: new Date().toISOString()
+                    });
+
+                    // Show success modal instead of inline result
+                    showSuccessModal(apiKey, claudeCmd);
+
+                    // Hide old result div
+                    result.style.display = 'none';
+
+                    // Keep old code for backup (commented)
+                    /*
+                    result.className = 'result-box success';
+                    result.innerHTML = `
+                        <div style="text-align: left; width: 100%; max-width: 800px;">
+                            <h3 style="color: #155724; margin-bottom: 20px;">✅ 申请成功！</h3>
+
+                            <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
+                                <p style="font-size: 14px; color: #666; margin-bottom: 8px;"><strong>API Key：</strong></p>
+                                <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 12px; border-radius: 6px;">
+                                    <code id="newApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px; word-break: break-all;">${apiKey}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newApiKey')">复制</button>
+                                </div>
+                            </div>
+
+                            <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
+                                <p style="font-size: 14px; color: #666; margin-bottom: 8px;"><strong>API URL：</strong></p>
+                                <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 12px; border-radius: 6px;">
+                                    <code id="apiUrl" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px;">http://172.16.70.100:8317</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('apiUrl')">复制</button>
+                                </div>
+                            </div>
+
+                            <div style="background: white; padding: 20px; border-radius: 8px;">
+                                <p style="font-size: 14px; color: #666; margin-bottom: 8px;"><strong>Claude Code 一键配置命令：</strong></p>
+                                <div style="display: flex; align-items: start; gap: 10px; background: #f8f9fa; padding: 12px; border-radius: 6px;">
+                                    <code id="claudeCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap;">${claudeCmd}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('claudeCmd')">复制</button>
+                                </div>
+                                <p style="font-size: 12px; color: #999; margin-top: 10px;">💡 复制命令到终端执行即可完成配置</p>
+                            </div>
+
+                            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 20px; border-radius: 10px; margin-top: 20px; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3); border: 2px solid rgba(255,255,255,0.4);">
+                                <div style="display: flex; align-items: center; gap: 15px;">
+                                    <div style="font-size: 32px;">🚀</div>
+                                    <div style="flex: 1;">
+                                        <h4 style="margin: 0 0 6px 0; color: white; font-size: 16px; font-weight: 700;">下一步：安装公司级 Claude Skills</h4>
+                                        <p style="margin: 0 0 12px 0; font-size: 13px; color: white; line-height: 1.5;">提升 Claude Code 能力，安装公司定制的技能包</p>
+                                        <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 8px 20px; background: white; color: #4facfe; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.15); transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(0,0,0,0.25)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
+                                            📦 访问 GitHub 仓库 →
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    result.style.display = 'flex';
+                    result.style.justifyContent = 'center';
+                    */
+
+                    // Clear form
+                    document.getElementById('regIdentifier').value = '';
+
+                    // Refresh pool status
+                    loadPoolStatus();
+
+                    // Refresh historical keys display
+                    displayMyKeys();
+                } else {
+                    result.className = 'result-box error';
+                    result.innerHTML = `
+                        <span class="icon">✗</span>
+                        <span>${data.error || '申请失败'}</span>
+                    `;
+                    result.style.display = 'inline-block';
+                }
+            } catch (e) {
+                result.className = 'result-box error';
+                result.innerHTML = `
+                    <span class="icon">✗</span>
+                    <span>网络错误：${e.message}</span>
+                `;
+                result.style.display = 'inline-block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '申请 API Key';
+            }
+        }
+
+        function copyToClipboard(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+
+            const text = el.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('已复制到剪贴板！');
+                }).catch(() => {
+                    fallbackCopy(text, () => alert('已复制到剪贴板！'));
+                });
+            } else {
+                fallbackCopy(text, () => alert('已复制到剪贴板！'));
+            }
+        }
+
+        function copyApiKey() {
+            const el = document.getElementById('newApiKey');
+            if (!el) return;
+
+            const text = el.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('已复制到剪贴板');
+                });
+            } else {
+                fallbackCopy(text, () => alert('已复制到剪贴板'));
+            }
+        }
+
+        // Load pool status when showing register tab
+        const originalShowTab = showTab;
+        showTab = function(name) {
+            originalShowTab(name);
+            if (name === 'register') {
+                loadPoolStatus();
+                displayMyKeys();
+            }
+        };
+
+        // Load usage on page load (WebSocket handles real-time updates)
+        loadUsageHistory();
+
+        // Load pool status and historical keys on page load (register tab is active by default)
+        loadPoolStatus();
+        displayMyKeys();
+
+        // Tutorial Modal Functions
+        function showTutorialModal() {
+            document.getElementById('tutorialModal').style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeTutorialModal() {
+            document.getElementById('tutorialModal').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
+
+        // Success Modal Functions
+        function showSuccessModal(apiKey, claudeCmd) {
+            document.getElementById('successModalApiKey').textContent = apiKey;
+            document.getElementById('successModalApiUrl').textContent = 'http://172.16.70.100:8317';
+            document.getElementById('successModalClaudeCmd').textContent = claudeCmd;
+            document.getElementById('successModal').style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeSuccessModal() {
+            document.getElementById('successModal').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const tutorialModal = document.getElementById('tutorialModal');
+            const successModal = document.getElementById('successModal');
+            if (event.target === tutorialModal) {
+                closeTutorialModal();
+            }
+            if (event.target === successModal) {
+                closeSuccessModal();
+            }
+        }
+    </script>
+
+    <!-- Tutorial Modal -->
+    <div id="tutorialModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; justify-content: center; align-items: center;">
+        <div style="background: white; border-radius: 16px; max-width: 700px; max-height: 85vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); position: relative; margin: 20px;">
+            <div style="position: sticky; top: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 16px 16px 0 0; display: flex; justify-content: space-between; align-items: center; z-index: 1;">
+                <h3 style="margin: 0; font-size: 20px; font-weight: 700;">📖 Claude Code 使用教程</h3>
+                <button onclick="closeTutorialModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
+            </div>
+
+            <div style="padding: 30px;">
+                <!-- Step 1 -->
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;">1</div>
+                        <h4 style="margin: 0; color: #333; font-size: 16px; font-weight: 600;">执行配置命令</h4>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 12px 44px; line-height: 1.6;">
+                        申请成功后，复制显示的<strong>"Claude Code 一键配置命令"</strong>，粘贴到终端执行：
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
+                        <pre style="margin: 0; font-size: 12px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">echo '{"apiKeyHelper":"echo <span style="color: #dc3545; font-weight: 700; background: #ffebee; padding: 2px 4px; border-radius: 3px;">YOUR_API_KEY</span>","env":{"ANTHROPIC_BASE_URL":"http://172.16.70.100:8317"}}' > ~/.claude/settings.json && echo '{"hasCompletedOnboarding":true}' > ~/.claude.json</pre>
+                    </div>
+                    <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; margin: 12px 0 0 44px; border-left: 4px solid #2196f3;">
+                        <p style="font-size: 13px; color: #1565c0; margin: 0; line-height: 1.5;">
+                            <strong>💡 说明：</strong>这条命令会在你的用户目录下创建 <code style="background: white; padding: 2px 6px; border-radius: 3px;">~/.claude/settings.json</code> 配置文件，保存 API Key 和服务器地址
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;">2</div>
+                        <h4 style="margin: 0; color: #333; font-size: 16px; font-weight: 600;">验证配置</h4>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 12px 44px; line-height: 1.6;">
+                        运行 <code style="background: #f8f9fa; padding: 3px 8px; border-radius: 4px; font-size: 13px; color: #667eea; border: 1px solid #e0e0e0;">claude</code> 命令，Claude Code 会自动读取配置的 API Key 和 Base URL
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
+                        <pre style="margin: 0; font-size: 12px; color: #333;">$ claude
+<span style="color: #667eea;">✓ Configuration loaded from ~/.claude/settings.json</span>
+<span style="color: #999;"># 看到这个提示说明配置成功</span></pre>
+                    </div>
+                </div>
+
+                <!-- Step 3 -->
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;">3</div>
+                        <h4 style="margin: 0; color: #333; font-size: 16px; font-weight: 600;">开始使用</h4>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 12px 44px; line-height: 1.6;">
+                        现在可以正常使用 Claude Code 了！以下是一些常用命令示例：
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #667eea; font-weight: 600;">基础对话：</p>
+                            <pre style="margin: 0; font-size: 12px; color: #333;">claude "帮我写一个Python快速排序函数"</pre>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #667eea; font-weight: 600;">代码项目：</p>
+                            <pre style="margin: 0; font-size: 12px; color: #333;">cd your-project
+claude "分析这个项目的代码结构"</pre>
+                        </div>
+                        <div>
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #667eea; font-weight: 600;">交互模式：</p>
+                            <pre style="margin: 0; font-size: 12px; color: #333;">claude  # 直接进入交互式对话</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Additional Tips -->
+                <div style="background: linear-gradient(135deg, #fff3cd 0%, #fffbea 100%); padding: 20px; border-radius: 10px; border: 1px solid #ffc107;">
+                    <h4 style="margin: 0 0 12px 0; color: #856404; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 20px;">💡</span> 重要提示
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #856404; font-size: 13px; line-height: 1.8;">
+                        <li>配置文件保存在 <code style="background: white; padding: 2px 6px; border-radius: 3px; font-size: 12px;">~/.claude/settings.json</code>，重启终端后依然有效</li>
+                        <li>如需更换 API Key，只需重新执行配置命令即可覆盖</li>
+                        <li>多台电脑使用：每台电脑都需要执行一次配置命令</li>
+                    </ul>
+                </div>
+
+                <!-- Manual Config -->
+                <div style="margin-top: 25px; padding-top: 25px; border-top: 2px solid #f0f0f0;">
+                    <h4 style="margin: 0 0 12px 0; color: #999; font-size: 14px; font-weight: 600;">手动配置方式（可选）</h4>
+                    <p style="font-size: 13px; color: #999; margin: 0 0 10px 0; line-height: 1.6;">
+                        如果需要手动配置，可以创建 <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-size: 12px;">~/.claude/settings.json</code> 文件：
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <pre style="margin: 0; font-size: 11px; color: #666; overflow-x: auto;">{
+  "apiKeyHelper": "echo <span style="color: #dc3545; font-weight: 700; background: #ffebee; padding: 2px 4px; border-radius: 3px;">YOUR_API_KEY</span>",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://172.16.70.100:8317"
+  }
+}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="successModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; justify-content: center; align-items: center;">
+        <div style="background: white; border-radius: 16px; max-width: 700px; max-height: 85vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); position: relative; margin: 20px; animation: slideIn 0.3s ease-out;">
+            <div style="position: sticky; top: 0; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 25px; border-radius: 16px 16px 0 0; display: flex; justify-content: space-between; align-items: center; z-index: 1;">
+                <h3 style="margin: 0; font-size: 20px; font-weight: 700;">✅ 申请成功！</h3>
+                <button onclick="closeSuccessModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
+            </div>
+
+            <div style="padding: 30px;">
+                <!-- API Key -->
+                <div style="margin-bottom: 25px;">
+                    <p style="font-size: 15px; color: #333; margin: 0 0 12px 0; font-weight: 600;">🔑 您的 API Key</p>
+                    <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <code id="successModalApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px; word-break: break-all; font-weight: 600;"></code>
+                        <button class="copy-btn" onclick="copyToClipboard('successModalApiKey')">复制</button>
+                    </div>
+                </div>
+
+                <!-- API URL -->
+                <div style="margin-bottom: 25px;">
+                    <p style="font-size: 15px; color: #333; margin: 0 0 12px 0; font-weight: 600;">🌐 API 服务地址</p>
+                    <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <code id="successModalApiUrl" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px; font-weight: 600;"></code>
+                        <button class="copy-btn" onclick="copyToClipboard('successModalApiUrl')">复制</button>
+                    </div>
+                </div>
+
+                <!-- Claude Code Command -->
+                <div style="margin-bottom: 25px;">
+                    <p style="font-size: 15px; color: #333; margin: 0 0 12px 0; font-weight: 600;">⚡ Claude Code 一键配置命令</p>
+                    <div style="display: flex; align-items: start; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <code id="successModalClaudeCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap; line-height: 1.5;"></code>
+                        <button class="copy-btn" onclick="copyToClipboard('successModalClaudeCmd')" style="flex-shrink: 0;">复制</button>
+                    </div>
+                    <p style="font-size: 13px; color: #999; margin: 10px 0 0 0; line-height: 1.6;">💡 复制命令到终端执行，即可自动配置 Claude Code</p>
+                </div>
+
+                <!-- Tutorial Link -->
+                <div style="background: linear-gradient(135deg, #e0e7ff 0%, #f0f4ff 100%); padding: 20px; border-radius: 10px; border: 1px solid #d4ddff; text-align: center;">
+                    <p style="margin: 0 0 15px 0; font-size: 14px; color: #667eea; font-weight: 600;">📖 不知道如何使用？</p>
+                    <button onclick="closeSuccessModal(); showTutorialModal();" style="padding: 10px 24px; background: #667eea; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);" onmouseover="this.style.background='#5568d3'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.background='#667eea'; this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(102, 126, 234, 0.3)'">
+                        查看详细使用教程 →
+                    </button>
+                </div>
+
+                <!-- Skills Recommendation -->
+                <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 20px; border-radius: 10px; margin-top: 25px; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3); border: 2px solid rgba(255,255,255,0.4);">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <div style="font-size: 32px;">🚀</div>
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 6px 0; color: white; font-size: 16px; font-weight: 700;">下一步：安装公司级 Claude Skills</h4>
+                            <p style="margin: 0 0 12px 0; font-size: 13px; color: white; line-height: 1.5;">提升 Claude Code 能力，安装公司定制的技能包</p>
+                            <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 8px 20px; background: white; color: #4facfe; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.15); transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(0,0,0,0.25)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
+                                📦 访问 GitHub 仓库 →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</body>
+</html>

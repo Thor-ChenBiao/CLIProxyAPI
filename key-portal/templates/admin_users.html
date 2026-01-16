@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户统计 - Key Portal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f7fa;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .summary-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .summary-value {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .summary-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .users-table {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+            position: sticky;
+            top: 0;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .rank {
+            font-weight: bold;
+            color: #667eea;
+        }
+        .rank.gold { color: #ffd700; }
+        .rank.silver { color: #c0c0c0; }
+        .rank.bronze { color: #cd7f32; }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            height: 44px;
+            transition: transform 0.2s;
+        }
+        .refresh-btn:hover { transform: translateY(-2px); }
+        .aggregation-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .aggregation-btn {
+            padding: 10px 24px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            height: 44px;
+            transition: all 0.2s;
+        }
+        .aggregation-btn:hover {
+            background: #f0f2ff;
+        }
+        .aggregation-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+        .links {
+            text-align: center;
+            margin-top: 30px;
+        }
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 15px;
+        }
+        .links a:hover { text-decoration: underline; }
+        .progress-bar {
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h1 style="margin: 0;">📊 用户使用统计</h1>
+            <a href="/" style="display: inline-block; padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(102,126,234,0.5)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(102,126,234,0.3)'">
+                🏠 返回首页
+            </a>
+        </div>
+        <p class="subtitle">实时更新，按 Token 使用量排序</p>
+
+        <div id="authBox" style="background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; margin-bottom: 30px;">
+            <h2 style="margin-bottom: 20px;">🔐 访问验证</h2>
+            <p style="color: #666; margin-bottom: 20px;">请输入邮箱以查看统计数据</p>
+            <div style="max-width: 400px; margin: 0 auto;">
+                <input type="email" id="authEmail" placeholder="输入邮箱"
+                    style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; margin-bottom: 15px;">
+                <button onclick="verifyAccess()" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer;">
+                    验证并查看
+                </button>
+                <div id="authError" style="color: #dc3545; margin-top: 10px; display: none;"></div>
+            </div>
+        </div>
+
+        <div id="statsContent" style="display: none;">
+
+        <div class="summary" id="summary">
+            <div class="summary-card">
+                <div class="summary-value" id="totalUsers">-</div>
+                <div class="summary-label">总用户数</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalKeys">-</div>
+                <div class="summary-label">总 Keys</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalRequests">-</div>
+                <div class="summary-label">总请求数</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-value" id="totalTokens">-</div>
+                <div class="summary-label">总 Tokens</div>
+            </div>
+        </div>
+
+        <div class="users-table">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <button class="refresh-btn" onclick="loadStats()">🔄 刷新数据</button>
+                    <div class="aggregation-buttons">
+                        <button class="aggregation-btn" data-aggregation="total" onclick="changeAggregation('total')">累计总量</button>
+                        <button class="aggregation-btn active" data-aggregation="day" onclick="changeAggregation('day')">按日</button>
+                        <button class="aggregation-btn" data-aggregation="month" onclick="changeAggregation('month')">按月</button>
+                        <button class="aggregation-btn" data-aggregation="year" onclick="changeAggregation('year')">按年</button>
+                    </div>
+                </div>
+                <button id="exportBtn" class="refresh-btn" onclick="exportToExcel()" style="background: #28a745; display: none;">📥 导出 Excel</button>
+            </div>
+
+            <div class="loading" id="loading">正在加载...</div>
+
+            <table id="usersTable" style="display: none;">
+                <thead id="usersTableHead">
+                    <tr>
+                        <th>排名</th>
+                        <th>用户</th>
+                        <th>邮箱</th>
+                        <th>Keys 数量</th>
+                        <th>请求数</th>
+                        <th>Token 使用</th>
+                        <th>占比</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody"></tbody>
+            </table>
+        </div>
+
+        </div> <!-- End statsContent -->
+
+    </div>
+
+    <script>
+        let currentUserEmail = '';
+        let allUsersData = [];
+        let currentAggregation = 'day';
+
+        function changeAggregation(aggregation) {
+            currentAggregation = aggregation;
+
+            // Update button states
+            document.querySelectorAll('.aggregation-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Reload stats
+            loadStats();
+        }
+
+        function verifyAccess() {
+            const email = document.getElementById('authEmail').value.trim().toLowerCase();
+            const errorDiv = document.getElementById('authError');
+
+            if (!email) {
+                errorDiv.textContent = '请输入邮箱';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            // Only allow xiaofan.luan@zilliz.com to access
+            if (email !== 'xiaofan.luan@zilliz.com') {
+                errorDiv.textContent = '无权限访问，请联系管理员';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            // Store email and show content
+            currentUserEmail = email;
+            errorDiv.style.display = 'none';
+            document.getElementById('authBox').style.display = 'none';
+            document.getElementById('statsContent').style.display = 'block';
+
+            // Show export button
+            document.getElementById('exportBtn').style.display = 'block';
+
+            // Load data
+            loadStats();
+        }
+
+        function exportToExcel() {
+            if (currentUserEmail !== 'xiaofan.luan@zilliz.com') {
+                alert('无权限导出');
+                return;
+            }
+
+            // Create CSV content
+            let csv = 'Identifier,Keys Count,Total Requests,Total Tokens\n';
+            allUsersData.forEach(user => {
+                csv += `"${user.name}",${user.key_count},${user.total_requests},${user.total_tokens}\n`;
+            });
+
+            // Download
+            const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `user_stats_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function formatNumber(num) {
+            return num.toLocaleString();
+        }
+
+        function getRankClass(rank) {
+            if (rank === 1) return 'gold';
+            if (rank === 2) return 'silver';
+            if (rank === 3) return 'bronze';
+            return '';
+        }
+
+        function getRankEmoji(rank) {
+            if (rank === 1) return '🥇';
+            if (rank === 2) return '🥈';
+            if (rank === 3) return '🥉';
+            return rank;
+        }
+
+        async function loadStats() {
+            const loading = document.getElementById('loading');
+            const table = document.getElementById('usersTable');
+
+            loading.style.display = 'block';
+            table.style.display = 'none';
+
+            try {
+                // Use current aggregation
+                const aggregation = currentAggregation;
+
+                // Fetch data with aggregation parameter
+                const url = `/api/all-users-stats?aggregation=${aggregation}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                // Save data for export
+                allUsersData = data.users;
+
+                // Update summary
+                document.getElementById('totalUsers').textContent = formatNumber(data.summary.total_users);
+                document.getElementById('totalKeys').textContent = formatNumber(data.summary.total_keys);
+                document.getElementById('totalRequests').textContent = formatNumber(data.summary.total_requests);
+                document.getElementById('totalTokens').textContent = formatNumber(data.summary.total_tokens);
+
+                // Update table header based on aggregation
+                const thead = document.getElementById('usersTableHead');
+                const isAggregated = aggregation === 'day' || aggregation === 'month' || aggregation === 'year';
+
+                if (isAggregated) {
+                    thead.innerHTML = `
+                        <tr>
+                            <th>时间</th>
+                            <th>用户</th>
+                            <th>邮箱</th>
+                            <th>Keys 数量</th>
+                            <th>请求数</th>
+                            <th>Token 使用</th>
+                            <th>占比</th>
+                        </tr>
+                    `;
+                } else {
+                    thead.innerHTML = `
+                        <tr>
+                            <th>排名</th>
+                            <th>用户</th>
+                            <th>邮箱</th>
+                            <th>Keys 数量</th>
+                            <th>请求数</th>
+                            <th>Token 使用</th>
+                            <th>占比</th>
+                        </tr>
+                    `;
+                }
+
+                // Update table body
+                const tbody = document.getElementById('usersTableBody');
+                tbody.innerHTML = '';
+
+                const maxTokens = data.summary.total_tokens;
+
+                data.users.forEach((user, index) => {
+                    const percentage = maxTokens > 0 ? (user.total_tokens / maxTokens * 100).toFixed(1) : 0;
+
+                    const row = tbody.insertRow();
+
+                    if (isAggregated) {
+                        // Show period instead of rank (no Chinese characters)
+                        const periodDisplay = user.period;
+
+                        row.innerHTML = `
+                            <td><strong>${periodDisplay}</strong></td>
+                            <td>${user.name}</td>
+                            <td>${user.email}</td>
+                            <td>${user.key_count}</td>
+                            <td>${formatNumber(user.total_requests)}</td>
+                            <td>${formatNumber(user.total_tokens)}</td>
+                            <td>
+                                ${percentage}%
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${percentage}%"></div>
+                                </div>
+                            </td>
+                        `;
+                    } else {
+                        // Show rank for total aggregation
+                        const rank = index + 1;
+                        row.innerHTML = `
+                            <td><span class="rank ${getRankClass(rank)}">${getRankEmoji(rank)}</span></td>
+                            <td><strong>${user.name}</strong></td>
+                            <td>${user.email}</td>
+                            <td>${user.key_count}</td>
+                            <td>${formatNumber(user.total_requests)}</td>
+                            <td>${formatNumber(user.total_tokens)}</td>
+                            <td>
+                                ${percentage}%
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${percentage}%"></div>
+                                </div>
+                            </td>
+                        `;
+                    }
+
+                    row.style.cursor = 'default';
+                });
+
+                loading.style.display = 'none';
+                table.style.display = 'table';
+
+            } catch (error) {
+                loading.textContent = '加载失败：' + error.message;
+            }
+        }
+
+        // Don't auto-load on page load - wait for verification
+    </script>
+</body>
+</html>

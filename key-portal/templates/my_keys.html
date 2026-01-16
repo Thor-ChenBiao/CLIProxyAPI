@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的 Keys - Key Portal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f7fa;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .search-box {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            margin-bottom: 15px;
+        }
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 8px 15px;
+            font-size: 13px;
+        }
+        .user-info {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: none;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .keys-list {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: none;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        .key-value {
+            font-family: monospace;
+            background: #f8f9fa;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .links {
+            text-align: center;
+            margin-top: 30px;
+        }
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 15px;
+        }
+        .links a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <h1 style="margin: 0;">🔑 我的 API Keys</h1>
+            <a href="/" style="display: inline-block; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 8px; font-size: 14px; transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow=''">
+                🏠 返回首页
+            </a>
+        </div>
+
+        <div class="search-box">
+            <input type="text" id="keyInput" placeholder="输入你的 API Key（如：usr_pool_0001_xxxx）">
+            <button class="btn" onclick="searchKeys()">查询</button>
+        </div>
+
+        <!-- 历史申请的Keys -->
+        <div id="myKeysHistory" style="margin-bottom: 30px; display: none;">
+            <h3 style="color: #667eea; margin-bottom: 15px;">📋 我申请过的 Keys</h3>
+            <div id="myKeysList"></div>
+        </div>
+
+        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <strong>💡 如何查看我的 API Key？</strong>
+            <p style="margin: 10px 0; font-size: 14px; color: #856404;">在终端执行以下命令：</p>
+            <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 13px; margin-top: 10px;">
+                cat ~/.claude/settings.json | grep apiKeyHelper
+            </div>
+            <p style="margin-top: 10px; font-size: 13px; color: #856404;">输出中 "echo" 后面的就是你的 API Key</p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="user-info" id="userInfo">
+            <h2 id="userName"></h2>
+            <p id="userEmail" style="color: #666; margin-top: 5px;"></p>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalRequests">0</div>
+                    <div class="stat-label">总请求数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="totalTokens">0</div>
+                    <div class="stat-label">总 Tokens</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="keyCount">0</div>
+                    <div class="stat-label">Keys 数量</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="keys-list" id="keysList">
+            <h3 style="margin-bottom: 20px;">您的 API Keys</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>标签</th>
+                        <th>创建时间</th>
+                        <th>请求数</th>
+                        <th>Tokens</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="keysTableBody"></tbody>
+            </table>
+        </div>
+
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'my_api_keys';
+
+        function getMyKeys() {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch (e) {
+                console.error('Failed to read localStorage:', e);
+                return [];
+            }
+        }
+
+        function removeMyKey(apiKey) {
+            try {
+                const keys = getMyKeys();
+                const filtered = keys.filter(k => k.key !== apiKey);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+                displayMyKeys();
+            } catch (e) {
+                console.error('Failed to remove from localStorage:', e);
+            }
+        }
+
+        async function displayMyKeys() {
+            const keys = getMyKeys();
+            const container = document.getElementById('myKeysHistory');
+            const listDiv = document.getElementById('myKeysList');
+
+            if (keys.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+
+            // Fetch stats for all keys
+            const keysWithStats = await Promise.all(keys.map(async (keyInfo) => {
+                try {
+                    const resp = await fetch('/api/query-by-key', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: keyInfo.key })
+                    });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        return { ...keyInfo, stats: data };
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch stats for', keyInfo.key, e);
+                }
+                return { ...keyInfo, stats: null };
+            }));
+
+            listDiv.innerHTML = keysWithStats.map((item, index) => {
+                const stats = item.stats;
+                const requests = stats ? stats.total_requests : 0;
+                const tokens = stats ? stats.total_tokens : 0;
+
+                return `
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="flex: 1;">
+                                <div style="font-size: 15px; color: #333; margin-bottom: 6px; font-weight: 600;">
+                                    ${item.identifier}
+                                </div>
+                                <div style="font-family: 'Courier New', monospace; font-size: 12px; color: #667eea; background: #f0f4ff; padding: 4px 8px; border-radius: 4px; display: inline-block;">
+                                    ${item.key}
+                                </div>
+                                <div style="font-size: 12px; color: #999; margin-top: 8px;">
+                                    📅 ${new Date(item.created_at).toLocaleString('zh-CN')}
+                                </div>
+                            </div>
+                            <div style="text-align: center; margin: 0 20px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; color: #667eea; font-weight: 600; margin-bottom: 3px;">请求数</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #667eea;">${requests.toLocaleString()}</div>
+                            </div>
+                            <div style="text-align: center; margin-right: 20px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
+                                <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">Tokens</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 6px rgba(102,126,234,0.3)'">
+                                    查看详情
+                                </button>
+                                <button onclick="removeMyKey('${item.key}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function viewKeyDetails(apiKey) {
+            document.getElementById('keyInput').value = apiKey;
+            searchKeys();
+            // Scroll to results
+            setTimeout(() => {
+                document.getElementById('userInfo').scrollIntoView({ behavior: 'smooth' });
+            }, 500);
+        }
+
+        function formatNumber(num) {
+            return num.toLocaleString();
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            return new Date(dateStr).toLocaleString('zh-CN');
+        }
+
+        async function searchKeys() {
+            const apiKey = document.getElementById('keyInput').value.trim();
+            const errorDiv = document.getElementById('error');
+            const userInfo = document.getElementById('userInfo');
+            const keysList = document.getElementById('keysList');
+
+            if (!apiKey) {
+                errorDiv.textContent = '请输入 API Key';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            errorDiv.style.display = 'none';
+            userInfo.style.display = 'none';
+            keysList.style.display = 'none';
+
+            try {
+                // Query by API key
+                const response = await fetch('/api/query-by-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Display user info
+                    document.getElementById('userName').textContent = data.identifier;
+                    document.getElementById('userEmail').textContent = `Key: ${apiKey}`;
+                    document.getElementById('totalRequests').textContent = formatNumber(data.total_requests);
+                    document.getElementById('totalTokens').textContent = formatNumber(data.total_tokens);
+                    document.getElementById('keyCount').textContent = data.all_keys.length;
+                    userInfo.style.display = 'block';
+
+                    // Display all keys for this user
+                    const tbody = document.getElementById('keysTableBody');
+                    tbody.innerHTML = '';
+
+                    data.all_keys.forEach(key => {
+                        const row = tbody.insertRow();
+                        row.innerHTML = `
+                            <td><span class="key-value">${key.key}</span></td>
+                            <td>${key.label}</td>
+                            <td>${formatDate(key.created_at)}</td>
+                            <td>${formatNumber(key.total_requests)}</td>
+                            <td>${formatNumber(key.total_tokens)}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="revokeKey('${key.key}')">撤销</button>
+                            </td>
+                        `;
+                    });
+
+                    keysList.style.display = 'block';
+                } else {
+                    errorDiv.textContent = data.error;
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                errorDiv.textContent = '网络错误：' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        async function revokeKey(key) {
+            if (!confirm('确定要撤销这个 Key 吗？此操作不可恢复！')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/revoke-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert('Key 已撤销');
+                    searchKeys(); // Refresh list
+                } else {
+                    alert('撤销失败：' + data.error);
+                }
+            } catch (error) {
+                alert('网络错误：' + error.message);
+            }
+        }
+
+        // Load historical keys on page load
+        displayMyKeys();
+
+        // Auto-fill key from URL (if needed)
+        const params = new URLSearchParams(window.location.search);
+        const keyParam = params.get('key');
+        if (keyParam) {
+            document.getElementById('keyInput').value = keyParam;
+            searchKeys();
+        }
+    </script>
+</body>
+</html>

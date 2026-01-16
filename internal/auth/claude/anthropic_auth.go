@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	anthropicAuthURL  = "https://claude.ai/oauth/authorize"
-	anthropicTokenURL = "https://console.anthropic.com/v1/oauth/token"
-	anthropicClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	redirectURI       = "http://localhost:54545/callback"
+	anthropicAuthURL       = "https://claude.ai/oauth/authorize"
+	anthropicTokenURL      = "https://console.anthropic.com/v1/oauth/token"
+	anthropicClientID      = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	defaultRedirectURI     = "http://localhost:54545/callback"
 )
 
 // tokenResponse represents the response structure from Anthropic's OAuth token endpoint.
@@ -46,7 +46,8 @@ type tokenResponse struct {
 // It provides methods for generating authorization URLs, exchanging codes for tokens,
 // and refreshing expired tokens using PKCE for enhanced security.
 type ClaudeAuth struct {
-	httpClient *http.Client
+	httpClient  *http.Client
+	redirectURI string
 }
 
 // NewClaudeAuth creates a new Anthropic authentication service.
@@ -58,9 +59,19 @@ type ClaudeAuth struct {
 // Returns:
 //   - *ClaudeAuth: A new Claude authentication service instance
 func NewClaudeAuth(cfg *config.Config) *ClaudeAuth {
-	return &ClaudeAuth{
-		httpClient: util.SetProxy(&cfg.SDKConfig, &http.Client{}),
+	redirectURI := defaultRedirectURI
+	if cfg.OAuthCallbacks.ClaudeCallbackURL != "" {
+		redirectURI = cfg.OAuthCallbacks.ClaudeCallbackURL
 	}
+	return &ClaudeAuth{
+		httpClient:  util.SetProxy(&cfg.SDKConfig, &http.Client{}),
+		redirectURI: redirectURI,
+	}
+}
+
+// GetRedirectURI returns the configured redirect URI for OAuth callbacks.
+func (o *ClaudeAuth) GetRedirectURI() string {
+	return o.redirectURI
 }
 
 // GenerateAuthURL creates the OAuth authorization URL with PKCE.
@@ -84,7 +95,7 @@ func (o *ClaudeAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string
 		"code":                  {"true"},
 		"client_id":             {anthropicClientID},
 		"response_type":         {"code"},
-		"redirect_uri":          {redirectURI},
+		"redirect_uri":          {o.redirectURI},
 		"scope":                 {"org:create_api_key user:profile user:inference"},
 		"code_challenge":        {pkceCodes.CodeChallenge},
 		"code_challenge_method": {"S256"},
@@ -138,7 +149,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 		"state":         state,
 		"grant_type":    "authorization_code",
 		"client_id":     anthropicClientID,
-		"redirect_uri":  redirectURI,
+		"redirect_uri":  o.redirectURI,
 		"code_verifier": pkceCodes.CodeVerifier,
 	}
 

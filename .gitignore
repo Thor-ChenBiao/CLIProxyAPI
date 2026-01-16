@@ -48,3 +48,19 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
+
+# Key Portal logs
+portal.log
+*.log
+
+# Backup files
+*.bak
+
+# Binary executables
+CLIProxyAPI
+
+# Key Portal data (keep source code, ignore data files)
+key-portal/data/*.db
+key-portal/data/*.json
+key-portal/__pycache__/
+key-portal/*.pyc

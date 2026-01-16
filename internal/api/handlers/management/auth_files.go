@@ -925,7 +925,7 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 			"state":         state,
 			"grant_type":    "authorization_code",
 			"client_id":     clientID,
-			"redirect_uri":  "http://localhost:54545/callback",
+			"redirect_uri":  anthropicAuth.GetRedirectURI(),
 			"code_verifier": pkceCodes.CodeVerifier,
 		}
 		bodyJSON, _ := json.Marshal(bodyMap)
