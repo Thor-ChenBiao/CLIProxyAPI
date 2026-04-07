@@ -571,10 +571,14 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 	}
 	routeModel := req.Model
 	tried := make(map[string]struct{})
+	recovered := make(map[string]struct{})
 	var lastErr error
 	for {
 		auth, executor, provider, errPick := m.pickNextMixed(ctx, providers, routeModel, opts, tried)
 		if errPick != nil {
+			if m.tryRecoverSelectionFailure(ctx, providers, routeModel, errPick, recovered) {
+				continue
+			}
 			if lastErr != nil {
 				return cliproxyexecutor.Response{}, lastErr
 			}
@@ -607,6 +611,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			}
 			m.MarkResult(execCtx, result)
 			lastErr = errExec
+			if m.tryRecoverAuthAfterError(execCtx, auth, routeModel, errExec, recovered) {
+				delete(tried, auth.ID)
+			}
 			continue
 		}
 		m.MarkResult(execCtx, result)
@@ -620,10 +627,14 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 	}
 	routeModel := req.Model
 	tried := make(map[string]struct{})
+	recovered := make(map[string]struct{})
 	var lastErr error
 	for {
 		auth, executor, provider, errPick := m.pickNextMixed(ctx, providers, routeModel, opts, tried)
 		if errPick != nil {
+			if m.tryRecoverSelectionFailure(ctx, providers, routeModel, errPick, recovered) {
+				continue
+			}
 			if lastErr != nil {
 				return cliproxyexecutor.Response{}, lastErr
 			}
@@ -656,6 +667,9 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			}
 			m.MarkResult(execCtx, result)
 			lastErr = errExec
+			if m.tryRecoverAuthAfterError(execCtx, auth, routeModel, errExec, recovered) {
+				delete(tried, auth.ID)
+			}
 			continue
 		}
 		m.MarkResult(execCtx, result)
@@ -669,10 +683,14 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 	}
 	routeModel := req.Model
 	tried := make(map[string]struct{})
+	recovered := make(map[string]struct{})
 	var lastErr error
 	for {
 		auth, executor, provider, errPick := m.pickNextMixed(ctx, providers, routeModel, opts, tried)
 		if errPick != nil {
+			if m.tryRecoverSelectionFailure(ctx, providers, routeModel, errPick, recovered) {
+				continue
+			}
 			if lastErr != nil {
 				return nil, lastErr
 			}
@@ -703,6 +721,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			result.RetryAfter = retryAfterFromError(errStream)
 			m.MarkResult(execCtx, result)
 			lastErr = errStream
+			if m.tryRecoverAuthAfterError(execCtx, auth, routeModel, errStream, recovered) {
+				delete(tried, auth.ID)
+			}
 			continue
 		}
 		out := make(chan cliproxyexecutor.StreamChunk)
@@ -735,10 +756,14 @@ func (m *Manager) executeWithProvider(ctx context.Context, provider string, req 
 	}
 	routeModel := req.Model
 	tried := make(map[string]struct{})
+	recovered := make(map[string]struct{})
 	var lastErr error
 	for {
 		auth, executor, errPick := m.pickNext(ctx, provider, routeModel, opts, tried)
 		if errPick != nil {
+			if m.tryRecoverSelectionFailure(ctx, []string{provider}, routeModel, errPick, recovered) {
+				continue
+			}
 			if lastErr != nil {
 				return cliproxyexecutor.Response{}, lastErr
 			}
@@ -771,6 +796,9 @@ func (m *Manager) executeWithProvider(ctx context.Context, provider string, req 
 			}
 			m.MarkResult(execCtx, result)
 			lastErr = errExec
+			if m.tryRecoverAuthAfterError(execCtx, auth, routeModel, errExec, recovered) {
+				delete(tried, auth.ID)
+			}
 			continue
 		}
 		m.MarkResult(execCtx, result)
@@ -784,10 +812,14 @@ func (m *Manager) executeCountWithProvider(ctx context.Context, provider string,
 	}
 	routeModel := req.Model
 	tried := make(map[string]struct{})
+	recovered := make(map[string]struct{})
 	var lastErr error
 	for {
 		auth, executor, errPick := m.pickNext(ctx, provider, routeModel, opts, tried)
 		if errPick != nil {
+			if m.tryRecoverSelectionFailure(ctx, []string{provider}, routeModel, errPick, recovered) {
+				continue
+			}
 			if lastErr != nil {
 				return cliproxyexecutor.Response{}, lastErr
 			}
@@ -820,6 +852,9 @@ func (m *Manager) executeCountWithProvider(ctx context.Context, provider string,
 			}
 			m.MarkResult(execCtx, result)
 			lastErr = errExec
+			if m.tryRecoverAuthAfterError(execCtx, auth, routeModel, errExec, recovered) {
+				delete(tried, auth.ID)
+			}
 			continue
 		}
 		m.MarkResult(execCtx, result)
@@ -833,10 +868,14 @@ func (m *Manager) executeStreamWithProvider(ctx context.Context, provider string
 	}
 	routeModel := req.Model
 	tried := make(map[string]struct{})
+	recovered := make(map[string]struct{})
 	var lastErr error
 	for {
 		auth, executor, errPick := m.pickNext(ctx, provider, routeModel, opts, tried)
 		if errPick != nil {
+			if m.tryRecoverSelectionFailure(ctx, []string{provider}, routeModel, errPick, recovered) {
+				continue
+			}
 			if lastErr != nil {
 				return nil, lastErr
 			}
@@ -867,6 +906,9 @@ func (m *Manager) executeStreamWithProvider(ctx context.Context, provider string
 			result.RetryAfter = retryAfterFromError(errStream)
 			m.MarkResult(execCtx, result)
 			lastErr = errStream
+			if m.tryRecoverAuthAfterError(execCtx, auth, routeModel, errStream, recovered) {
+				delete(tried, auth.ID)
+			}
 			continue
 		}
 		out := make(chan cliproxyexecutor.StreamChunk)
@@ -1236,6 +1278,92 @@ func (m *Manager) shouldRetryAfterError(err error, attempt, maxAttempts int, pro
 	return wait, true
 }
 
+func (m *Manager) tryRecoverSelectionFailure(ctx context.Context, providers []string, model string, err error, recovered map[string]struct{}) bool {
+	if !isSelectionRecoveryEligible(err) {
+		return false
+	}
+	return m.tryRecoverBlockedAuths(ctx, providers, model, recovered)
+}
+
+func (m *Manager) tryRecoverAuthAfterError(ctx context.Context, auth *Auth, model string, err error, recovered map[string]struct{}) bool {
+	if auth == nil || !isExecutionRecoveryEligible(err) {
+		return false
+	}
+	return m.tryRecoverSpecificAuth(ctx, auth, model, recovered)
+}
+
+func (m *Manager) tryRecoverBlockedAuths(ctx context.Context, providers []string, model string, recovered map[string]struct{}) bool {
+	if m == nil || len(providers) == 0 {
+		return false
+	}
+	providerSet := make(map[string]struct{}, len(providers))
+	for i := range providers {
+		if key := strings.TrimSpace(strings.ToLower(providers[i])); key != "" {
+			providerSet[key] = struct{}{}
+		}
+	}
+	if len(providerSet) == 0 {
+		return false
+	}
+
+	now := time.Now()
+	modelKey := strings.TrimSpace(model)
+	if parsed := thinking.ParseSuffix(modelKey); parsed.ModelName != "" {
+		modelKey = strings.TrimSpace(parsed.ModelName)
+	}
+	registryRef := registry.GetGlobalRegistry()
+
+	m.mu.RLock()
+	candidates := make([]*Auth, 0, len(m.auths))
+	for _, auth := range m.auths {
+		if auth == nil {
+			continue
+		}
+		providerKey := strings.TrimSpace(strings.ToLower(auth.Provider))
+		if _, ok := providerSet[providerKey]; !ok {
+			continue
+		}
+		if !isOAuthAuth(auth) {
+			continue
+		}
+		if modelKey != "" && registryRef != nil && !registryRef.ClientSupportsModel(auth.ID, modelKey) {
+			continue
+		}
+		blocked, _, _ := isAuthBlockedForModel(auth, modelKey, now)
+		if !blocked {
+			continue
+		}
+		candidates = append(candidates, auth.Clone())
+	}
+	m.mu.RUnlock()
+
+	recoveredAny := false
+	for _, auth := range candidates {
+		if m.tryRecoverSpecificAuth(ctx, auth, modelKey, recovered) {
+			recoveredAny = true
+		}
+	}
+	return recoveredAny
+}
+
+func (m *Manager) tryRecoverSpecificAuth(ctx context.Context, auth *Auth, model string, recovered map[string]struct{}) bool {
+	if m == nil || auth == nil || auth.ID == "" || !isOAuthAuth(auth) {
+		return false
+	}
+	if recovered != nil {
+		if _, seen := recovered[auth.ID]; seen {
+			return false
+		}
+		recovered[auth.ID] = struct{}{}
+	}
+	if err := m.refreshAuthNow(ctx, auth.ID); err != nil {
+		log.WithError(err).Warnf("auth immediate recovery failed: provider=%s auth=%s model=%s", auth.Provider, auth.ID, model)
+		return false
+	}
+	log.Infof("auth immediate recovery succeeded: provider=%s auth=%s model=%s", auth.Provider, auth.ID, model)
+	return true
+}
+
 func waitForCooldown(ctx context.Context, wait time.Duration) error {
 	if wait <= 0 {
 		return nil
@@ -1248,6 +1376,48 @@ func waitForCooldown(ctx context.Context, wait time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func isSelectionRecoveryEligible(err error) bool {
+	if err == nil {
+		return false
+	}
+	var authErr *Error
+	if errors.As(err, &authErr) && authErr != nil {
+		switch strings.TrimSpace(strings.ToLower(authErr.Code)) {
+		case "auth_unavailable":
+			return true
+		case "auth_not_found":
+			return strings.Contains(strings.ToLower(authErr.Message), "no auth available")
+		}
+	}
+	return false
+}
+
+func isExecutionRecoveryEligible(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch statusCodeFromError(err) {
+	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+	return strings.Contains(msg, "auth_unavailable") ||
+		strings.Contains(msg, "stream disconnected before completion") ||
+		strings.Contains(msg, "stream closed before response.completed") ||
+		strings.Contains(msg, "response.completed")
+}
+
+func isOAuthAuth(auth *Auth) bool {
+	if auth == nil {
+		return false
+	}
+	kind, _ := auth.AccountInfo()
+	return strings.EqualFold(strings.TrimSpace(kind), "oauth")
 }
 
 func (m *Manager) executeProvidersOnce(ctx context.Context, providers []string, fn func(context.Context, string) (cliproxyexecutor.Response, error)) (cliproxyexecutor.Response, error) {
@@ -2117,6 +2287,43 @@ func (m *Manager) markRefreshPending(id string, now time.Time) bool {
 }
 
 func (m *Manager) refreshAuth(ctx context.Context, id string) {
+	if err := m.refreshAuthNow(ctx, id); err != nil {
+		if errors.Is(err, context.Canceled) {
+			m.mu.RLock()
+			auth := m.auths[id]
+			m.mu.RUnlock()
+			if auth != nil {
+				log.Debugf("refresh canceled for %s, %s", auth.Provider, auth.ID)
+			}
+			return
+		}
+		m.mu.RLock()
+		auth := m.auths[id]
+		m.mu.RUnlock()
+		provider := ""
+		if auth != nil {
+			provider = auth.Provider
+		}
+		log.Debugf("refreshed %s, %s, %v", provider, id, err)
+		now := time.Now()
+		m.mu.Lock()
+		if current := m.auths[id]; current != nil {
+			current.NextRefreshAfter = now.Add(refreshFailureBackoff)
+			current.LastError = &Error{Message: err.Error()}
+			m.auths[id] = current
+		}
+		m.mu.Unlock()
+		return
+	}
+	m.mu.RLock()
+	auth := m.auths[id]
+	m.mu.RUnlock()
+	if auth != nil {
+		log.Debugf("refreshed %s, %s, <nil>", auth.Provider, auth.ID)
+	}
+}
+
+func (m *Manager) refreshAuthNow(ctx context.Context, id string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2128,25 +2335,13 @@ func (m *Manager) refreshAuth(ctx context.Context, id string) {
 	}
 	m.mu.RUnlock()
 	if auth == nil || exec == nil {
-		return
+		return nil
 	}
 	cloned := auth.Clone()
 	updated, err := exec.Refresh(ctx, cloned)
-	if err != nil && errors.Is(err, context.Canceled) {
-		log.Debugf("refresh canceled for %s, %s", auth.Provider, auth.ID)
-		return
-	}
-	log.Debugf("refreshed %s, %s, %v", auth.Provider, auth.ID, err)
 	now := time.Now()
 	if err != nil {
-		m.mu.Lock()
-		if current := m.auths[id]; current != nil {
-			current.NextRefreshAfter = now.Add(refreshFailureBackoff)
-			current.LastError = &Error{Message: err.Error()}
-			m.auths[id] = current
-		}
-		m.mu.Unlock()
-		return
+		return err
 	}
 	if updated == nil {
 		updated = cloned
@@ -2157,10 +2352,22 @@ func (m *Manager) refreshAuth(ctx context.Context, id string) {
 		updated.Runtime = auth.Runtime
 	}
 	updated.LastRefreshedAt = now
+	updated.Unavailable = false
+	updated.Status = StatusActive
+	updated.StatusMessage = ""
 	updated.NextRefreshAfter = time.Time{}
+	updated.NextRetryAfter = time.Time{}
+	updated.Quota = QuotaState{}
 	updated.LastError = nil
 	updated.UpdatedAt = now
+	for _, state := range updated.ModelStates {
+		if state == nil || state.Status == StatusDisabled {
+			continue
+		}
+		resetModelState(state, now)
+	}
 	_, _ = m.Update(ctx, updated)
+	return nil
 }
 
 func (m *Manager) executorFor(provider string) ProviderExecutor {

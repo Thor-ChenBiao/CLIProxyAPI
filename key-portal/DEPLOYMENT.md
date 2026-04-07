@@ -395,8 +395,25 @@ python3 app.py > portal.log 2>&1 &
 用户需要执行以下配置命令（替换为实际IP）：
 
 ```bash
-echo '{"apiKeyHelper":"echo sk-shared-001","env":{"ANTHROPIC_BASE_URL":"http://YOUR_SERVER_IP:8317"}}' > ~/.claude/settings.json && echo '{"hasCompletedOnboarding":true,"customApiKeyResponses":{"approved":["001"],"rejected":[]}}' > ~/.claude.json && cat ~/.claude/settings.json && cat ~/.claude.json
+node -e "
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+const cf=path.join(os.homedir(),'.claude.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo sk-shared-001';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='http://YOUR_SERVER_IP:8317';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+const c=fs.existsSync(cf)?JSON.parse(fs.readFileSync(cf,'utf8')):{};
+c.hasCompletedOnboarding=true;
+fs.writeFileSync(cf,JSON.stringify(c,null,2));
+console.log('Done! Settings merged (MCP/permissions preserved).');
+"
 ```
+
+> **注意**：此命令使用合并写入，不会覆盖用户已有的 MCP、permissions 等配置。
 
 配置完成后，重启终端，直接运行 `claude` 命令即可使用。
 
@@ -507,8 +524,23 @@ ls -la /root/.cli-proxy-api/
 # 1. 退出已有登录
 claude /logout
 
-# 2. 重新配置
-echo '{"apiKeyHelper":"echo sk-shared-001","env":{"ANTHROPIC_BASE_URL":"http://YOUR_IP:8317"}}' > ~/.claude/settings.json && echo '{"hasCompletedOnboarding":true,"customApiKeyResponses":{"approved":["001"],"rejected":[]}}' > ~/.claude.json
+# 2. 重新配置（合并写入，保留 MCP 等已有配置）
+node -e "
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+const cf=path.join(os.homedir(),'.claude.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo sk-shared-001';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='http://YOUR_IP:8317';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+const c=fs.existsSync(cf)?JSON.parse(fs.readFileSync(cf,'utf8')):{};
+c.hasCompletedOnboarding=true;
+fs.writeFileSync(cf,JSON.stringify(c,null,2));
+console.log('Done!');
+"
 
 # 3. 完全重启终端（重要！）
 # 4. 再次运行 claude 命令

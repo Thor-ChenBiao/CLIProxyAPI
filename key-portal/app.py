@@ -905,6 +905,8 @@ def get_auth_url():
     return jsonify(data)
 
 
+
+
 @app.route("/callback")
 def oauth_callback():
     """Handle OAuth callback from Claude - automatically complete authorization."""

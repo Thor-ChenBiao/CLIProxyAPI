@@ -218,8 +218,9 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 	// Add additional configuration parameters for the Codex API.
 	template, _ = sjson.Set(template, "parallel_tool_calls", true)
 
-	// Convert thinking.budget_tokens to reasoning.effort for level-based models
-	reasoningEffort := "medium" // default
+	// Convert thinking.budget_tokens to reasoning.effort for level-based models.
+	// When Claude clients omit thinking config entirely, default to a stronger high-effort pass.
+	reasoningEffort := "high"
 	if thinkingConfig := rootResult.Get("thinking"); thinkingConfig.Exists() && thinkingConfig.IsObject() {
 		modelInfo := registry.LookupModelInfo(modelName)
 		switch thinkingConfig.Get("type").String() {

@@ -70,6 +70,76 @@ func (e *failOnceStreamExecutor) Calls() int {
 	return e.calls
 }
 
+type recoverableSingleAuthStreamExecutor struct {
+	mu        sync.Mutex
+	calls     int
+	refreshes int
+	recovered bool
+}
+
+func (e *recoverableSingleAuthStreamExecutor) Identifier() string { return "codex" }
+
+func (e *recoverableSingleAuthStreamExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, &coreauth.Error{Code: "not_implemented", Message: "Execute not implemented"}
+}
+
+func (e *recoverableSingleAuthStreamExecutor) ExecuteStream(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (<-chan coreexecutor.StreamChunk, error) {
+	e.mu.Lock()
+	e.calls++
+	recovered := e.recovered
+	e.mu.Unlock()
+
+	ch := make(chan coreexecutor.StreamChunk, 1)
+	if !recovered {
+		ch <- coreexecutor.StreamChunk{
+			Err: &coreauth.Error{
+				Code:       "stream_disconnected",
+				Message:    "stream error: stream disconnected before completion: stream closed before response.completed",
+				Retryable:  true,
+				HTTPStatus: http.StatusRequestTimeout,
+			},
+		}
+		close(ch)
+		return ch, nil
+	}
+
+	ch <- coreexecutor.StreamChunk{Payload: []byte("ok")}
+	close(ch)
+	return ch, nil
+}
+
+func (e *recoverableSingleAuthStreamExecutor) Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	e.mu.Lock()
+	e.refreshes++
+	e.recovered = true
+	e.mu.Unlock()
+	return auth, nil
+}
+
+func (e *recoverableSingleAuthStreamExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, &coreauth.Error{Code: "not_implemented", Message: "CountTokens not implemented"}
+}
+
+func (e *recoverableSingleAuthStreamExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error) {
+	return nil, &coreauth.Error{
+		Code:       "not_implemented",
+		Message:    "HttpRequest not implemented",
+		HTTPStatus: http.StatusNotImplemented,
+	}
+}
+
+func (e *recoverableSingleAuthStreamExecutor) Calls() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
+
+func (e *recoverableSingleAuthStreamExecutor) Refreshes() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.refreshes
+}
+
 func TestExecuteStreamWithAuthManager_RetriesBeforeFirstByte(t *testing.T) {
 	executor := &failOnceStreamExecutor{}
 	manager := coreauth.NewManager(nil, nil, nil)
@@ -128,5 +198,57 @@ func TestExecuteStreamWithAuthManager_RetriesBeforeFirstByte(t *testing.T) {
 	}
 	if executor.Calls() != 2 {
 		t.Fatalf("expected 2 stream attempts, got %d", executor.Calls())
+	}
+}
+
+func TestExecuteStreamWithAuthManager_RecoversSingleOAuthAuthBeforeRetry(t *testing.T) {
+	executor := &recoverableSingleAuthStreamExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+
+	auth1 := &coreauth.Auth{
+		ID:       "auth1",
+		Provider: "codex",
+		Status:   coreauth.StatusActive,
+		Metadata: map[string]any{"email": "test1@example.com", "refresh_token": "refresh-token"},
+	}
+	if _, err := manager.Register(context.Background(), auth1); err != nil {
+		t.Fatalf("manager.Register(auth1): %v", err)
+	}
+
+	registry.GetGlobalRegistry().RegisterClient(auth1.ID, auth1.Provider, []*registry.ModelInfo{{ID: "test-model"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(auth1.ID)
+	})
+
+	handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{
+		Streaming: sdkconfig.StreamingConfig{
+			BootstrapRetries: 1,
+		},
+	}, manager)
+	dataChan, errChan := handler.ExecuteStreamWithAuthManager(context.Background(), "openai", "test-model", []byte(`{"model":"test-model"}`), "")
+	if dataChan == nil || errChan == nil {
+		t.Fatalf("expected non-nil channels")
+	}
+
+	var got []byte
+	for chunk := range dataChan {
+		got = append(got, chunk...)
+	}
+
+	for msg := range errChan {
+		if msg != nil {
+			t.Fatalf("unexpected error: %+v", msg)
+		}
+	}
+
+	if string(got) != "ok" {
+		t.Fatalf("expected payload ok, got %q", string(got))
+	}
+	if executor.Calls() != 2 {
+		t.Fatalf("expected 2 stream attempts, got %d", executor.Calls())
+	}
+	if executor.Refreshes() != 1 {
+		t.Fatalf("expected 1 refresh attempt, got %d", executor.Refreshes())
 	}
 }

@@ -162,6 +162,17 @@
             <p style="margin-top: 10px; font-size: 13px; color: #856404;">输出中 "echo" 后面的就是你的 API Key</p>
         </div>
 
+        <div style="background: #f8d7da; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #f5c6cb;">
+            <strong style="color: #721c24;">🗑 安全移除代理配置</strong>
+            <p style="margin: 10px 0; font-size: 14px; color: #856404;">如需恢复为官方 Claude Code（移除代理配置但保留 MCP/permissions 等设置）：</p>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+                <button onclick="copyRemoveCmd(this)" style="padding: 10px 20px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; white-space: nowrap;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                    复制移除命令
+                </button>
+                <span style="font-size: 12px; color: #856404;">复制后在终端粘贴执行，仅移除 apiKeyHelper 和 ANTHROPIC_BASE_URL，不影响其他配置</span>
+            </div>
+        </div>
+
         <div class="error" id="error"></div>
 
         <div class="user-info" id="userInfo">
@@ -284,8 +295,14 @@
                                 <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">Tokens</div>
                                 <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
                             </div>
-                            <div style="display: flex; gap: 8px;">
-                                <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 6px rgba(102,126,234,0.3)'">
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button onclick="copySetupCmd('${item.key}', this)" style="padding: 9px 14px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(16,185,129,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                                    Claude 配置
+                                </button>
+                                <button onclick="copyCodexCmd('${item.key}', this)" style="padding: 9px 14px; background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(0,166,126,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                                    Codex 配置
+                                </button>
+                                <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
                                     查看详情
                                 </button>
                                 <button onclick="removeMyKey('${item.key}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
@@ -403,6 +420,103 @@
             } catch (error) {
                 alert('网络错误：' + error.message);
             }
+        }
+
+        function copySetupCmd(apiKey, btn) {
+            const cmd = `node << 'CLAUDE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+const cf=path.join(os.homedir(),'.claude.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo ${apiKey}';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='http://172.16.70.100:8317';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+const c=fs.existsSync(cf)?JSON.parse(fs.readFileSync(cf,'utf8')):{};
+c.hasCompletedOnboarding=true;
+fs.writeFileSync(cf,JSON.stringify(c,null,2));
+console.log('Done! Settings merged (MCP/permissions preserved).');
+CLAUDE_EOF`;
+            doCopy(cmd, btn);
+        }
+
+        function copyCodexCmd(apiKey, btn) {
+            const cmd = `node << 'CODEX_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.codex');
+const sf=path.join(dir,'config.toml');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
+const line='openai_base_url = "http://172.16.70.100:8317/v1"';
+if(!/^openai_base_url/m.test(c)){
+  // Insert at top (before any [section])
+  const idx=c.indexOf('[');
+  if(idx>0){c=line+'\\n'+c}else if(idx===0){c=line+'\\n\\n'+c}else{c=line+'\\n'+c}
+}else{c=c.replace(/^openai_base_url\\s*=.*/m,line)}
+fs.writeFileSync(sf,c);
+const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  const content=fs.readFileSync(rc,'utf8');
+  if(!content.includes('OPENAI_API_KEY')){fs.appendFileSync(rc,'\\nexport OPENAI_API_KEY="${apiKey}"\\n');console.log('Added OPENAI_API_KEY to '+rc)}
+  else{const updated=content.replace(/^export OPENAI_API_KEY=.*/m,'export OPENAI_API_KEY="${apiKey}"');fs.writeFileSync(rc,updated);console.log('Updated OPENAI_API_KEY in '+rc)}
+}else{console.log('No .bashrc/.zshrc found. Please add manually: export OPENAI_API_KEY=${apiKey}')}
+console.log('Codex config done: '+sf);
+CODEX_EOF
+export OPENAI_API_KEY="${apiKey}"`;
+            doCopy(cmd, btn);
+        }
+
+        function copyRemoveCmd(btn) {
+            const cmd = `node << 'REMOVE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+// Remove Claude proxy config
+const sf=path.join(os.homedir(),'.claude','settings.json');
+if(fs.existsSync(sf)){
+  const s=JSON.parse(fs.readFileSync(sf,'utf8'));
+  delete s.apiKeyHelper;
+  if(s.env){Object.keys(s.env).forEach(k=>{if(k.startsWith('ANTHROPIC'))delete s.env[k]});if(Object.keys(s.env).length===0)delete s.env}
+  fs.writeFileSync(sf,JSON.stringify(s,null,2));
+  console.log('Claude: proxy config removed (MCP/permissions preserved)');
+}else{console.log('Claude: no settings.json found, skipped')}
+// Remove Codex proxy config
+const cf=path.join(os.homedir(),'.codex','config.toml');
+if(fs.existsSync(cf)){
+  let c=fs.readFileSync(cf,'utf8');
+  c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+  fs.writeFileSync(cf,c);
+  console.log('Codex: openai_base_url removed from '+cf);
+}else{console.log('Codex: no config.toml found, skipped')}
+// Remove OPENAI_API_KEY from shell rc
+const rc=['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  let content=fs.readFileSync(rc,'utf8');
+  if(content.includes('OPENAI_API_KEY')){
+    content=content.replace(/^export OPENAI_API_KEY=.*\\n?/m,'');
+    fs.writeFileSync(rc,content);
+    console.log('Shell: OPENAI_API_KEY removed from '+rc);
+  }
+}
+console.log('All done! Restart terminal to take effect.');
+REMOVE_EOF`;
+            doCopy(cmd, btn);
+        }
+
+        function doCopy(text, btn) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            ta.style.top = '-9999px';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+            const orig = btn.textContent;
+            btn.textContent = '已复制!';
+            setTimeout(() => { btn.textContent = orig; }, 2000);
         }
 
         // Load historical keys on page load

@@ -98,6 +98,7 @@
     </style>
 </head>
 <body>
+
     <div class="header">
         <p class="slogan">Token 是 AI 时代的<em>电力</em>，用起来才能创造价值！</p>
         <div class="token-banner">
@@ -123,8 +124,6 @@
     <div class="container">
         <div class="tabs">
             <button class="tab active" onclick="showTab('register')">申请个人 Key</button>
-            <button class="tab" onclick="showTab('login')">分享 OAuth Key</button>
-            <button class="tab" onclick="showTab('status')">Key 状态</button>
             <button class="tab" onclick="showTab('report')">用量报表</button>
         </div>
 
@@ -186,87 +185,7 @@
             </div>
         </div>
 
-        <div id="login" class="tab-content">
-            <div class="login-box">
-                <h2>分享你的 Claude 账号</h2>
-
-                <div id="step1" class="auth-step">
-                    <p class="step-label">第一步：点击按钮打开授权页面</p>
-                    <button class="btn btn-primary" onclick="startAuth()">打开 Claude 授权</button>
-                </div>
-
-                <div id="step2" class="auth-step" style="display:none; margin-top: 30px;">
-                    <p class="step-label">第二步：授权后页面会显示"无法访问"，复制地址栏的链接粘贴到下方</p>
-                    <div class="paste-box">
-                        <input type="text" id="callbackUrl" placeholder="粘贴 localhost:54545/callback?code=... 链接" />
-                        <button class="btn btn-primary" onclick="submitCallback()">提交</button>
-                    </div>
-                    <p class="hint">提示：链接类似 http://localhost:54545/callback?code=xxxxxx&state=xxxxxx</p>
-                </div>
-
-                <div id="step3" class="auth-step" style="display:none; margin-top: 30px;">
-                    <div class="result-box success">
-                        <span class="icon">✓</span>
-                        <span id="resultMsg">授权成功！</span>
-                    </div>
-                </div>
-
-                <div id="stepError" class="auth-step" style="display:none; margin-top: 30px;">
-                    <div class="result-box error">
-                        <span class="icon">✗</span>
-                        <span id="errorMsg">授权失败</span>
-                    </div>
-                    <button class="btn" style="margin-top:15px;" onclick="resetAuth()">重试</button>
-                </div>
-
-            </div>
-        </div>
-
-        <div id="status" class="tab-content">
-            <div class="section-title">
-                <h3>已注册的 Key</h3>
-                <button class="refresh-btn" onclick="loadKeys()">刷新</button>
-            </div>
-            <div class="stats">
-                <div class="stat">
-                    <div class="num" id="totalCount">-</div>
-                    <div class="label">总数</div>
-                </div>
-                <div class="stat green">
-                    <div class="num" id="activeCount">-</div>
-                    <div class="label">有效</div>
-                </div>
-                <div class="stat red">
-                    <div class="num" id="expiredCount">-</div>
-                    <div class="label">过期</div>
-                </div>
-            </div>
-            <div id="keyList" class="key-list">
-                <div class="empty">加载中...</div>
-            </div>
-
-            <div class="section-title" style="margin-top: 30px;">
-                <h3>所有账号</h3>
-                <button class="refresh-btn" onclick="loadAccounts()">刷新</button>
-            </div>
-            <div class="stats">
-                <div class="stat">
-                    <div class="num" id="accountTotal">-</div>
-                    <div class="label">总账号</div>
-                </div>
-                <div class="stat green">
-                    <div class="num" id="accountActive">-</div>
-                    <div class="label">已分享</div>
-                </div>
-                <div class="stat">
-                    <div class="num" id="accountNoKey">-</div>
-                    <div class="label">未分享</div>
-                </div>
-            </div>
-            <div id="accountList" class="key-list">
-                <div class="empty">加载中...</div>
-            </div>
-        </div>
+        <!-- login and status tabs removed -->
 
         <div id="report" class="tab-content">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -322,10 +241,6 @@
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.querySelector('.tab[onclick="showTab(\'' + name + '\')"]').classList.add('active');
             document.getElementById(name).classList.add('active');
-            if (name === 'status') {
-                loadKeys();
-                loadAccounts();
-            }
             if (name === 'report') loadUsage();
         }
 
@@ -363,222 +278,6 @@
                 alert('复制失败，请手动复制');
             }
             document.body.removeChild(ta);
-        }
-
-        async function startAuth() {
-            const btn = event.target;
-            btn.disabled = true;
-            btn.textContent = '获取中...';
-            try {
-                const resp = await fetch('/api/auth-url');
-                const data = await resp.json();
-                if (data.error) {
-                    alert('获取授权链接失败: ' + data.error);
-                    btn.disabled = false;
-                    btn.textContent = '打开 Claude 授权';
-                } else {
-                    // Open in popup
-                    window.open(data.url, 'claude_auth', 'width=600,height=700');
-                    // Show step 2
-                    document.getElementById('step2').style.display = 'block';
-                    btn.disabled = false;
-                    btn.textContent = '重新打开授权页';
-                }
-            } catch (e) {
-                alert('请求失败: ' + e.message);
-                btn.disabled = false;
-                btn.textContent = '打开 Claude 授权';
-            }
-        }
-
-        async function submitCallback() {
-            const input = document.getElementById('callbackUrl');
-            const url = input.value.trim();
-            if (!url) {
-                alert('请粘贴回调链接');
-                return;
-            }
-            if (!url.includes('code=') || !url.includes('state=')) {
-                alert('链接格式不正确，请确保包含 code 和 state 参数');
-                return;
-            }
-
-            try {
-                const resp = await fetch('/api/submit-callback', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({callback_url: url})
-                });
-                const data = await resp.json();
-                if (data.error) {
-                    document.getElementById('errorMsg').textContent = data.error;
-                    document.getElementById('step2').style.display = 'none';
-                    document.getElementById('stepError').style.display = 'block';
-                } else {
-                    document.getElementById('resultMsg').textContent = data.message || '授权成功！';
-                    document.getElementById('step2').style.display = 'none';
-                    document.getElementById('step3').style.display = 'block';
-                }
-            } catch (e) {
-                document.getElementById('errorMsg').textContent = '请求失败: ' + e.message;
-                document.getElementById('step2').style.display = 'none';
-                document.getElementById('stepError').style.display = 'block';
-            }
-        }
-
-        function resetAuth() {
-            document.getElementById('step2').style.display = 'none';
-            document.getElementById('step3').style.display = 'none';
-            document.getElementById('stepError').style.display = 'none';
-            document.getElementById('callbackUrl').value = '';
-        }
-
-        async function loadKeys() {
-            try {
-                const resp = await fetch('/api/keys');
-                const data = await resp.json();
-                const keys = data.keys || [];
-
-                let active = 0, expired = 0, unavailable = 0;
-                keys.forEach(k => {
-                    if (k.expired) expired++;
-                    else if (k.unavailable) unavailable++;
-                    else active++;
-                });
-
-                document.getElementById('totalCount').textContent = keys.length;
-                document.getElementById('activeCount').textContent = active;
-                document.getElementById('expiredCount').textContent = expired;
-
-                const list = document.getElementById('keyList');
-                if (keys.length === 0) {
-                    list.innerHTML = '<div class="empty">暂无注册的 Key</div>';
-                } else {
-                    // Sort: active first, then unavailable, then expired
-                    keys.sort((a, b) => {
-                        if (a.expired !== b.expired) return a.expired - b.expired;
-                        if (a.unavailable !== b.unavailable) return a.unavailable - b.unavailable;
-                        return 0;
-                    });
-                    list.innerHTML = keys.map((k, i) => {
-                        const initial = k.email.charAt(0).toUpperCase();
-                        let statusClass = k.expired ? 'expired' : (k.unavailable ? 'unavailable' : 'active');
-                        let statusText = k.expired ? '已过期' : (k.unavailable ? '临时不可用' : '有效');
-                        return '<div class="key-item ' + statusClass + '" onclick="toggleEmail(' + i + ')">' +
-                            '<span class="key-email" id="email-' + i + '" data-full="' + k.email + '">' + initial + '</span>' +
-                            '<span class="key-status ' + statusClass + '">' + statusText + '</span>' +
-                        '</div>';
-                    }).join('');
-                }
-            } catch (e) {
-                document.getElementById('keyList').innerHTML = '<div class="empty">加载失败</div>';
-            }
-        }
-
-        function toggleEmail(idx) {
-            const el = document.getElementById('email-' + idx);
-            const full = el.dataset.full;
-            if (el.textContent === full) {
-                el.textContent = full.charAt(0).toUpperCase();
-            } else {
-                el.textContent = full;
-            }
-        }
-
-        async function loadAccounts() {
-            try {
-                const resp = await fetch('/api/accounts');
-                const data = await resp.json();
-                const accounts = data.accounts || [];
-
-                let active = 0, noKey = 0, expired = 0;
-                accounts.forEach(a => {
-                    if (a.status === 'active') active++;
-                    else if (a.status === 'no_key') noKey++;
-                    else if (a.status === 'expired') expired++;
-                });
-
-                document.getElementById('accountTotal').textContent = accounts.length;
-                document.getElementById('accountActive').textContent = active + expired;
-                document.getElementById('accountNoKey').textContent = noKey;
-
-                const list = document.getElementById('accountList');
-                if (accounts.length === 0) {
-                    list.innerHTML = '<div class="empty">暂无账号数据</div>';
-                } else {
-                    list.innerHTML = accounts.map((a, idx) => {
-                        let statusText = '';
-                        let metaText = '';
-                        let buttons = '';
-
-                        if (a.status === 'no_key') {
-                            statusText = '未分享';
-                            buttons = '<button class="action-btn warning" onclick="sendNotification(\'' + a.claude_email + '\', \'remind_contribute\')">邀请分享</button>';
-                        } else if (a.status === 'expired') {
-                            statusText = '已过期';
-                            metaText = a.hours_left !== null ? '过期于 ' + Math.abs(a.hours_left).toFixed(1) + ' 小时前' : '';
-                            buttons = '<button class="action-btn danger" onclick="sendNotification(\'' + a.claude_email + '\', \'remind_renew\')">提醒续期</button>';
-                        } else if (a.status === 'active') {
-                            statusText = '正常';
-                            metaText = a.hours_left !== null ? '还剩 ' + a.hours_left + ' 小时' : '';
-                            buttons = '<button class="action-btn" disabled>已激活</button>';
-                        }
-
-                        const initial = a.name ? a.name.charAt(0).toUpperCase() : 'U';
-
-                        return '<div class="account-item ' + a.status.replace('_', '-') + '" onclick="toggleAccountInfo(' + idx + ')">' +
-                            '<div class="account-info">' +
-                                '<div class="account-name" id="account-name-' + idx + '" data-full="' + a.name + '" data-email="' + a.claude_email + '">' + initial + '</div>' +
-                                (metaText ? '<div class="account-meta">' + metaText + '</div>' : '') +
-                            '</div>' +
-                            '<div class="account-actions">' +
-                                '<span class="key-status ' + a.status + '">' + statusText + '</span>' +
-                                buttons +
-                            '</div>' +
-                        '</div>';
-                    }).join('');
-                }
-            } catch (e) {
-                console.error('Failed to load accounts:', e);
-                document.getElementById('accountList').innerHTML = '<div class="empty">加载失败</div>';
-            }
-        }
-
-        function toggleAccountInfo(idx) {
-            const el = document.getElementById('account-name-' + idx);
-            const fullName = el.dataset.full;
-            const email = el.dataset.email;
-            const initial = fullName ? fullName.charAt(0).toUpperCase() : 'U';
-
-            if (el.innerHTML === initial) {
-                el.innerHTML = fullName + '<div class="account-email">' + email + '</div>';
-            } else {
-                el.innerHTML = initial;
-            }
-        }
-
-        async function sendNotification(email, type) {
-            if (!confirm('确定发送通知给 ' + email + ' 吗？')) {
-                return;
-            }
-
-            try {
-                const resp = await fetch('/api/send-notification', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: email, type: type })
-                });
-
-                const data = await resp.json();
-                if (data.success) {
-                    alert('通知已发送！');
-                    loadAccounts(); // Reload to update UI
-                } else {
-                    alert('发送失败：' + (data.error || '未知错误'));
-                }
-            } catch (e) {
-                alert('发送失败：' + e.message);
-            }
         }
 
         function formatNumber(num) {
@@ -976,7 +675,22 @@
 
                 if (resp.ok) {
                     const apiKey = data.api_key;
-                    const claudeCmd = `echo '{"apiKeyHelper":"echo ${apiKey}","env":{"ANTHROPIC_BASE_URL":"http://172.16.70.100:8317"}}' > ~/.claude/settings.json && echo '{"hasCompletedOnboarding":true}' > ~/.claude.json`;
+                    const claudeCmd = `node << 'CLAUDE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+const cf=path.join(os.homedir(),'.claude.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo ${apiKey}';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='http://172.16.70.100:8317';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+const c=fs.existsSync(cf)?JSON.parse(fs.readFileSync(cf,'utf8')):{};
+c.hasCompletedOnboarding=true;
+fs.writeFileSync(cf,JSON.stringify(c,null,2));
+console.log('Done! Settings merged (MCP/permissions preserved).');
+CLAUDE_EOF`;
 
                     // Save to localStorage
                     saveMyKey({
@@ -1128,6 +842,19 @@
             document.body.style.overflow = 'auto';
         }
 
+        function copyTutorialRemoveCmd(btn) {
+            copyElementText('tutorialRemoveCmd', btn);
+        }
+
+        function copyElementText(elementId, btn) {
+            const cmd = document.getElementById(elementId).textContent;
+            fallbackCopy(cmd, function() {
+                const orig = btn.textContent;
+                btn.textContent = '已复制!';
+                setTimeout(() => { btn.textContent = orig; }, 2000);
+            });
+        }
+
         // Success Modal Functions
         function showSuccessModal(apiKey, claudeCmd) {
             document.getElementById('successModalApiKey').textContent = apiKey;
@@ -1174,11 +901,22 @@
                         申请成功后，复制显示的<strong>"Claude Code 一键配置命令"</strong>，粘贴到终端执行：
                     </p>
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
-                        <pre style="margin: 0; font-size: 12px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">echo '{"apiKeyHelper":"echo <span style="color: #dc3545; font-weight: 700; background: #ffebee; padding: 2px 4px; border-radius: 3px;">YOUR_API_KEY</span>","env":{"ANTHROPIC_BASE_URL":"http://172.16.70.100:8317"}}' > ~/.claude/settings.json && echo '{"hasCompletedOnboarding":true}' > ~/.claude.json</pre>
+                        <pre style="margin: 0; font-size: 12px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'CLAUDE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo <span style="color: #dc3545; font-weight: 700; background: #ffebee; padding: 2px 4px; border-radius: 3px;">YOUR_API_KEY</span>';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='http://172.16.70.100:8317';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+console.log('Done!');
+CLAUDE_EOF</pre>
                     </div>
                     <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; margin: 12px 0 0 44px; border-left: 4px solid #2196f3;">
                         <p style="font-size: 13px; color: #1565c0; margin: 0; line-height: 1.5;">
-                            <strong>💡 说明：</strong>这条命令会在你的用户目录下创建 <code style="background: white; padding: 2px 6px; border-radius: 3px;">~/.claude/settings.json</code> 配置文件，保存 API Key 和服务器地址
+                            <strong>💡 说明：</strong>这条命令会<strong>合并更新</strong> <code style="background: white; padding: 2px 6px; border-radius: 3px;">~/.claude/settings.json</code>，只修改 API Key 和服务器地址，保留你已有的 MCP、permissions 等配置
                         </p>
                     </div>
                 </div>
@@ -1252,6 +990,93 @@ claude "分析这个项目的代码结构"</pre>
 }</pre>
                     </div>
                 </div>
+
+                <!-- Safe Remove -->
+                <div style="margin-top: 25px; padding-top: 25px; border-top: 2px solid #f0f0f0;">
+                    <h4 style="margin: 0 0 12px 0; color: #dc3545; font-size: 14px; font-weight: 600;">🗑 安全移除代理配置</h4>
+                    <p style="font-size: 13px; color: #666; margin: 0 0 10px 0; line-height: 1.6;">
+                        如需恢复为官方 Claude Code（仅移除代理相关配置，<strong>保留 MCP、permissions 等设置</strong>）：
+                    </p>
+                    <div style="background: #fff5f5; padding: 15px; border-radius: 8px; border: 1px solid #f5c6cb; position: relative;">
+                        <pre id="tutorialRemoveCmd" style="margin: 0; font-size: 11px; color: #666; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'REMOVE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+// Remove Claude proxy config
+const sf=path.join(os.homedir(),'.claude','settings.json');
+if(fs.existsSync(sf)){
+  const s=JSON.parse(fs.readFileSync(sf,'utf8'));
+  delete s.apiKeyHelper;
+  if(s.env){Object.keys(s.env).forEach(k=>{if(k.startsWith('ANTHROPIC'))delete s.env[k]});if(Object.keys(s.env).length===0)delete s.env}
+  fs.writeFileSync(sf,JSON.stringify(s,null,2));
+  console.log('Claude: proxy config removed (MCP/permissions preserved)');
+}else{console.log('Claude: no settings.json, skipped')}
+// Remove Codex proxy config
+const cf=path.join(os.homedir(),'.codex','config.toml');
+if(fs.existsSync(cf)){
+  let c=fs.readFileSync(cf,'utf8');
+  c=c.replace(/^openai_base_url\s*=.*\n?/m,'');
+  fs.writeFileSync(cf,c);
+  console.log('Codex: openai_base_url removed from '+cf);
+}else{console.log('Codex: no config.toml, skipped')}
+// Remove OPENAI_API_KEY from shell rc
+const rc=['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  let content=fs.readFileSync(rc,'utf8');
+  if(content.includes('OPENAI_API_KEY')){
+    content=content.replace(/^export OPENAI_API_KEY=.*\n?/m,'');
+    fs.writeFileSync(rc,content);
+    console.log('Shell: OPENAI_API_KEY removed from '+rc);
+  }
+}
+console.log('All done! Restart terminal to take effect.');
+REMOVE_EOF</pre>
+                        <button onclick="copyTutorialRemoveCmd(this)" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">
+                            复制移除命令
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Codex CLI Section -->
+                <div style="margin-top: 35px; padding-top: 25px; border-top: 3px solid #667eea;">
+                    <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        <span style="background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px;">C</span>
+                        Codex CLI 配置
+                    </h3>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 15px 0; line-height: 1.6;">
+                        同一个 API Key 也可用于 OpenAI Codex CLI，执行以下命令一键配置：
+                    </p>
+                    <div style="background: #f0faf6; padding: 15px; border-radius: 8px; border: 1px solid #b2dfdb; position: relative;">
+                        <pre id="codexSetupCmd" style="margin: 0; font-size: 11px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'CODEX_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.codex');
+const sf=path.join(dir,'config.toml');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
+const line='openai_base_url = "http://172.16.70.100:8317/v1"';
+if(!/^openai_base_url/m.test(c)){
+  const idx=c.indexOf('[');
+  if(idx&gt;0){c=line+'\n'+c}else if(idx===0){c=line+'\n\n'+c}else{c=line+'\n'+c}
+}else{c=c.replace(/^openai_base_url\s*=.*/m,line)}
+fs.writeFileSync(sf,c);
+console.log('Codex config done: '+sf);
+// Auto-persist OPENAI_API_KEY to shell rc
+const rc=['.zshrc','.bashrc'].map(f=&gt;path.join(os.homedir(),f)).find(f=&gt;fs.existsSync(f));
+if(rc){
+  const content=fs.readFileSync(rc,'utf8');
+  if(!content.includes('OPENAI_API_KEY')){
+    fs.appendFileSync(rc,'\nexport OPENAI_API_KEY="<span style="color: #dc3545; font-weight: 700;">YOUR_API_KEY</span>"\n');
+    console.log('Added OPENAI_API_KEY to '+rc);
+  }else{console.log('OPENAI_API_KEY already in '+rc+', update it manually if needed')}
+}else{console.log('No .bashrc/.zshrc found. Add manually: export OPENAI_API_KEY=YOUR_API_KEY')}
+CODEX_EOF</pre>
+                        <button onclick="copyElementText('codexSetupCmd', this)" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;">
+                            复制 Codex 配置命令
+                        </button>
+                    <div style="background: #e8f5e9; padding: 10px; border-radius: 6px; margin-top: 10px; border-left: 4px solid #4caf50;">
+                        <p style="font-size: 12px; color: #2e7d32; margin: 0;">API Key 与 Claude Code 通用，用你申请到的同一个 Key 即可。设置完后运行 <code>codex</code> 即可使用。</p>
+                    </div>
+                </div>
+
+                <!-- Gemini section removed -->
             </div>
         </div>
     </div>
