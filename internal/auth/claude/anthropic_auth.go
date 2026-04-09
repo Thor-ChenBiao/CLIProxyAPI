@@ -14,15 +14,15 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	log "github.com/sirupsen/logrus"
 )
 
+// OAuth configuration constants for Claude/Anthropic
 const (
-	anthropicAuthURL       = "https://claude.ai/oauth/authorize"
-	anthropicTokenURL      = "https://console.anthropic.com/v1/oauth/token"
-	anthropicClientID      = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	defaultRedirectURI     = "http://localhost:54545/callback"
+	AuthURL     = "https://claude.ai/oauth/authorize"
+	TokenURL    = "https://api.anthropic.com/v1/oauth/token"
+	ClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	RedirectURI = "http://localhost:54545/callback"
 )
 
 // tokenResponse represents the response structure from Anthropic's OAuth token endpoint.
@@ -46,12 +46,12 @@ type tokenResponse struct {
 // It provides methods for generating authorization URLs, exchanging codes for tokens,
 // and refreshing expired tokens using PKCE for enhanced security.
 type ClaudeAuth struct {
-	httpClient  *http.Client
-	redirectURI string
+	httpClient *http.Client
 }
 
 // NewClaudeAuth creates a new Anthropic authentication service.
-// It initializes the HTTP client with proxy settings from the configuration.
+// It initializes the HTTP client with a custom TLS transport that uses Firefox
+// fingerprint to bypass Cloudflare's TLS fingerprinting on Anthropic domains.
 //
 // Parameters:
 //   - cfg: The application configuration containing proxy settings
@@ -59,19 +59,11 @@ type ClaudeAuth struct {
 // Returns:
 //   - *ClaudeAuth: A new Claude authentication service instance
 func NewClaudeAuth(cfg *config.Config) *ClaudeAuth {
-	redirectURI := defaultRedirectURI
-	if cfg.OAuthCallbacks.ClaudeCallbackURL != "" {
-		redirectURI = cfg.OAuthCallbacks.ClaudeCallbackURL
-	}
+	// Use custom HTTP client with Firefox TLS fingerprint to bypass
+	// Cloudflare's bot detection on Anthropic domains
 	return &ClaudeAuth{
-		httpClient:  util.SetProxy(&cfg.SDKConfig, &http.Client{}),
-		redirectURI: redirectURI,
+		httpClient: NewAnthropicHttpClient(&cfg.SDKConfig),
 	}
-}
-
-// GetRedirectURI returns the configured redirect URI for OAuth callbacks.
-func (o *ClaudeAuth) GetRedirectURI() string {
-	return o.redirectURI
 }
 
 // GenerateAuthURL creates the OAuth authorization URL with PKCE.
@@ -93,16 +85,16 @@ func (o *ClaudeAuth) GenerateAuthURL(state string, pkceCodes *PKCECodes) (string
 
 	params := url.Values{
 		"code":                  {"true"},
-		"client_id":             {anthropicClientID},
+		"client_id":             {ClientID},
 		"response_type":         {"code"},
-		"redirect_uri":          {o.redirectURI},
-		"scope":                 {"org:create_api_key user:profile user:inference"},
+		"redirect_uri":          {RedirectURI},
+		"scope":                 {"user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"},
 		"code_challenge":        {pkceCodes.CodeChallenge},
 		"code_challenge_method": {"S256"},
 		"state":                 {state},
 	}
 
-	authURL := fmt.Sprintf("%s?%s", anthropicAuthURL, params.Encode())
+	authURL := fmt.Sprintf("%s?%s", AuthURL, params.Encode())
 	return authURL, state, nil
 }
 
@@ -148,8 +140,8 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 		"code":          newCode,
 		"state":         state,
 		"grant_type":    "authorization_code",
-		"client_id":     anthropicClientID,
-		"redirect_uri":  o.redirectURI,
+		"client_id":     ClientID,
+		"redirect_uri":  RedirectURI,
 		"code_verifier": pkceCodes.CodeVerifier,
 	}
 
@@ -165,7 +157,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 
 	// log.Debugf("Token exchange request: %s", string(jsonBody))
 
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicTokenURL, strings.NewReader(string(jsonBody)))
+	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
@@ -232,7 +224,7 @@ func (o *ClaudeAuth) RefreshTokens(ctx context.Context, refreshToken string) (*C
 	}
 
 	reqBody := map[string]interface{}{
-		"client_id":     anthropicClientID,
+		"client_id":     ClientID,
 		"grant_type":    "refresh_token",
 		"refresh_token": refreshToken,
 	}
@@ -242,7 +234,7 @@ func (o *ClaudeAuth) RefreshTokens(ctx context.Context, refreshToken string) (*C
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicTokenURL, strings.NewReader(string(jsonBody)))
+	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}

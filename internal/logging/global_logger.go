@@ -30,7 +30,7 @@ var (
 type LogFormatter struct{}
 
 // logFieldOrder defines the display order for common log fields.
-var logFieldOrder = []string{"provider", "model", "mode", "budget", "level", "original_value", "min", "max", "clamped_to", "error"}
+var logFieldOrder = []string{"provider", "model", "mode", "budget", "level", "original_mode", "original_value", "min", "max", "clamped_to", "error"}
 
 // Format renders a single log entry with custom formatting.
 func (m *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
@@ -121,6 +121,27 @@ func isDirWritable(dir string) bool {
 	return true
 }
 
+// ResolveLogDirectory determines the directory used for application logs.
+func ResolveLogDirectory(cfg *config.Config) string {
+	logDir := "logs"
+	if base := util.WritablePath(); base != "" {
+		return filepath.Join(base, "logs")
+	}
+	if cfg == nil {
+		return logDir
+	}
+	if !isDirWritable(logDir) {
+		authDir, err := util.ResolveAuthDir(cfg.AuthDir)
+		if err != nil {
+			log.Warnf("Failed to resolve auth-dir %q for log directory: %v", cfg.AuthDir, err)
+		}
+		if authDir != "" {
+			logDir = filepath.Join(authDir, "logs")
+		}
+	}
+	return logDir
+}
+
 // ConfigureLogOutput switches the global log destination between rotating files and stdout.
 // When logsMaxTotalSizeMB > 0, a background cleaner removes the oldest log files in the logs directory
 // until the total size is within the limit.
@@ -130,12 +151,7 @@ func ConfigureLogOutput(cfg *config.Config) error {
 	writerMu.Lock()
 	defer writerMu.Unlock()
 
-	logDir := "logs"
-	if base := util.WritablePath(); base != "" {
-		logDir = filepath.Join(base, "logs")
-	} else if !isDirWritable(logDir) {
-		logDir = filepath.Join(cfg.AuthDir, "logs")
-	}
+	logDir := ResolveLogDirectory(cfg)
 
 	protectedPath := ""
 	if cfg.LoggingToFile {

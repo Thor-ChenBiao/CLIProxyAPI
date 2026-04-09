@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/cache"
 	"github.com/tidwall/gjson"
 )
 
@@ -73,30 +74,41 @@ func TestConvertClaudeRequestToAntigravity_RoleMapping(t *testing.T) {
 }
 
 func TestConvertClaudeRequestToAntigravity_ThinkingBlocks(t *testing.T) {
+	cache.ClearSignatureCache("")
+
 	// Valid signature must be at least 50 characters
 	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
+	thinkingText := "Let me think..."
+
+	// Pre-cache the signature (simulating a previous response for the same thinking text)
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5-thinking",
 		"messages": [
 			{
+				"role": "user",
+				"content": [{"type": "text", "text": "Test user message"}]
+			},
+			{
 				"role": "assistant",
 				"content": [
-					{"type": "thinking", "thinking": "Let me think...", "signature": "` + validSignature + `"},
+					{"type": "thinking", "thinking": "` + thinkingText + `", "signature": "` + validSignature + `"},
 					{"type": "text", "text": "Answer"}
 				]
 			}
 		]
 	}`)
 
+	cache.CacheSignature("claude-sonnet-4-5-thinking", thinkingText, validSignature)
+
 	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5-thinking", inputJSON, false)
 	outputStr := string(output)
 
-	// Check thinking block conversion
-	firstPart := gjson.Get(outputStr, "request.contents.0.parts.0")
+	// Check thinking block conversion (now in contents.1 due to user message)
+	firstPart := gjson.Get(outputStr, "request.contents.1.parts.0")
 	if !firstPart.Get("thought").Bool() {
 		t.Error("thinking block should have thought: true")
 	}
-	if firstPart.Get("text").String() != "Let me think..." {
+	if firstPart.Get("text").String() != thinkingText {
 		t.Error("thinking text mismatch")
 	}
 	if firstPart.Get("thoughtSignature").String() != validSignature {
@@ -105,6 +117,8 @@ func TestConvertClaudeRequestToAntigravity_ThinkingBlocks(t *testing.T) {
 }
 
 func TestConvertClaudeRequestToAntigravity_ThinkingBlockWithoutSignature(t *testing.T) {
+	cache.ClearSignatureCache("")
+
 	// Unsigned thinking blocks should be removed entirely (not converted to text)
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5-thinking",
@@ -179,6 +193,42 @@ func TestConvertClaudeRequestToAntigravity_ToolDeclarations(t *testing.T) {
 	}
 }
 
+func TestConvertClaudeRequestToAntigravity_ToolChoice_SpecificTool(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gemini-3-flash-preview",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{"type": "text", "text": "hi"}
+				]
+			}
+		],
+		"tools": [
+			{
+				"name": "json",
+				"description": "A JSON tool",
+				"input_schema": {
+					"type": "object",
+					"properties": {}
+				}
+			}
+		],
+		"tool_choice": {"type": "tool", "name": "json"}
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("gemini-3-flash-preview", inputJSON, false)
+	outputStr := string(output)
+
+	if got := gjson.Get(outputStr, "request.toolConfig.functionCallingConfig.mode").String(); got != "ANY" {
+		t.Fatalf("Expected toolConfig.functionCallingConfig.mode 'ANY', got '%s'", got)
+	}
+	allowed := gjson.Get(outputStr, "request.toolConfig.functionCallingConfig.allowedFunctionNames").Array()
+	if len(allowed) != 1 || allowed[0].String() != "json" {
+		t.Fatalf("Expected allowedFunctionNames ['json'], got %s", gjson.Get(outputStr, "request.toolConfig.functionCallingConfig.allowedFunctionNames").Raw)
+	}
+}
+
 func TestConvertClaudeRequestToAntigravity_ToolUse(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
@@ -226,14 +276,22 @@ func TestConvertClaudeRequestToAntigravity_ToolUse(t *testing.T) {
 }
 
 func TestConvertClaudeRequestToAntigravity_ToolUse_WithSignature(t *testing.T) {
+	cache.ClearSignatureCache("")
+
 	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
+	thinkingText := "Let me think..."
+
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5-thinking",
 		"messages": [
 			{
+				"role": "user",
+				"content": [{"type": "text", "text": "Test user message"}]
+			},
+			{
 				"role": "assistant",
 				"content": [
-					{"type": "thinking", "thinking": "Let me think...", "signature": "` + validSignature + `"},
+					{"type": "thinking", "thinking": "` + thinkingText + `", "signature": "` + validSignature + `"},
 					{
 						"type": "tool_use",
 						"id": "call_123",
@@ -245,11 +303,13 @@ func TestConvertClaudeRequestToAntigravity_ToolUse_WithSignature(t *testing.T) {
 		]
 	}`)
 
+	cache.CacheSignature("claude-sonnet-4-5-thinking", thinkingText, validSignature)
+
 	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5-thinking", inputJSON, false)
 	outputStr := string(output)
 
-	// Check function call has the signature from the preceding thinking block
-	part := gjson.Get(outputStr, "request.contents.0.parts.1")
+	// Check function call has the signature from the preceding thinking block (now in contents.1)
+	part := gjson.Get(outputStr, "request.contents.1.parts.1")
 	if part.Get("functionCall.name").String() != "get_weather" {
 		t.Errorf("Expected functionCall, got %s", part.Raw)
 	}
@@ -259,26 +319,36 @@ func TestConvertClaudeRequestToAntigravity_ToolUse_WithSignature(t *testing.T) {
 }
 
 func TestConvertClaudeRequestToAntigravity_ReorderThinking(t *testing.T) {
+	cache.ClearSignatureCache("")
+
 	// Case: text block followed by thinking block -> should be reordered to thinking first
 	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
+	thinkingText := "Planning..."
+
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5-thinking",
 		"messages": [
 			{
+				"role": "user",
+				"content": [{"type": "text", "text": "Test user message"}]
+			},
+			{
 				"role": "assistant",
 				"content": [
 					{"type": "text", "text": "Here is the plan."},
-					{"type": "thinking", "thinking": "Planning...", "signature": "` + validSignature + `"}
+					{"type": "thinking", "thinking": "` + thinkingText + `", "signature": "` + validSignature + `"}
 				]
 			}
 		]
 	}`)
 
+	cache.CacheSignature("claude-sonnet-4-5-thinking", thinkingText, validSignature)
+
 	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5-thinking", inputJSON, false)
 	outputStr := string(output)
 
-	// Verify order: Thinking block MUST be first
-	parts := gjson.Get(outputStr, "request.contents.0.parts").Array()
+	// Verify order: Thinking block MUST be first (now in contents.1 due to user message)
+	parts := gjson.Get(outputStr, "request.contents.1.parts").Array()
 	if len(parts) != 2 {
 		t.Fatalf("Expected 2 parts, got %d", len(parts))
 	}
@@ -291,10 +361,182 @@ func TestConvertClaudeRequestToAntigravity_ReorderThinking(t *testing.T) {
 	}
 }
 
+func TestConvertClaudeRequestToAntigravity_ReorderTextAfterFunctionCall(t *testing.T) {
+	// Bug: text part after tool_use in an assistant message causes Antigravity
+	// to split at functionCall boundary, creating an extra assistant turn that
+	// breaks tool_use↔tool_result adjacency (upstream issue #989).
+	// Fix: reorder parts so functionCall comes last.
+	inputJSON := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{"type": "text", "text": "Let me check..."},
+					{
+						"type": "tool_use",
+						"id": "call_abc",
+						"name": "Read",
+						"input": {"file": "test.go"}
+					},
+					{"type": "text", "text": "Reading the file now"}
+				]
+			},
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "call_abc",
+						"content": "file content"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	parts := gjson.Get(outputStr, "request.contents.0.parts").Array()
+	if len(parts) != 3 {
+		t.Fatalf("Expected 3 parts, got %d", len(parts))
+	}
+
+	// Text parts should come before functionCall
+	if parts[0].Get("text").String() != "Let me check..." {
+		t.Errorf("Expected first text part first, got %s", parts[0].Raw)
+	}
+	if parts[1].Get("text").String() != "Reading the file now" {
+		t.Errorf("Expected second text part second, got %s", parts[1].Raw)
+	}
+	if !parts[2].Get("functionCall").Exists() {
+		t.Errorf("Expected functionCall last, got %s", parts[2].Raw)
+	}
+	if parts[2].Get("functionCall.name").String() != "Read" {
+		t.Errorf("Expected functionCall name 'Read', got '%s'", parts[2].Get("functionCall.name").String())
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ReorderParallelFunctionCalls(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{"type": "text", "text": "Reading both files."},
+					{
+						"type": "tool_use",
+						"id": "call_1",
+						"name": "Read",
+						"input": {"file": "a.go"}
+					},
+					{"type": "text", "text": "And this one too."},
+					{
+						"type": "tool_use",
+						"id": "call_2",
+						"name": "Read",
+						"input": {"file": "b.go"}
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	parts := gjson.Get(outputStr, "request.contents.0.parts").Array()
+	if len(parts) != 4 {
+		t.Fatalf("Expected 4 parts, got %d", len(parts))
+	}
+
+	if parts[0].Get("text").String() != "Reading both files." {
+		t.Errorf("Expected first text, got %s", parts[0].Raw)
+	}
+	if parts[1].Get("text").String() != "And this one too." {
+		t.Errorf("Expected second text, got %s", parts[1].Raw)
+	}
+	if parts[2].Get("functionCall.name").String() != "Read" || parts[2].Get("functionCall.id").String() != "call_1" {
+		t.Errorf("Expected fc1 third, got %s", parts[2].Raw)
+	}
+	if parts[3].Get("functionCall.name").String() != "Read" || parts[3].Get("functionCall.id").String() != "call_2" {
+		t.Errorf("Expected fc2 fourth, got %s", parts[3].Raw)
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ReorderThinkingAndTextBeforeFunctionCall(t *testing.T) {
+	cache.ClearSignatureCache("")
+
+	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
+	thinkingText := "Let me think about this..."
+
+	inputJSON := []byte(`{
+		"model": "claude-sonnet-4-5-thinking",
+		"messages": [
+			{
+				"role": "user",
+				"content": [{"type": "text", "text": "Hello"}]
+			},
+			{
+				"role": "assistant",
+				"content": [
+					{"type": "text", "text": "Before thinking"},
+					{"type": "thinking", "thinking": "` + thinkingText + `", "signature": "` + validSignature + `"},
+					{
+						"type": "tool_use",
+						"id": "call_xyz",
+						"name": "Bash",
+						"input": {"command": "ls"}
+					},
+					{"type": "text", "text": "After tool call"}
+				]
+			}
+		]
+	}`)
+
+	cache.CacheSignature("claude-sonnet-4-5-thinking", thinkingText, validSignature)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5-thinking", inputJSON, false)
+	outputStr := string(output)
+
+	// contents.1 = assistant message (contents.0 = user)
+	parts := gjson.Get(outputStr, "request.contents.1.parts").Array()
+	if len(parts) != 4 {
+		t.Fatalf("Expected 4 parts, got %d", len(parts))
+	}
+
+	// Order: thinking → text → text → functionCall
+	if !parts[0].Get("thought").Bool() {
+		t.Error("First part should be thinking")
+	}
+	if parts[1].Get("functionCall").Exists() || parts[1].Get("thought").Bool() {
+		t.Errorf("Second part should be text, got %s", parts[1].Raw)
+	}
+	if parts[2].Get("functionCall").Exists() || parts[2].Get("thought").Bool() {
+		t.Errorf("Third part should be text, got %s", parts[2].Raw)
+	}
+	if !parts[3].Get("functionCall").Exists() {
+		t.Errorf("Last part should be functionCall, got %s", parts[3].Raw)
+	}
+}
+
 func TestConvertClaudeRequestToAntigravity_ToolResult(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "claude-3-5-sonnet-20240620",
 		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "get_weather-call-123",
+						"name": "get_weather",
+						"input": {"location": "Paris"}
+					}
+				]
+			},
 			{
 				"role": "user",
 				"content": [
@@ -312,12 +554,176 @@ func TestConvertClaudeRequestToAntigravity_ToolResult(t *testing.T) {
 	outputStr := string(output)
 
 	// Check function response conversion
-	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	funcResp := gjson.Get(outputStr, "request.contents.1.parts.0.functionResponse")
 	if !funcResp.Exists() {
 		t.Error("functionResponse should exist")
 	}
 	if funcResp.Get("id").String() != "get_weather-call-123" {
 		t.Errorf("Expected function id, got '%s'", funcResp.Get("id").String())
+	}
+	if funcResp.Get("name").String() != "get_weather" {
+		t.Errorf("Expected function name 'get_weather', got '%s'", funcResp.Get("name").String())
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultName_TouluFormat(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "claude-haiku-4-5-20251001",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "toolu_tool-48fca351f12844eabf49dad8b63886d2",
+						"name": "Glob",
+						"input": {"pattern": "**/*.py"}
+					},
+					{
+						"type": "tool_use",
+						"id": "toolu_tool-cf2d061f75f845c49aacc18ee75ee708",
+						"name": "Bash",
+						"input": {"command": "ls"}
+					}
+				]
+			},
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "toolu_tool-48fca351f12844eabf49dad8b63886d2",
+						"content": "file1.py\nfile2.py"
+					},
+					{
+						"type": "tool_result",
+						"tool_use_id": "toolu_tool-cf2d061f75f845c49aacc18ee75ee708",
+						"content": "total 10"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-haiku-4-5-20251001", inputJSON, false)
+	outputStr := string(output)
+
+	funcResp0 := gjson.Get(outputStr, "request.contents.1.parts.0.functionResponse")
+	if !funcResp0.Exists() {
+		t.Fatal("first functionResponse should exist")
+	}
+	if got := funcResp0.Get("name").String(); got != "Glob" {
+		t.Errorf("Expected name 'Glob' for toolu_ format, got '%s'", got)
+	}
+
+	funcResp1 := gjson.Get(outputStr, "request.contents.1.parts.1.functionResponse")
+	if !funcResp1.Exists() {
+		t.Fatal("second functionResponse should exist")
+	}
+	if got := funcResp1.Get("name").String(); got != "Bash" {
+		t.Errorf("Expected name 'Bash' for toolu_ format, got '%s'", got)
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultName_CustomFormat(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "claude-haiku-4-5-20251001",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "Read-1773420180464065165-1327",
+						"name": "Read",
+						"input": {"file_path": "/tmp/test.py"}
+					}
+				]
+			},
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "Read-1773420180464065165-1327",
+						"content": "file content here"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-haiku-4-5-20251001", inputJSON, false)
+	outputStr := string(output)
+
+	funcResp := gjson.Get(outputStr, "request.contents.1.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+	if got := funcResp.Get("name").String(); got != "Read" {
+		t.Errorf("Expected name 'Read', got '%s'", got)
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_Heuristic(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "get_weather-call-123",
+						"content": "22C sunny"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+	if got := funcResp.Get("name").String(); got != "get_weather" {
+		t.Errorf("Expected heuristic-derived name 'get_weather', got '%s'", got)
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultName_NoMatchingToolUse_RawID(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "toolu_tool-48fca351f12844eabf49dad8b63886d2",
+						"content": "result data"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+	got := funcResp.Get("name").String()
+	if got == "" {
+		t.Error("functionResponse.name must not be empty")
+	}
+	if got != "toolu_tool-48fca351f12844eabf49dad8b63886d2" {
+		t.Errorf("Expected raw ID as last-resort name, got '%s'", got)
 	}
 }
 
@@ -343,8 +749,8 @@ func TestConvertClaudeRequestToAntigravity_ThinkingConfig(t *testing.T) {
 		if thinkingConfig.Get("thinkingBudget").Int() != 8000 {
 			t.Errorf("Expected thinkingBudget 8000, got %d", thinkingConfig.Get("thinkingBudget").Int())
 		}
-		if !thinkingConfig.Get("include_thoughts").Bool() {
-			t.Error("include_thoughts should be true")
+		if !thinkingConfig.Get("includeThoughts").Bool() {
+			t.Error("includeThoughts should be true")
 		}
 	} else {
 		t.Log("thinkingConfig not present - model may not be registered in test registry")
@@ -379,8 +785,8 @@ func TestConvertClaudeRequestToAntigravity_ImageContent(t *testing.T) {
 	if !inlineData.Exists() {
 		t.Error("inlineData should exist")
 	}
-	if inlineData.Get("mime_type").String() != "image/png" {
-		t.Error("mime_type mismatch")
+	if inlineData.Get("mimeType").String() != "image/png" {
+		t.Error("mimeType mismatch")
 	}
 	if !strings.Contains(inlineData.Get("data").String(), "iVBORw0KGgo") {
 		t.Error("data mismatch")
@@ -459,7 +865,12 @@ func TestConvertClaudeRequestToAntigravity_TrailingUnsignedThinking_Removed(t *t
 }
 
 func TestConvertClaudeRequestToAntigravity_TrailingSignedThinking_Kept(t *testing.T) {
+	cache.ClearSignatureCache("")
+
 	// Last assistant message ends with signed thinking block - should be kept
+	validSignature := "abc123validSignature1234567890123456789012345678901234567890"
+	thinkingText := "Valid thinking..."
+
 	inputJSON := []byte(`{
 		"model": "claude-sonnet-4-5-thinking",
 		"messages": [
@@ -471,11 +882,13 @@ func TestConvertClaudeRequestToAntigravity_TrailingSignedThinking_Kept(t *testin
 				"role": "assistant",
 				"content": [
 					{"type": "text", "text": "Here is my answer"},
-					{"type": "thinking", "thinking": "Valid thinking...", "signature": "abc123validSignature1234567890123456789012345678901234567890"}
+					{"type": "thinking", "thinking": "` + thinkingText + `", "signature": "` + validSignature + `"}
 				]
 			}
 		]
 	}`)
+
+	cache.CacheSignature("claude-sonnet-4-5-thinking", thinkingText, validSignature)
 
 	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5-thinking", inputJSON, false)
 	outputStr := string(output)
@@ -617,6 +1030,508 @@ func TestConvertClaudeRequestToAntigravity_ThinkingOnly_NoHint(t *testing.T) {
 				t.Error("Hint should NOT be injected when only thinking is present (no tools)")
 			}
 		}
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultNoContent(t *testing.T) {
+	// Bug repro: tool_result with no content field produces invalid JSON
+	inputJSON := []byte(`{
+		"model": "claude-opus-4-6-thinking",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "MyTool-123-456",
+						"name": "MyTool",
+						"input": {"key": "value"}
+					}
+				]
+			},
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "MyTool-123-456"
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-opus-4-6-thinking", inputJSON, true)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Errorf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	// Verify the functionResponse has a valid result value
+	fr := gjson.Get(outputStr, "request.contents.1.parts.0.functionResponse.response.result")
+	if !fr.Exists() {
+		t.Error("functionResponse.response.result should exist")
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultNullContent(t *testing.T) {
+	// Bug repro: tool_result with null content produces invalid JSON
+	inputJSON := []byte(`{
+		"model": "claude-opus-4-6-thinking",
+		"messages": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "MyTool-123-456",
+						"name": "MyTool",
+						"input": {"key": "value"}
+					}
+				]
+			},
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "MyTool-123-456",
+						"content": null
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-opus-4-6-thinking", inputJSON, true)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Errorf("Result is not valid JSON:\n%s", outputStr)
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultWithImage(t *testing.T) {
+	// tool_result with array content containing text + image should place
+	// image data inside functionResponse.parts as inlineData, not as a
+	// sibling part in the outer content (to avoid base64 context bloat).
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "Read-123-456",
+						"content": [
+							{
+								"type": "text",
+								"text": "File content here"
+							},
+							{
+								"type": "image",
+								"source": {
+									"type": "base64",
+									"media_type": "image/png",
+									"data": "iVBORw0KGgoAAAANSUhEUg=="
+								}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	// Image should be inside functionResponse.parts, not as outer sibling part
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// Text content should be in response.result
+	resultText := funcResp.Get("response.result.text").String()
+	if resultText != "File content here" {
+		t.Errorf("Expected response.result.text = 'File content here', got '%s'", resultText)
+	}
+
+	// Image should be in functionResponse.parts[0].inlineData
+	inlineData := funcResp.Get("parts.0.inlineData")
+	if !inlineData.Exists() {
+		t.Fatal("functionResponse.parts[0].inlineData should exist")
+	}
+	if inlineData.Get("mimeType").String() != "image/png" {
+		t.Errorf("Expected mimeType 'image/png', got '%s'", inlineData.Get("mimeType").String())
+	}
+	if !strings.Contains(inlineData.Get("data").String(), "iVBORw0KGgo") {
+		t.Error("data mismatch")
+	}
+
+	// Image should NOT be in outer parts (only functionResponse part should exist)
+	outerParts := gjson.Get(outputStr, "request.contents.0.parts")
+	if outerParts.IsArray() && len(outerParts.Array()) > 1 {
+		t.Errorf("Expected only 1 outer part (functionResponse), got %d", len(outerParts.Array()))
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultWithSingleImage(t *testing.T) {
+	// tool_result with single image object as content should place
+	// image data inside functionResponse.parts, not as outer sibling part.
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "Read-789-012",
+						"content": {
+							"type": "image",
+							"source": {
+								"type": "base64",
+								"media_type": "image/jpeg",
+								"data": "/9j/4AAQSkZJRgABAQ=="
+							}
+						}
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// response.result should be empty (image only)
+	if funcResp.Get("response.result").String() != "" {
+		t.Errorf("Expected empty response.result for image-only content, got '%s'", funcResp.Get("response.result").String())
+	}
+
+	// Image should be in functionResponse.parts[0].inlineData
+	inlineData := funcResp.Get("parts.0.inlineData")
+	if !inlineData.Exists() {
+		t.Fatal("functionResponse.parts[0].inlineData should exist")
+	}
+	if inlineData.Get("mimeType").String() != "image/jpeg" {
+		t.Errorf("Expected mimeType 'image/jpeg', got '%s'", inlineData.Get("mimeType").String())
+	}
+
+	// Image should NOT be in outer parts
+	outerParts := gjson.Get(outputStr, "request.contents.0.parts")
+	if outerParts.IsArray() && len(outerParts.Array()) > 1 {
+		t.Errorf("Expected only 1 outer part, got %d", len(outerParts.Array()))
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultWithMultipleImagesAndTexts(t *testing.T) {
+	// tool_result with array content: 2 text items + 2 images
+	// All images go into functionResponse.parts, texts into response.result array
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "Multi-001",
+						"content": [
+							{"type": "text", "text": "First text"},
+							{
+								"type": "image",
+								"source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}
+							},
+							{"type": "text", "text": "Second text"},
+							{
+								"type": "image",
+								"source": {"type": "base64", "media_type": "image/jpeg", "data": "BBBB"}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// Multiple text items => response.result is an array
+	resultArr := funcResp.Get("response.result")
+	if !resultArr.IsArray() {
+		t.Fatalf("Expected response.result to be an array, got: %s", resultArr.Raw)
+	}
+	results := resultArr.Array()
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 result items, got %d", len(results))
+	}
+
+	// Both images should be in functionResponse.parts
+	imgParts := funcResp.Get("parts").Array()
+	if len(imgParts) != 2 {
+		t.Fatalf("Expected 2 image parts in functionResponse.parts, got %d", len(imgParts))
+	}
+	if imgParts[0].Get("inlineData.mimeType").String() != "image/png" {
+		t.Errorf("Expected first image mimeType 'image/png', got '%s'", imgParts[0].Get("inlineData.mimeType").String())
+	}
+	if imgParts[0].Get("inlineData.data").String() != "AAAA" {
+		t.Errorf("Expected first image data 'AAAA', got '%s'", imgParts[0].Get("inlineData.data").String())
+	}
+	if imgParts[1].Get("inlineData.mimeType").String() != "image/jpeg" {
+		t.Errorf("Expected second image mimeType 'image/jpeg', got '%s'", imgParts[1].Get("inlineData.mimeType").String())
+	}
+	if imgParts[1].Get("inlineData.data").String() != "BBBB" {
+		t.Errorf("Expected second image data 'BBBB', got '%s'", imgParts[1].Get("inlineData.data").String())
+	}
+
+	// Only 1 outer part (the functionResponse itself)
+	outerParts := gjson.Get(outputStr, "request.contents.0.parts").Array()
+	if len(outerParts) != 1 {
+		t.Errorf("Expected 1 outer part, got %d", len(outerParts))
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultWithOnlyMultipleImages(t *testing.T) {
+	// tool_result with only images (no text) — response.result should be empty string
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "ImgOnly-001",
+						"content": [
+							{
+								"type": "image",
+								"source": {"type": "base64", "media_type": "image/png", "data": "PNG1"}
+							},
+							{
+								"type": "image",
+								"source": {"type": "base64", "media_type": "image/gif", "data": "GIF1"}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// No text => response.result should be empty string
+	if funcResp.Get("response.result").String() != "" {
+		t.Errorf("Expected empty response.result, got '%s'", funcResp.Get("response.result").String())
+	}
+
+	// Both images in functionResponse.parts
+	imgParts := funcResp.Get("parts").Array()
+	if len(imgParts) != 2 {
+		t.Fatalf("Expected 2 image parts, got %d", len(imgParts))
+	}
+	if imgParts[0].Get("inlineData.mimeType").String() != "image/png" {
+		t.Error("first image mimeType mismatch")
+	}
+	if imgParts[1].Get("inlineData.mimeType").String() != "image/gif" {
+		t.Error("second image mimeType mismatch")
+	}
+
+	// Only 1 outer part
+	outerParts := gjson.Get(outputStr, "request.contents.0.parts").Array()
+	if len(outerParts) != 1 {
+		t.Errorf("Expected 1 outer part, got %d", len(outerParts))
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultImageNotBase64(t *testing.T) {
+	// image with source.type != "base64" should be treated as non-image (falls through)
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "NotB64-001",
+						"content": [
+							{"type": "text", "text": "some output"},
+							{
+								"type": "image",
+								"source": {"type": "url", "url": "https://example.com/img.png"}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// Non-base64 image is treated as non-image, so it goes into the filtered results
+	// along with the text item. Since there are 2 non-image items, result is array.
+	resultArr := funcResp.Get("response.result")
+	if !resultArr.IsArray() {
+		t.Fatalf("Expected response.result to be an array (2 non-image items), got: %s", resultArr.Raw)
+	}
+	results := resultArr.Array()
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 result items, got %d", len(results))
+	}
+
+	// No functionResponse.parts (no base64 images collected)
+	if funcResp.Get("parts").Exists() {
+		t.Error("functionResponse.parts should NOT exist when no base64 images")
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultImageMissingData(t *testing.T) {
+	// image with source.type=base64 but missing data field
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "NoData-001",
+						"content": [
+							{"type": "text", "text": "output"},
+							{
+								"type": "image",
+								"source": {"type": "base64", "media_type": "image/png"}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// The image is still classified as base64 image (type check passes),
+	// but data field is missing => inlineData has mimeType but no data
+	imgParts := funcResp.Get("parts").Array()
+	if len(imgParts) != 1 {
+		t.Fatalf("Expected 1 image part, got %d", len(imgParts))
+	}
+	if imgParts[0].Get("inlineData.mimeType").String() != "image/png" {
+		t.Error("mimeType should still be set")
+	}
+	if imgParts[0].Get("inlineData.data").Exists() {
+		t.Error("data should not exist when source.data is missing")
+	}
+}
+
+func TestConvertClaudeRequestToAntigravity_ToolResultImageMissingMediaType(t *testing.T) {
+	// image with source.type=base64 but missing media_type field
+	inputJSON := []byte(`{
+		"model": "claude-3-5-sonnet-20240620",
+		"messages": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "tool_result",
+						"tool_use_id": "NoMime-001",
+						"content": [
+							{"type": "text", "text": "output"},
+							{
+								"type": "image",
+								"source": {"type": "base64", "data": "AAAA"}
+							}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToAntigravity("claude-sonnet-4-5", inputJSON, false)
+	outputStr := string(output)
+
+	if !gjson.Valid(outputStr) {
+		t.Fatalf("Result is not valid JSON:\n%s", outputStr)
+	}
+
+	funcResp := gjson.Get(outputStr, "request.contents.0.parts.0.functionResponse")
+	if !funcResp.Exists() {
+		t.Fatal("functionResponse should exist")
+	}
+
+	// The image is still classified as base64 image,
+	// but media_type is missing => inlineData has data but no mimeType
+	imgParts := funcResp.Get("parts").Array()
+	if len(imgParts) != 1 {
+		t.Fatalf("Expected 1 image part, got %d", len(imgParts))
+	}
+	if imgParts[0].Get("inlineData.mimeType").Exists() {
+		t.Error("mimeType should not exist when media_type is missing")
+	}
+	if imgParts[0].Get("inlineData.data").String() != "AAAA" {
+		t.Error("data should still be set")
 	}
 }
 

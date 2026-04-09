@@ -10,9 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
@@ -20,27 +18,27 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
-	"golang.org/x/net/proxy"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
+// OAuth configuration constants for Gemini
 const (
-	geminiOauthClientID       = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
-	geminiOauthClientSecret   = "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"
-	geminiDefaultCallbackPort = 8085
+	ClientID            = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+	ClientSecret        = "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"
+	DefaultCallbackPort = 8085
 )
 
-var (
-	geminiOauthScopes = []string{
-		"https://www.googleapis.com/auth/cloud-platform",
-		"https://www.googleapis.com/auth/userinfo.email",
-		"https://www.googleapis.com/auth/userinfo.profile",
-	}
-)
+// OAuth scopes for Gemini authentication
+var Scopes = []string{
+	"https://www.googleapis.com/auth/cloud-platform",
+	"https://www.googleapis.com/auth/userinfo.email",
+	"https://www.googleapis.com/auth/userinfo.profile",
+}
 
 // GeminiAuth provides methods for handling the Gemini OAuth2 authentication flow.
 // It encapsulates the logic for obtaining, storing, and refreshing authentication tokens
@@ -74,48 +72,28 @@ func NewGeminiAuth() *GeminiAuth {
 //   - *http.Client: An HTTP client configured with authentication
 //   - error: An error if the client configuration fails, nil otherwise
 func (g *GeminiAuth) GetAuthenticatedClient(ctx context.Context, ts *GeminiTokenStorage, cfg *config.Config, opts *WebLoginOptions) (*http.Client, error) {
-	callbackPort := geminiDefaultCallbackPort
+	callbackPort := DefaultCallbackPort
 	if opts != nil && opts.CallbackPort > 0 {
 		callbackPort = opts.CallbackPort
 	}
 	callbackURL := fmt.Sprintf("http://localhost:%d/oauth2callback", callbackPort)
 
-	// Configure proxy settings for the HTTP client if a proxy URL is provided.
-	proxyURL, err := url.Parse(cfg.ProxyURL)
-	if err == nil {
-		var transport *http.Transport
-		if proxyURL.Scheme == "socks5" {
-			// Handle SOCKS5 proxy.
-			username := proxyURL.User.Username()
-			password, _ := proxyURL.User.Password()
-			auth := &proxy.Auth{User: username, Password: password}
-			dialer, errSOCKS5 := proxy.SOCKS5("tcp", proxyURL.Host, auth, proxy.Direct)
-			if errSOCKS5 != nil {
-				log.Errorf("create SOCKS5 dialer failed: %v", errSOCKS5)
-				return nil, fmt.Errorf("create SOCKS5 dialer failed: %w", errSOCKS5)
-			}
-			transport = &http.Transport{
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return dialer.Dial(network, addr)
-				},
-			}
-		} else if proxyURL.Scheme == "http" || proxyURL.Scheme == "https" {
-			// Handle HTTP/HTTPS proxy.
-			transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-		}
-
-		if transport != nil {
-			proxyClient := &http.Client{Transport: transport}
-			ctx = context.WithValue(ctx, oauth2.HTTPClient, proxyClient)
-		}
+	transport, _, errBuild := proxyutil.BuildHTTPTransport(cfg.ProxyURL)
+	if errBuild != nil {
+		log.Errorf("%v", errBuild)
+	} else if transport != nil {
+		proxyClient := &http.Client{Transport: transport}
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, proxyClient)
 	}
+
+	var err error
 
 	// Configure the OAuth2 client.
 	conf := &oauth2.Config{
-		ClientID:     geminiOauthClientID,
-		ClientSecret: geminiOauthClientSecret,
+		ClientID:     ClientID,
+		ClientSecret: ClientSecret,
 		RedirectURL:  callbackURL, // This will be used by the local server.
-		Scopes:       geminiOauthScopes,
+		Scopes:       Scopes,
 		Endpoint:     google.Endpoint,
 	}
 
@@ -198,9 +176,9 @@ func (g *GeminiAuth) createTokenStorage(ctx context.Context, config *oauth2.Conf
 	}
 
 	ifToken["token_uri"] = "https://oauth2.googleapis.com/token"
-	ifToken["client_id"] = geminiOauthClientID
-	ifToken["client_secret"] = geminiOauthClientSecret
-	ifToken["scopes"] = geminiOauthScopes
+	ifToken["client_id"] = ClientID
+	ifToken["client_secret"] = ClientSecret
+	ifToken["scopes"] = Scopes
 	ifToken["universe_domain"] = "googleapis.com"
 
 	ts := GeminiTokenStorage{
@@ -226,7 +204,7 @@ func (g *GeminiAuth) createTokenStorage(ctx context.Context, config *oauth2.Conf
 //   - *oauth2.Token: The OAuth2 token obtained from the authorization flow
 //   - error: An error if the token acquisition fails, nil otherwise
 func (g *GeminiAuth) getTokenFromWeb(ctx context.Context, config *oauth2.Config, opts *WebLoginOptions) (*oauth2.Token, error) {
-	callbackPort := geminiDefaultCallbackPort
+	callbackPort := DefaultCallbackPort
 	if opts != nil && opts.CallbackPort > 0 {
 		callbackPort = opts.CallbackPort
 	}
@@ -327,6 +305,9 @@ func (g *GeminiAuth) getTokenFromWeb(ctx context.Context, config *oauth2.Config,
 		defer manualPromptTimer.Stop()
 	}
 
+	var manualInputCh <-chan string
+	var manualInputErrCh <-chan error
+
 waitForCallback:
 	for {
 		select {
@@ -348,13 +329,14 @@ waitForCallback:
 				return nil, err
 			default:
 			}
-			input, err := opts.Prompt("Paste the Gemini callback URL (or press Enter to keep waiting): ")
-			if err != nil {
-				return nil, err
-			}
-			parsed, err := misc.ParseOAuthCallback(input)
-			if err != nil {
-				return nil, err
+			manualInputCh, manualInputErrCh = misc.AsyncPrompt(opts.Prompt, "Paste the Gemini callback URL (or press Enter to keep waiting): ")
+			continue
+		case input := <-manualInputCh:
+			manualInputCh = nil
+			manualInputErrCh = nil
+			parsed, errParse := misc.ParseOAuthCallback(input)
+			if errParse != nil {
+				return nil, errParse
 			}
 			if parsed == nil {
 				continue
@@ -367,6 +349,8 @@ waitForCallback:
 			}
 			authCode = parsed.Code
 			break waitForCallback
+		case errManual := <-manualInputErrCh:
+			return nil, errManual
 		case <-timeoutTimer.C:
 			return nil, fmt.Errorf("oauth flow timed out")
 		}

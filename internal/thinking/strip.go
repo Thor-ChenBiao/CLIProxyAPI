@@ -27,28 +27,44 @@ func StripThinkingConfig(body []byte, provider string) []byte {
 		return body
 	}
 
+	var paths []string
 	switch provider {
 	case "claude":
-		result, _ := sjson.DeleteBytes(body, "thinking")
-		return result
+		paths = []string{"thinking", "output_config.effort"}
 	case "gemini":
-		result, _ := sjson.DeleteBytes(body, "generationConfig.thinkingConfig")
-		return result
+		paths = []string{"generationConfig.thinkingConfig"}
 	case "gemini-cli", "antigravity":
-		result, _ := sjson.DeleteBytes(body, "request.generationConfig.thinkingConfig")
-		return result
+		paths = []string{"request.generationConfig.thinkingConfig"}
 	case "openai":
-		result, _ := sjson.DeleteBytes(body, "reasoning_effort")
-		return result
+		paths = []string{"reasoning_effort"}
+	case "kimi":
+		paths = []string{
+			"reasoning_effort",
+			"thinking",
+		}
 	case "codex":
-		result, _ := sjson.DeleteBytes(body, "reasoning.effort")
-		return result
+		paths = []string{"reasoning.effort"}
 	case "iflow":
-		result, _ := sjson.DeleteBytes(body, "chat_template_kwargs.enable_thinking")
-		result, _ = sjson.DeleteBytes(result, "chat_template_kwargs.clear_thinking")
-		result, _ = sjson.DeleteBytes(result, "reasoning_split")
-		return result
+		paths = []string{
+			"chat_template_kwargs.enable_thinking",
+			"chat_template_kwargs.clear_thinking",
+			"reasoning_split",
+			"reasoning_effort",
+		}
 	default:
 		return body
 	}
+
+	result := body
+	for _, path := range paths {
+		result, _ = sjson.DeleteBytes(result, path)
+	}
+
+	// Avoid leaving an empty output_config object for Claude when effort was the only field.
+	if provider == "claude" {
+		if oc := gjson.GetBytes(result, "output_config"); oc.Exists() && oc.IsObject() && len(oc.Map()) == 0 {
+			result, _ = sjson.DeleteBytes(result, "output_config")
+		}
+	}
+	return result
 }

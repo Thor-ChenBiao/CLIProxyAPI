@@ -129,11 +129,11 @@ func TestModifyResponse_GzipScenarios(t *testing.T) {
 			wantCE:   "",
 		},
 		{
-			name:     "skips_non_2xx_status",
+			name:     "decompresses_non_2xx_status_when_gzip_detected",
 			header:   http.Header{},
 			body:     good,
 			status:   404,
-			wantBody: good,
+			wantBody: goodJSON,
 			wantCE:   "",
 		},
 	}
@@ -490,6 +490,30 @@ func TestReverseProxy_ErrorHandler(t *testing.T) {
 	}
 	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("content-type: want application/json, got %s", ct)
+	}
+}
+
+func TestReverseProxy_ErrorHandler_ContextCanceled(t *testing.T) {
+	// Test that context.Canceled errors return 499 without generic error response
+	proxy, err := createReverseProxy("http://example.com", NewStaticSecretSource(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a canceled context to trigger the cancellation path
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	// Directly invoke the ErrorHandler with context.Canceled
+	proxy.ErrorHandler(rr, req, context.Canceled)
+
+	// Body should be empty for canceled requests (no JSON error response)
+	body := rr.Body.Bytes()
+	if len(body) > 0 {
+		t.Fatalf("expected empty body for canceled context, got: %s", body)
 	}
 }
 
