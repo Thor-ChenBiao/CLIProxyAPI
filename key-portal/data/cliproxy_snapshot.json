@@ -1,0 +1,1462 @@
+{
+  "version": 1,
+  "exported_at": "2026-04-09T12:03:42.320606088Z",
+  "usage": {
+    "total_requests": 100,
+    "success_count": 85,
+    "failure_count": 15,
+    "total_tokens": 11495778,
+    "apis": {
+      "usr_pool_0052_4595a35dee41": {
+        "total_requests": 10,
+        "total_tokens": 91,
+        "models": {
+          "gpt-5.3-codex": {
+            "total_requests": 3,
+            "total_tokens": 46,
+            "details": [
+              {
+                "timestamp": "2026-04-09T11:22:21.517693074Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 11,
+                  "output_tokens": 5,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 16
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:35.438580456Z",
+                "latency_ms": 680,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 11,
+                  "output_tokens": 5,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 16
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:35.546526023Z",
+                "latency_ms": 1229,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 8,
+                  "output_tokens": 6,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 14
+                },
+                "failed": false
+              }
+            ]
+          },
+          "gpt-5.4": {
+            "total_requests": 7,
+            "total_tokens": 45,
+            "details": [
+              {
+                "timestamp": "2026-04-09T11:10:28.588104147Z",
+                "latency_ms": 0,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "651356007641eaba",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:10:28.60836466Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:10:30.356937324Z",
+                "latency_ms": 0,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "651356007641eaba",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:10:30.911704861Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:56:23.903970734Z",
+                "latency_ms": 882,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 11,
+                  "output_tokens": 5,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 16
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:35.666028181Z",
+                "latency_ms": 1265,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 8,
+                  "output_tokens": 5,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 13
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T12:02:55.038788365Z",
+                "latency_ms": 1398,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 11,
+                  "output_tokens": 5,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 16
+                },
+                "failed": false
+              }
+            ]
+          }
+        }
+      },
+      "usr_pool_0098_ffb7971341d6": {
+        "total_requests": 90,
+        "total_tokens": 11495687,
+        "models": {
+          "gpt-5.3-codex": {
+            "total_requests": 79,
+            "total_tokens": 11495687,
+            "details": [
+              {
+                "timestamp": "2026-04-09T11:22:35.191596495Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 109883,
+                  "output_tokens": 180,
+                  "reasoning_tokens": 141,
+                  "cached_tokens": 0,
+                  "total_tokens": 110063
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:25:09.446636896Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 110197,
+                  "output_tokens": 551,
+                  "reasoning_tokens": 228,
+                  "cached_tokens": 0,
+                  "total_tokens": 110748
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:26:14.874686857Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 110535,
+                  "output_tokens": 1202,
+                  "reasoning_tokens": 738,
+                  "cached_tokens": 110080,
+                  "total_tokens": 111737
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:29:06.215415343Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 111121,
+                  "output_tokens": 1232,
+                  "reasoning_tokens": 794,
+                  "cached_tokens": 110464,
+                  "total_tokens": 112353
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:30:27.92359068Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 111580,
+                  "output_tokens": 862,
+                  "reasoning_tokens": 385,
+                  "cached_tokens": 110976,
+                  "total_tokens": 112442
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:32:00.356820125Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 112079,
+                  "output_tokens": 670,
+                  "reasoning_tokens": 273,
+                  "cached_tokens": 111488,
+                  "total_tokens": 112749
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:35:02.726209131Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 112522,
+                  "output_tokens": 265,
+                  "reasoning_tokens": 154,
+                  "cached_tokens": 112000,
+                  "total_tokens": 112787
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:35:56.172204794Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 112639,
+                  "output_tokens": 583,
+                  "reasoning_tokens": 527,
+                  "cached_tokens": 112384,
+                  "total_tokens": 113222
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:36:08.635714988Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 112715,
+                  "output_tokens": 24,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 112512,
+                  "total_tokens": 112739
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:36:14.580479431Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 112755,
+                  "output_tokens": 263,
+                  "reasoning_tokens": 168,
+                  "cached_tokens": 112640,
+                  "total_tokens": 113018
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:36:31.798978272Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 112863,
+                  "output_tokens": 198,
+                  "reasoning_tokens": 105,
+                  "cached_tokens": 112640,
+                  "total_tokens": 113061
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:36:43.507404361Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 113229,
+                  "output_tokens": 123,
+                  "reasoning_tokens": 33,
+                  "cached_tokens": 112768,
+                  "total_tokens": 113352
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:36:51.981508904Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 117124,
+                  "output_tokens": 806,
+                  "reasoning_tokens": 735,
+                  "cached_tokens": 113152,
+                  "total_tokens": 117930
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:37:11.477169806Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 118161,
+                  "output_tokens": 1082,
+                  "reasoning_tokens": 760,
+                  "cached_tokens": 116992,
+                  "total_tokens": 119243
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:37:30.676146785Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 118565,
+                  "output_tokens": 693,
+                  "reasoning_tokens": 603,
+                  "cached_tokens": 118016,
+                  "total_tokens": 119258
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:37:46.899003597Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 119301,
+                  "output_tokens": 675,
+                  "reasoning_tokens": 366,
+                  "cached_tokens": 118400,
+                  "total_tokens": 119976
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:38:08.645605703Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 126505,
+                  "output_tokens": 2623,
+                  "reasoning_tokens": 2551,
+                  "cached_tokens": 119168,
+                  "total_tokens": 129128
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:39:40.517339355Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 127295,
+                  "output_tokens": 890,
+                  "reasoning_tokens": 813,
+                  "cached_tokens": 126336,
+                  "total_tokens": 128185
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:39:59.925051574Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 127432,
+                  "output_tokens": 2179,
+                  "reasoning_tokens": 2104,
+                  "cached_tokens": 127104,
+                  "total_tokens": 129611
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:40:40.145429776Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 127872,
+                  "output_tokens": 684,
+                  "reasoning_tokens": 312,
+                  "cached_tokens": 127360,
+                  "total_tokens": 128556
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:41:04.226763589Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 130950,
+                  "output_tokens": 1851,
+                  "reasoning_tokens": 1763,
+                  "cached_tokens": 127744,
+                  "total_tokens": 132801
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:41:36.659381302Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132164,
+                  "output_tokens": 2143,
+                  "reasoning_tokens": 2055,
+                  "cached_tokens": 130816,
+                  "total_tokens": 134307
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:42:13.105351438Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132412,
+                  "output_tokens": 4660,
+                  "reasoning_tokens": 4635,
+                  "cached_tokens": 132096,
+                  "total_tokens": 137072
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:43:21.695792816Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132451,
+                  "output_tokens": 54,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 132224,
+                  "total_tokens": 132505
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:43:30.512267729Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132527,
+                  "output_tokens": 56,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 132352,
+                  "total_tokens": 132583
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:43:38.59314779Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132604,
+                  "output_tokens": 57,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 132480,
+                  "total_tokens": 132661
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:43:45.959896378Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132684,
+                  "output_tokens": 24,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 132480,
+                  "total_tokens": 132708
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:43:56.740886273Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 132724,
+                  "output_tokens": 339,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 132608,
+                  "total_tokens": 133063
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:44:10.372407832Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 133092,
+                  "output_tokens": 643,
+                  "reasoning_tokens": 287,
+                  "cached_tokens": 132992,
+                  "total_tokens": 133735
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:44:26.118880654Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 133531,
+                  "output_tokens": 6102,
+                  "reasoning_tokens": 5979,
+                  "cached_tokens": 132992,
+                  "total_tokens": 139633
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:45:51.2613094Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 133670,
+                  "output_tokens": 26,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 133376,
+                  "total_tokens": 133696
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:46:01.416462043Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 140144,
+                  "output_tokens": 1540,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 133504,
+                  "total_tokens": 141684
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:46:18.065018111Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 141715,
+                  "output_tokens": 109,
+                  "reasoning_tokens": 74,
+                  "cached_tokens": 140032,
+                  "total_tokens": 141824
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:46:27.878172851Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 141798,
+                  "output_tokens": 33,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 141568,
+                  "total_tokens": 141831
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:46:34.237098659Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 143496,
+                  "output_tokens": 33,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 141696,
+                  "total_tokens": 143529
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:46:40.981607249Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 145196,
+                  "output_tokens": 33,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 143360,
+                  "total_tokens": 145229
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:46:50.056044411Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 147220,
+                  "output_tokens": 575,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 145152,
+                  "total_tokens": 147795
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:47:03.973515836Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 147972,
+                  "output_tokens": 290,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 147072,
+                  "total_tokens": 148262
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:47:15.464419221Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 148287,
+                  "output_tokens": 69,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 147840,
+                  "total_tokens": 148356
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:47:26.395949966Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 148386,
+                  "output_tokens": 134,
+                  "reasoning_tokens": 62,
+                  "cached_tokens": 148224,
+                  "total_tokens": 148520
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:47:39.539491445Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 148714,
+                  "output_tokens": 1992,
+                  "reasoning_tokens": 1931,
+                  "cached_tokens": 148224,
+                  "total_tokens": 150706
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:48:15.88378532Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 148899,
+                  "output_tokens": 278,
+                  "reasoning_tokens": 209,
+                  "cached_tokens": 148608,
+                  "total_tokens": 149177
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:48:32.956056233Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 148984,
+                  "output_tokens": 34,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 148736,
+                  "total_tokens": 149018
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:48:42.685589366Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 150457,
+                  "output_tokens": 1657,
+                  "reasoning_tokens": 1504,
+                  "cached_tokens": 148864,
+                  "total_tokens": 152114
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:18.196510873Z",
+                "latency_ms": 8479,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 161026,
+                  "output_tokens": 24,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 161050
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:28.266846621Z",
+                "latency_ms": 5355,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 161066,
+                  "output_tokens": 50,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 160896,
+                  "total_tokens": 161116
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:35.383332331Z",
+                "latency_ms": 10416,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 161256,
+                  "output_tokens": 214,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 161024,
+                  "total_tokens": 161470
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:47.250439483Z",
+                "latency_ms": 10615,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 161495,
+                  "output_tokens": 313,
+                  "reasoning_tokens": 251,
+                  "cached_tokens": 161280,
+                  "total_tokens": 161808
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:53:59.675260584Z",
+                "latency_ms": 8286,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 161585,
+                  "output_tokens": 56,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 161408,
+                  "total_tokens": 161641
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:54:09.51415801Z",
+                "latency_ms": 8505,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 161671,
+                  "output_tokens": 225,
+                  "reasoning_tokens": 190,
+                  "cached_tokens": 161536,
+                  "total_tokens": 161896
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:54:19.892121931Z",
+                "latency_ms": 9517,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 162027,
+                  "output_tokens": 235,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 161536,
+                  "total_tokens": 162262
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:54:31.423188608Z",
+                "latency_ms": 9314,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 162287,
+                  "output_tokens": 242,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 162176,
+                  "total_tokens": 162529
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:54:42.176200867Z",
+                "latency_ms": 7621,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 162554,
+                  "output_tokens": 61,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 162432,
+                  "total_tokens": 162615
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:54:51.294349548Z",
+                "latency_ms": 7039,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 162719,
+                  "output_tokens": 139,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 162432,
+                  "total_tokens": 162858
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:54:59.813962296Z",
+                "latency_ms": 9119,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 162915,
+                  "output_tokens": 65,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 162688,
+                  "total_tokens": 162980
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:55:10.466251258Z",
+                "latency_ms": 5841,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 163164,
+                  "output_tokens": 33,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 162816,
+                  "total_tokens": 163197
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:55:18.118789411Z",
+                "latency_ms": 7522,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 163324,
+                  "output_tokens": 151,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 163072,
+                  "total_tokens": 163475
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:55:27.474732429Z",
+                "latency_ms": 7322,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 163500,
+                  "output_tokens": 50,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 163328,
+                  "total_tokens": 163550
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:55:37.387308406Z",
+                "latency_ms": 4965,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 163564,
+                  "output_tokens": 27,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 163456,
+                  "total_tokens": 163591
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:55:43.923047029Z",
+                "latency_ms": 7579,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 164467,
+                  "output_tokens": 153,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 163456,
+                  "total_tokens": 164620
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:55:53.036025351Z",
+                "latency_ms": 6254,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 164647,
+                  "output_tokens": 67,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 164480,
+                  "total_tokens": 164714
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:00.966033303Z",
+                "latency_ms": 5264,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 164741,
+                  "output_tokens": 25,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 164608,
+                  "total_tokens": 164766
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:07.61796625Z",
+                "latency_ms": 7441,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 165143,
+                  "output_tokens": 132,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 164608,
+                  "total_tokens": 165275
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:16.63082161Z",
+                "latency_ms": 10826,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 165300,
+                  "output_tokens": 334,
+                  "reasoning_tokens": 138,
+                  "cached_tokens": 165120,
+                  "total_tokens": 165634
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:29.065768014Z",
+                "latency_ms": 7160,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 165519,
+                  "output_tokens": 53,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 165120,
+                  "total_tokens": 165572
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:37.803183409Z",
+                "latency_ms": 5460,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 165734,
+                  "output_tokens": 53,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 165504,
+                  "total_tokens": 165787
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:56:44.675213148Z",
+                "latency_ms": 12542,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 165801,
+                  "output_tokens": 234,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 165632,
+                  "total_tokens": 166035
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:57:17.143656347Z",
+                "latency_ms": 7689,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 166053,
+                  "output_tokens": 23,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 165632,
+                  "total_tokens": 166076
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:57:26.300803856Z",
+                "latency_ms": 5591,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 166092,
+                  "output_tokens": 24,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 165888,
+                  "total_tokens": 166116
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:57:33.378278924Z",
+                "latency_ms": 8866,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 166132,
+                  "output_tokens": 242,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 166016,
+                  "total_tokens": 166374
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:57:48.217101158Z",
+                "latency_ms": 6317,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 166392,
+                  "output_tokens": 76,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 166272,
+                  "total_tokens": 166468
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:58:02.35212172Z",
+                "latency_ms": 10221,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 166486,
+                  "output_tokens": 69,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 166400,
+                  "total_tokens": 166555
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:58:21.20883538Z",
+                "latency_ms": 7500,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 168324,
+                  "output_tokens": 86,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 166400,
+                  "total_tokens": 168410
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:58:32.269679722Z",
+                "latency_ms": 6573,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 168505,
+                  "output_tokens": 103,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 168320,
+                  "total_tokens": 168608
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:58:45.45533075Z",
+                "latency_ms": 9222,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 168642,
+                  "output_tokens": 94,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 168448,
+                  "total_tokens": 168736
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:58:56.256419787Z",
+                "latency_ms": 8705,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 168788,
+                  "output_tokens": 92,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 168576,
+                  "total_tokens": 168880
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:59:06.950636165Z",
+                "latency_ms": 5917,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 168971,
+                  "output_tokens": 84,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 168704,
+                  "total_tokens": 169055
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:59:15.236657825Z",
+                "latency_ms": 5314,
+                "source": "openai-2@zasdas.com",
+                "auth_index": "feda85510759e8a7",
+                "tokens": {
+                  "input_tokens": 169274,
+                  "output_tokens": 23,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 168960,
+                  "total_tokens": 169297
+                },
+                "failed": false
+              },
+              {
+                "timestamp": "2026-04-09T11:59:21.95958774Z",
+                "latency_ms": 12933,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 169313,
+                  "output_tokens": 391,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 169216,
+                  "total_tokens": 169704
+                },
+                "failed": false
+              }
+            ]
+          },
+          "gpt-5.4": {
+            "total_requests": 11,
+            "total_tokens": 0,
+            "details": [
+              {
+                "timestamp": "2026-04-09T11:18:32.775039513Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:18:37.91547387Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:18:44.30887024Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:18:50.958553063Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:19:00.498029022Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:19:10.680752209Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:19:26.980269072Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:19:49.749920958Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:20:32.307146758Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:21:14.500259436Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              },
+              {
+                "timestamp": "2026-04-09T11:21:52.276276583Z",
+                "latency_ms": 0,
+                "source": "openai-3@zasdas.com",
+                "auth_index": "a602e279782d2e1d",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "requests_by_day": {
+      "2026-04-09": 100
+    },
+    "requests_by_hour": {
+      "11": 99,
+      "12": 1
+    },
+    "tokens_by_day": {
+      "2026-04-09": 11495778
+    },
+    "tokens_by_hour": {
+      "11": 11495762,
+      "12": 16
+    }
+  }
+}
