@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>申请 API Key - Key Portal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn:active { transform: translateY(0); }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .api-key {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: monospace;
+            word-break: break-all;
+            border: 1px solid #dee2e6;
+        }
+        .links {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        .links a:hover { text-decoration: underline; }
+        .pool-status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔑 申请 API Key</h1>
+        <p class="subtitle">填写信息获取您的专属 API Key</p>
+
+        <div class="pool-status" id="poolStatus">
+            <span>剩余可用 Key：<strong id="unusedCount">-</strong> 个</span>
+        </div>
+
+        <form id="registerForm">
+            <div class="form-group">
+                <label for="email">邮箱 *</label>
+                <input type="email" id="email" name="email" required placeholder="your@email.com">
+            </div>
+
+            <div class="form-group">
+                <label for="name">姓名（可选）</label>
+                <input type="text" id="name" name="name" placeholder="张三">
+            </div>
+
+            <div class="form-group">
+                <label for="label">Key 标签（可选）</label>
+                <input type="text" id="label" name="label" placeholder="工作电脑">
+            </div>
+
+            <button type="submit" class="btn" id="submitBtn">申请 API Key</button>
+        </form>
+
+        <div class="result" id="result"></div>
+
+        <div class="links">
+            <a href="/my-keys">查看我的 Keys</a>
+            <a href="/admin/users">用户统计</a>
+            <a href="/">返回首页</a>
+        </div>
+    </div>
+
+    <script>
+        // Load pool status
+        fetch('/api/key-pool-status')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('unusedCount').textContent = data.unused;
+            });
+
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const email = document.getElementById('email').value.trim();
+            const name = document.getElementById('name').value.trim();
+            const label = document.getElementById('label').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            const result = document.getElementById('result');
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '申请中...';
+            result.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/register-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, name, label })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    result.className = 'result success';
+                    result.innerHTML = `
+                        <strong>✅ 申请成功！</strong><br><br>
+                        您的 API Key：<br>
+                        <div class="api-key">${data.api_key}</div>
+                        <p>请妥善保管此 Key，配置到 Claude Code 中使用。</p>
+                    `;
+                    result.style.display = 'block';
+                    document.getElementById('registerForm').reset();
+
+                    // Refresh pool status
+                    fetch('/api/key-pool-status')
+                        .then(r => r.json())
+                        .then(d => document.getElementById('unusedCount').textContent = d.unused);
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `<strong>❌ 申请失败</strong><br>${data.error}`;
+                    result.style.display = 'block';
+                }
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `<strong>❌ 网络错误</strong><br>${error.message}`;
+                result.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '申请 API Key';
+            }
+        });
+    </script>
+</body>
+</html>
