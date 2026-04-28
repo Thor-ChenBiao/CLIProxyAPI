@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的 Keys - Key Portal</title>
+    <script src="/static/i18n.js?v=20260426-3"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -270,8 +271,11 @@
 
             listDiv.innerHTML = keysWithStats.map((item, index) => {
                 const stats = item.stats;
-                const requests = stats ? stats.total_requests : 0;
-                const tokens = stats ? stats.total_tokens : 0;
+                const keyStats = stats && Array.isArray(stats.all_keys)
+                    ? stats.all_keys.find(k => k.key === item.key)
+                    : null;
+                const requests = keyStats ? keyStats.total_requests : 0;
+                const tokens = keyStats ? keyStats.total_tokens : 0;
 
                 return `
                     <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
@@ -360,11 +364,13 @@
                 const data = await response.json();
 
                 if (response.ok) {
+                    const userTotalRequests = data.user_total_requests !== undefined ? data.user_total_requests : data.total_requests;
+                    const userTotalTokens = data.user_total_tokens !== undefined ? data.user_total_tokens : data.total_tokens;
                     // Display user info
                     document.getElementById('userName').textContent = data.identifier;
                     document.getElementById('userEmail').textContent = `Key: ${apiKey}`;
-                    document.getElementById('totalRequests').textContent = formatNumber(data.total_requests);
-                    document.getElementById('totalTokens').textContent = formatNumber(data.total_tokens);
+                    document.getElementById('totalRequests').textContent = formatNumber(userTotalRequests);
+                    document.getElementById('totalTokens').textContent = formatNumber(userTotalTokens);
                     document.getElementById('keyCount').textContent = data.all_keys.length;
                     userInfo.style.display = 'block';
 
@@ -423,7 +429,7 @@
         }
 
         function copySetupCmd(apiKey, btn) {
-            const baseUrl = `${window.location.protocol}//${window.location.hostname}:8317`;
+            const baseUrl = {{ service_info.base_url|tojson }};
             const cmd = `node << 'CLAUDE_EOF'
 const fs=require('fs'),path=require('path'),os=require('os');
 const dir=path.join(os.homedir(),'.claude');
@@ -444,25 +450,49 @@ CLAUDE_EOF`;
         }
 
         function copyCodexCmd(apiKey, btn) {
-            const baseUrl = `${window.location.protocol}//${window.location.hostname}:8317`;
+            const baseUrl = {{ service_info.base_url|tojson }};
             const cmd = `node << 'CODEX_EOF'
 const fs=require('fs'),path=require('path'),os=require('os');
 const dir=path.join(os.homedir(),'.codex');
 const sf=path.join(dir,'config.toml');
 if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
 let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
-const line='openai_base_url = "${baseUrl}/v1"';
-if(!/^openai_base_url/m.test(c)){
-  // Insert at top (before any [section])
+function upsertTop(key,value){
+  const line=key+' = '+value;
+  const re=new RegExp('^'+key+'\\\\s*=.*$','m');
+  if(re.test(c)){c=c.replace(re,line);return}
   const idx=c.indexOf('[');
-  if(idx>0){c=line+'\\n'+c}else if(idx===0){c=line+'\\n\\n'+c}else{c=line+'\\n'+c}
-}else{c=c.replace(/^openai_base_url\\s*=.*/m,line)}
-fs.writeFileSync(sf,c);
+  c=idx>=0?line+'\\n'+c:line+'\\n'+c;
+}
+upsertTop('model_provider','"local"');
+upsertTop('model','"gpt-5.5"');
+upsertTop('model_reasoning_effort','"high"');
+upsertTop('personality','"pragmatic"');
+c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+const providerBlock=[
+  '[model_providers.local]',
+  'name = "local"',
+  'base_url = "${baseUrl}/v1"',
+  'env_key = "OPENAI_API_KEY"',
+  'wire_api = "responses"'
+].join('\\n');
+if(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m.test(c)){
+  c=c.replace(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m,providerBlock);
+}else{
+  c=c.trimEnd()+'\\n\\n'+providerBlock;
+}
+fs.writeFileSync(sf,c.trimEnd()+'\\n');
 const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
 if(rc){
   const content=fs.readFileSync(rc,'utf8');
-  if(!content.includes('OPENAI_API_KEY')){fs.appendFileSync(rc,'\\nexport OPENAI_API_KEY="${apiKey}"\\n');console.log('Added OPENAI_API_KEY to '+rc)}
-  else{const updated=content.replace(/^export OPENAI_API_KEY=.*/m,'export OPENAI_API_KEY="${apiKey}"');fs.writeFileSync(rc,updated);console.log('Updated OPENAI_API_KEY in '+rc)}
+  const line='export OPENAI_API_KEY="${apiKey}"';
+  if(/^export OPENAI_API_KEY=.*/m.test(content)){
+    fs.writeFileSync(rc,content.replace(/^export OPENAI_API_KEY=.*/m,line));
+    console.log('Updated OPENAI_API_KEY in '+rc);
+  }else{
+    fs.appendFileSync(rc,'\\n'+line+'\\n');
+    console.log('Added OPENAI_API_KEY to '+rc);
+  }
 }else{console.log('No .bashrc/.zshrc found. Please add manually: export OPENAI_API_KEY=${apiKey}')}
 console.log('Codex config done: '+sf);
 CODEX_EOF
@@ -487,8 +517,10 @@ const cf=path.join(os.homedir(),'.codex','config.toml');
 if(fs.existsSync(cf)){
   let c=fs.readFileSync(cf,'utf8');
   c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+  c=c.replace(/^model_provider\\s*=\\s*"local"\\n?/m,'');
+  c=c.replace(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m,'');
   fs.writeFileSync(cf,c);
-  console.log('Codex: openai_base_url removed from '+cf);
+  console.log('Codex: local proxy provider removed from '+cf);
 }else{console.log('Codex: no config.toml found, skipped')}
 // Remove OPENAI_API_KEY from shell rc
 const rc=['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));

@@ -237,8 +237,8 @@ def get_usage_aggregated():
     """Get usage history with daily, monthly, and yearly aggregations."""
     history = get_daily_usage_history()
 
-    by_month = defaultdict(lambda: {"total_tokens": 0, "total_requests": 0})
-    by_year = defaultdict(lambda: {"total_tokens": 0, "total_requests": 0})
+    by_month = defaultdict(lambda: {"total_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0})
+    by_year = defaultdict(lambda: {"total_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0})
 
     for data in history:
         date = data['date']
@@ -247,11 +247,15 @@ def get_usage_aggregated():
         month_key = date[:7]
         by_month[month_key]["total_tokens"] += data["total_tokens"]
         by_month[month_key]["total_requests"] += data["total_requests"]
+        by_month[month_key]["success_count"] += data.get("success_count", 0)
+        by_month[month_key]["failure_count"] += data.get("failure_count", 0)
 
         # Yearly aggregation (YYYY)
         year_key = date[:4]
         by_year[year_key]["total_tokens"] += data["total_tokens"]
         by_year[year_key]["total_requests"] += data["total_requests"]
+        by_year[year_key]["success_count"] += data.get("success_count", 0)
+        by_year[year_key]["failure_count"] += data.get("failure_count", 0)
 
     return {
         "history": history,

@@ -29,6 +29,11 @@ def register_page_routes(app):
         """Admin page for user statistics."""
         return render_template("admin_users.html")
 
+    @app.route("/admin/auth-stats")
+    def admin_auth_stats_page():
+        """Admin page for auth file statistics."""
+        return render_template("admin_auth_stats.html")
+
     @app.route("/login")
     def login():
         """OAuth login page for contributing keys."""

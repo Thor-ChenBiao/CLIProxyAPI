@@ -16,13 +16,26 @@ KEY_EXPIRE_WARNING_HOURS = 2
 # Check interval for key expiry (minutes)
 KEY_CHECK_INTERVAL_MINUTES = 30
 
+def _env_int(name, default):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 # Server settings
-HOST = "0.0.0.0"
-PORT = 8080
+HOST = os.environ.get("KEY_PORTAL_HOST", "0.0.0.0").strip() or "0.0.0.0"
+PORT = _env_int("KEY_PORTAL_PORT", 8080)
 
 # Service info for tutorial page
 _public_base = os.environ.get("PUBLIC_BASE_URL", "").strip()
-if _public_base:
+_public_api_base = os.environ.get("PUBLIC_API_BASE_URL", "").strip()
+if _public_api_base:
+    _service_base_url = _public_api_base.rstrip("/")
+elif _public_base:
     _service_base_url = _public_base.rstrip("/").replace(":8080", ":8317")
 else:
     _public_host = os.environ.get("PUBLIC_HOST", "").strip()

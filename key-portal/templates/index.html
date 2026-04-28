@@ -6,6 +6,7 @@
     <title>AI 能量站</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="/static/i18n.js?v=20260426-3"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
@@ -16,7 +17,7 @@
         .token-counter { text-align: center; }
         .token-counter .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; }
         .token-counter .label { font-size: 12px; opacity: 0.8; margin-top: 3px; }
-        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
         .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
         .tab:hover { background: #f8f9fa; }
@@ -87,6 +88,33 @@
         .account-name { font-weight: 500; font-size: 15px; }
         .account-email { font-size: 13px; color: #666; margin-top: 3px; }
         .account-meta { font-size: 12px; color: #999; margin-top: 3px; }
+
+        .auth-stats-panel { margin-top: 32px; padding: 22px; background: linear-gradient(180deg, #fbfcff 0%, #f6f8ff 100%); border: 1px solid #e3e8ff; border-radius: 16px; box-shadow: 0 8px 28px rgba(102,126,234,0.08); }
+        .auth-stats-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+        .auth-stats-head h3 { margin: 0; color: #4f5fd7; font-size: 20px; }
+        .auth-stats-head p { margin: 4px 0 0 0; color: #8a94b8; font-size: 13px; }
+        .auth-stats-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 16px 0 18px; }
+        .auth-node-card { background: white; border: 1px solid #e5e9ff; border-radius: 14px; padding: 16px; box-shadow: 0 4px 16px rgba(31,45,90,0.06); }
+        .auth-node-card h4 { margin: 0 0 12px 0; color: #3f4bc4; font-size: 17px; display:flex; justify-content:space-between; align-items:center; }
+        .node-pill { font-size: 11px; color: #667eea; background: #eef2ff; padding: 3px 8px; border-radius: 999px; }
+        .auth-node-card .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin: 7px 0; color: #596072; }
+        .auth-node-card .line strong { color: #20243a; font-variant-numeric: tabular-nums; }
+        .auth-table-wrap { overflow-x: auto; background: white; border: 1px solid #edf0ff; border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8); }
+        .auth-stats-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; min-width: 1120px; }
+        .auth-stats-table th { position: sticky; top: 0; z-index: 1; background: #f4f6ff; color: #5361d9; font-weight: 700; border-bottom: 1px solid #e7eaff; }
+        .auth-stats-table th, .auth-stats-table td { padding: 11px 12px; border-bottom: 1px solid #f0f2f8; text-align: right; vertical-align: top; }
+        .auth-stats-table tbody tr:hover { background: #fafbff; }
+        .auth-stats-table th:first-child, .auth-stats-table td:first-child,
+        .auth-stats-table th:nth-child(2), .auth-stats-table td:nth-child(2),
+        .auth-stats-table th:nth-child(3), .auth-stats-table td:nth-child(3) { text-align: left; }
+        .auth-status { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .auth-status.active { background: #e6f7ee; color: #0d8f4f; }
+        .auth-status.warning { background: #fff6df; color: #a66a00; }
+        .auth-status.error { background: #ffecec; color: #c82333; }
+        .auth-status.other { background: #f0f0f0; color: #666; }
+        .auth-msg { margin-top: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9aa0ad; font-size: 12px; }
+        .auth-account { font-weight: 650; color: #2c334a; }
+        .auth-sub { color: #98a0b3; font-size: 12px; margin-top: 2px; }
         .account-actions { display: flex; gap: 8px; }
         .action-btn { background: #667eea; color: white; border: none; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
         .action-btn:hover { background: #5a6fd6; transform: translateY(-1px); }
@@ -211,7 +239,10 @@
             </div>
 
             <div class="section-title">
-                <h3>用量趋势</h3>
+                <div>
+                    <h3>用量趋势</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">橙线是 Token/请求，紫线是平均 Token/小时。</div>
+                </div>
                 <div class="view-toggle">
                     <button class="view-btn active" onclick="setChartView('hour')" id="viewHour">时</button>
                     <button class="view-btn" onclick="setChartView('day')" id="viewDay">日</button>
@@ -221,6 +252,26 @@
             </div>
             <div class="chart-container">
                 <canvas id="usageChart"></canvas>
+            </div>
+
+            <div class="section-title" style="margin-top: 28px;">
+                <div>
+                    <h3>每小时请求与成功/失败率</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">柱子是每小时请求数，绿线是成功率，红线是失败率。</div>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="requestQualityChart"></canvas>
+            </div>
+
+            <div class="auth-stats-panel">
+                <div class="auth-stats-head">
+                    <div>
+                        <h3>认证文件整体统计</h3>
+                        <p>认证文件明细已经拆到独立页面，按节点聚合展示 1 小时、5 小时、24 小时、7 天和累计用量。</p>
+                    </div>
+                    <a href="/admin/auth-stats" target="_blank" class="refresh-btn" style="margin:0;text-decoration:none;display:inline-block;">打开认证统计</a>
+                </div>
             </div>
 
             <h3 style="margin-bottom: 10px; color: #667eea;">详细数据</h3>
@@ -291,6 +342,32 @@
             return num.toLocaleString('zh-CN');
         }
 
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '-';
+            const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+            if (!match) return String(value).replace('T', ' ').replace('Z', '').split('.')[0];
+            const utcMs = Date.UTC(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3]),
+                Number(match[4]),
+                Number(match[5]),
+                Number(match[6])
+            );
+            const bj = new Date(utcMs + 8 * 60 * 60 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${bj.getUTCFullYear()}-${pad(bj.getUTCMonth() + 1)}-${pad(bj.getUTCDate())} ${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function formatPercent(value) {
+            const num = Number(value || 0);
+            return num ? num.toFixed(num >= 10 ? 1 : 2) + '%' : '0%';
+        }
+
         // Animated counter effect
         const counterState = {};
         function animateCounter(elementId, targetValue) {
@@ -301,8 +378,8 @@
             counterState[elementId] = targetValue;
 
             // Check if this is a header token counter
-            const isHeaderCounter = elementId === 'todayTokenCounter' || elementId === 'totalTokenCounter';
-            const formatter = isHeaderCounter ? formatNumberFull : formatNumber;
+            const isTodayCounter = elementId === 'todayTokenCounter' || elementId === 'todayRequestCounter';
+            const formatter = isTodayCounter ? formatNumberFull : formatNumber;
 
             if (currentValue === targetValue) {
                 el.textContent = formatter(targetValue);
@@ -332,7 +409,8 @@
 
         // Chart state
         let usageChart = null;
-        let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {} };
+        let requestQualityChart = null;
+        let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {} };
         let currentView = 'hour';
 
         // WebSocket connection
@@ -365,6 +443,19 @@
             document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById('view' + view.charAt(0).toUpperCase() + view.slice(1)).classList.add('active');
             renderChart();
+            renderRequestQualityChart();
+        }
+
+        function getRecentBeijingHourBuckets() {
+            const currentBeijingHour = (new Date().getUTCHours() + 8) % 24;
+            return Array.from({ length: 24 }, (_, i) => {
+                const beijingHour = (currentBeijingHour + i + 1) % 24;
+                const utcHour = (beijingHour + 16) % 24;
+                return {
+                    label: String(beijingHour).padStart(2, '0') + ':00',
+                    utcKey: String(utcHour).padStart(2, '0')
+                };
+            });
         }
 
         function renderChart() {
@@ -373,44 +464,55 @@
             let labels = [];
             let tokenData = [];
             let requestData = [];
+            let hoursForRate = [];
+
+            const daysInMonth = (monthKey) => {
+                const [year, month] = monthKey.split('-').map(Number);
+                return new Date(year, month, 0).getDate();
+            };
+            const daysInYear = (year) => {
+                const y = Number(year);
+                return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
+            };
 
             if (currentView === 'hour') {
-                // Hourly view - last 24 hours (convert UTC to China Time UTC+8)
-                const hours = Object.keys(usageData.tokens_by_hour || {}).sort();
-                labels = hours.map(h => {
-                    // h is "HH" format like "03", "04", convert UTC to China Time (UTC+8)
-                    const utcHour = parseInt(h);
-                    const chinaHour = (utcHour + 8) % 24;
-                    return String(chinaHour).padStart(2, '0') + ':00';
-                });
-                tokenData = hours.map(h => usageData.tokens_by_hour[h] || 0);
-                requestData = hours.map(h => usageData.requests_by_hour[h] || 0);
+                const hourBuckets = getRecentBeijingHourBuckets();
+                labels = hourBuckets.map(h => h.label);
+                tokenData = hourBuckets.map(h => usageData.tokens_by_hour?.[h.utcKey] || 0);
+                requestData = hourBuckets.map(h => usageData.requests_by_hour?.[h.utcKey] || 0);
+                hoursForRate = hourBuckets.map(() => 1);
             } else if (currentView === 'day') {
                 // Last 30 days
                 const sorted = [...usageData.history].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
                 labels = sorted.map(d => d.date.slice(5)); // MM-DD
                 tokenData = sorted.map(d => d.total_tokens);
                 requestData = sorted.map(d => d.total_requests);
+                hoursForRate = sorted.map(() => 24);
             } else if (currentView === 'month') {
                 // By month
                 const months = Object.keys(usageData.by_month).sort().slice(-12);
                 labels = months.map(m => m.slice(2)); // YY-MM
                 tokenData = months.map(m => usageData.by_month[m].total_tokens);
                 requestData = months.map(m => usageData.by_month[m].total_requests);
+                hoursForRate = months.map(m => daysInMonth(m) * 24);
             } else if (currentView === 'year') {
                 // By year
                 const years = Object.keys(usageData.by_year).sort();
                 labels = years;
                 tokenData = years.map(y => usageData.by_year[y].total_tokens);
                 requestData = years.map(y => usageData.by_year[y].total_requests);
+                hoursForRate = years.map(y => daysInYear(y) * 24);
             }
+
+            const tokensPerRequestData = tokenData.map((tokens, i) => requestData[i] ? tokens / requestData[i] : null);
+            const tokensPerHourData = tokenData.map((tokens, i) => hoursForRate[i] ? tokens / hoursForRate[i] : null);
 
             if (usageChart) {
                 usageChart.destroy();
             }
 
             usageChart = new Chart(ctx, {
-                type: (currentView === 'day' || currentView === 'hour') ? 'line' : 'bar',
+                type: 'bar',
                 data: {
                     labels: labels,
                     datasets: [
@@ -418,19 +520,41 @@
                             label: 'Token 消耗',
                             data: tokenData,
                             borderColor: '#667eea',
-                            backgroundColor: (currentView === 'day' || currentView === 'hour') ? 'rgba(102, 126, 234, 0.1)' : 'rgba(102, 126, 234, 0.7)',
-                            fill: (currentView === 'day' || currentView === 'hour'),
-                            tension: 0.3,
+                            backgroundColor: 'rgba(102, 126, 234, 0.55)',
                             yAxisID: 'y'
                         },
                         {
                             label: '请求数',
                             data: requestData,
                             borderColor: '#28a745',
-                            backgroundColor: (currentView === 'day' || currentView === 'hour') ? 'rgba(40, 167, 69, 0.1)' : 'rgba(40, 167, 69, 0.7)',
-                            fill: (currentView === 'day' || currentView === 'hour'),
-                            tension: 0.3,
+                            backgroundColor: 'rgba(40, 167, 69, 0.45)',
                             yAxisID: 'y1'
+                        },
+                        {
+                            type: 'line',
+                            label: 'Token/请求',
+                            data: tokensPerRequestData,
+                            borderColor: '#fd7e14',
+                            backgroundColor: 'rgba(253, 126, 20, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'y2'
+                        },
+                        {
+                            type: 'line',
+                            label: '平均 Token/小时',
+                            data: tokensPerHourData,
+                            borderColor: '#6f42c1',
+                            backgroundColor: 'rgba(111, 66, 193, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'y3'
                         }
                     ]
                 },
@@ -442,10 +566,18 @@
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    let label = context.dataset.label || '';
-                                    if (label) label += ': ';
-                                    label += formatNumber(context.parsed.y);
-                                    return label;
+                                    const label = context.dataset.label || '';
+                                    const value = context.parsed.y;
+                                    if (value === null || value === undefined || Number.isNaN(value)) {
+                                        return label + ': 无请求';
+                                    }
+                                    if (label === 'Token/请求') {
+                                        return label + ': ' + value.toFixed(1);
+                                    }
+                                    if (label === '平均 Token/小时') {
+                                        return label + ': ' + formatNumber(Math.round(value));
+                                    }
+                                    return label + ': ' + formatNumber(value);
                                 }
                             }
                         }
@@ -464,6 +596,180 @@
                             position: 'right',
                             title: { display: true, text: '请求数' },
                             grid: { drawOnChartArea: false }
+                        },
+                        y2: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            offset: true,
+                            title: { display: true, text: 'Token/请求', color: '#fd7e14' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#fd7e14', callback: v => Number(v).toFixed(0) }
+                        },
+                        y3: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            offset: true,
+                            title: { display: true, text: '平均 Token/小时', color: '#6f42c1' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#6f42c1', callback: v => formatNumber(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderRequestQualityChart() {
+            const ctx = document.getElementById('requestQualityChart').getContext('2d');
+            let labels = [];
+            let requestData = [];
+            let successData = [];
+            let failureData = [];
+            let latencyData = [];
+            let requestLabel = '每小时请求数';
+
+            if (currentView === 'hour') {
+                const hourBuckets = getRecentBeijingHourBuckets();
+                labels = hourBuckets.map(h => h.label);
+                requestData = hourBuckets.map(h => usageData.requests_by_hour?.[h.utcKey] || 0);
+                successData = hourBuckets.map(h => usageData.success_by_hour?.[h.utcKey] || 0);
+                failureData = hourBuckets.map(h => usageData.failure_by_hour?.[h.utcKey] || 0);
+                latencyData = hourBuckets.map(h => usageData.avg_latency_ms_by_hour?.[h.utcKey] ?? null);
+                requestLabel = '每小时请求数';
+            } else if (currentView === 'day') {
+                const sorted = [...(usageData.history || [])].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
+                labels = sorted.map(d => d.date.slice(5));
+                requestData = sorted.map(d => d.total_requests || 0);
+                successData = sorted.map(d => d.success_count || 0);
+                failureData = sorted.map(d => d.failure_count || 0);
+                requestLabel = '每日请求数';
+            } else if (currentView === 'month') {
+                const months = Object.keys(usageData.by_month || {}).sort().slice(-12);
+                labels = months.map(m => m.slice(2));
+                requestData = months.map(m => usageData.by_month[m].total_requests || 0);
+                successData = months.map(m => usageData.by_month[m].success_count || 0);
+                failureData = months.map(m => usageData.by_month[m].failure_count || 0);
+                requestLabel = '每月请求数';
+            } else if (currentView === 'year') {
+                const years = Object.keys(usageData.by_year || {}).sort();
+                labels = years;
+                requestData = years.map(y => usageData.by_year[y].total_requests || 0);
+                successData = years.map(y => usageData.by_year[y].success_count || 0);
+                failureData = years.map(y => usageData.by_year[y].failure_count || 0);
+                requestLabel = '每年请求数';
+            }
+
+            const successRateData = requestData.map((requests, i) => requests ? successData[i] * 100 / requests : null);
+            const failureRateData = requestData.map((requests, i) => requests ? failureData[i] * 100 / requests : null);
+
+            if (requestQualityChart) {
+                requestQualityChart.destroy();
+            }
+
+            requestQualityChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: requestLabel,
+                            data: requestData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.45)',
+                            yAxisID: 'requests'
+                        },
+                        {
+                            type: 'line',
+                            label: '成功率',
+                            data: successRateData,
+                            borderColor: '#28a745',
+                            backgroundColor: 'rgba(40, 167, 69, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'rate'
+                        },
+                        {
+                            type: 'line',
+                            label: '失败率',
+                            data: failureRateData,
+                            borderColor: '#dc3545',
+                            backgroundColor: 'rgba(220, 53, 69, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'rate'
+                        },
+                        {
+                            type: 'line',
+                            label: '平均耗时(ms)',
+                            data: latencyData,
+                            borderColor: '#17a2b8',
+                            backgroundColor: 'rgba(23, 162, 184, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'latency'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.dataset.label || '';
+                                    const value = context.parsed.y;
+                                    if (value === null || value === undefined || Number.isNaN(value)) {
+                                        return label + ': 无请求';
+                                    }
+                                    if (label === '成功率' || label === '失败率') {
+                                        return label + ': ' + value.toFixed(1) + '%';
+                                    }
+                                    if (label === '平均耗时(ms)') {
+                                        return label + ': ' + formatNumber(Math.round(value)) + ' ms';
+                                    }
+                                    return label + ': ' + formatNumber(value);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        requests: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: '请求数' },
+                            ticks: { callback: v => formatNumber(v) }
+                        },
+                        rate: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            title: { display: true, text: '成功率 / 失败率' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { callback: v => v + '%' }
+                        },
+                        latency: {
+                            type: 'linear',
+                            display: currentView === 'hour',
+                            position: 'right',
+                            offset: true,
+                            title: { display: true, text: '平均耗时(ms)', color: '#17a2b8' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#17a2b8', callback: v => formatNumber(v) }
                         }
                     }
                 }
@@ -500,8 +806,9 @@
                 animateCounter('todayRequestCounter', todayRequests);
                 animateCounter('totalRequestCounter', usage.total_requests || 0);
 
-                // Render chart
+                // Render charts
                 renderChart();
+                renderRequestQualityChart();
 
                 // Update table
                 const tbody = document.getElementById('dailyReport');
@@ -519,6 +826,7 @@
                 document.getElementById('dailyReport').innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">加载失败</td></tr>';
             }
         }
+
 
         // Keep old loadUsage for backward compatibility
         async function loadUsage() {
@@ -611,7 +919,7 @@
                                     ${item.key}
                                 </div>
                                 <div style="font-size: 12px; color: #999; margin-top: 8px;">
-                                    📅 ${new Date(item.created_at).toLocaleString('zh-CN')}
+                                    📅 ${formatDateTime(item.created_at)}
                                 </div>
                             </div>
                             <div style="text-align: center; margin: 0 20px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
@@ -675,7 +983,7 @@
 
                 if (resp.ok) {
                     const apiKey = data.api_key;
-                    const baseUrl = `${window.location.protocol}//${window.location.hostname}:8317`;
+                    const baseUrl = {{ service_info.base_url|tojson }};
                     const claudeCmd = `node << 'CLAUDE_EOF'
 const fs=require('fs'),path=require('path'),os=require('os');
 const dir=path.join(os.homedir(),'.claude');
@@ -693,6 +1001,53 @@ fs.writeFileSync(cf,JSON.stringify(c,null,2));
 console.log('Done! Settings merged (MCP/permissions preserved).');
 CLAUDE_EOF`;
 
+                    const codexCmd = `node << 'CODEX_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.codex');
+const sf=path.join(dir,'config.toml');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
+function upsertTop(key,value){
+  const line=key+' = '+value;
+  const re=new RegExp('^'+key+'\\\\s*=.*$','m');
+  if(re.test(c)){c=c.replace(re,line);return}
+  const idx=c.indexOf('[');
+  c=idx>=0?line+'\\n'+c:line+'\\n'+c;
+}
+upsertTop('model_provider','"local"');
+upsertTop('model','"gpt-5.5"');
+upsertTop('model_reasoning_effort','"high"');
+upsertTop('personality','"pragmatic"');
+c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+const providerBlock=[
+  '[model_providers.local]',
+  'name = "local"',
+  'base_url = "${baseUrl}/v1"',
+  'env_key = "OPENAI_API_KEY"',
+  'wire_api = "responses"'
+].join('\\n');
+if(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m.test(c)){
+  c=c.replace(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m,providerBlock);
+}else{
+  c=c.trimEnd()+'\\n\\n'+providerBlock;
+}
+fs.writeFileSync(sf,c.trimEnd()+'\\n');
+const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  const content=fs.readFileSync(rc,'utf8');
+  const line='export OPENAI_API_KEY="${apiKey}"';
+  if(/^export OPENAI_API_KEY=.*/m.test(content)){
+    fs.writeFileSync(rc,content.replace(/^export OPENAI_API_KEY=.*/m,line));
+    console.log('Updated OPENAI_API_KEY in '+rc);
+  }else{
+    fs.appendFileSync(rc,'\\n'+line+'\\n');
+    console.log('Added OPENAI_API_KEY to '+rc);
+  }
+}else{console.log('No .bashrc/.zshrc found. Please add manually: export OPENAI_API_KEY=${apiKey}')}
+console.log('Codex config done: '+sf);
+CODEX_EOF
+export OPENAI_API_KEY="${apiKey}"`;
+
                     // Save to localStorage
                     saveMyKey({
                         key: apiKey,
@@ -700,61 +1055,61 @@ CLAUDE_EOF`;
                         created_at: new Date().toISOString()
                     });
 
-                    // Show success modal instead of inline result
-                    showSuccessModal(apiKey, claudeCmd);
-
-                    // Hide old result div
-                    result.style.display = 'none';
-
-                    // Keep old code for backup (commented)
-                    /*
-                    result.className = 'result-box success';
+                    // Show inline success result
+                    result.className = '';
                     result.innerHTML = `
-                        <div style="text-align: left; width: 100%; max-width: 800px;">
-                            <h3 style="color: #155724; margin-bottom: 20px;">✅ 申请成功！</h3>
+                        <div style="background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 2px solid #28a745; border-radius: 12px; padding: 25px; text-align: left;">
+                            <h3 style="color: #155724; margin: 0 0 20px 0; font-size: 18px;">申请成功！</h3>
 
-                            <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
-                                <p style="font-size: 14px; color: #666; margin-bottom: 8px;"><strong>API Key：</strong></p>
-                                <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 12px; border-radius: 6px;">
-                                    <code id="newApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px; word-break: break-all;">${apiKey}</code>
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">API Key：</p>
+                                <div style="display: flex; align-items: center; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 14px; word-break: break-all; font-weight: 600;">${apiKey}</code>
                                     <button class="copy-btn" onclick="copyToClipboard('newApiKey')">复制</button>
                                 </div>
                             </div>
 
-                            <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px;">
-                                <p style="font-size: 14px; color: #666; margin-bottom: 8px;"><strong>API URL：</strong></p>
-                                <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 12px; border-radius: 6px;">
-                                    <code id="apiUrl" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px;"></code>
-                                    <button class="copy-btn" onclick="copyToClipboard('apiUrl')">复制</button>
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">API URL：</p>
+                                <div style="display: flex; align-items: center; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newApiUrl" style="flex: 1; font-family: monospace; color: #667eea; font-size: 14px;">${baseUrl}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newApiUrl')">复制</button>
                                 </div>
                             </div>
 
-                            <div style="background: white; padding: 20px; border-radius: 8px;">
-                                <p style="font-size: 14px; color: #666; margin-bottom: 8px;"><strong>Claude Code 一键配置命令：</strong></p>
-                                <div style="display: flex; align-items: start; gap: 10px; background: #f8f9fa; padding: 12px; border-radius: 6px;">
-                                    <code id="claudeCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap;">${claudeCmd}</code>
-                                    <button class="copy-btn" onclick="copyToClipboard('claudeCmd')">复制</button>
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">Claude Code 一键配置命令：</p>
+                                <div style="display: flex; align-items: start; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newClaudeCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap; line-height: 1.5;">${claudeCmd}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newClaudeCmd')" style="flex-shrink: 0;">复制</button>
                                 </div>
-                                <p style="font-size: 12px; color: #999; margin-top: 10px;">💡 复制命令到终端执行即可完成配置</p>
+                                <p style="font-size: 12px; color: #155724; margin: 10px 0 0 0;">复制命令到终端执行，即可自动配置 Claude Code</p>
                             </div>
 
-                            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 20px; border-radius: 10px; margin-top: 20px; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3); border: 2px solid rgba(255,255,255,0.4);">
-                                <div style="display: flex; align-items: center; gap: 15px;">
-                                    <div style="font-size: 32px;">🚀</div>
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">Codex CLI 一键配置命令：</p>
+                                <div style="display: flex; align-items: start; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newCodexCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap; line-height: 1.5;">${codexCmd}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newCodexCmd')" style="flex-shrink: 0;">复制</button>
+                                </div>
+                                <p style="font-size: 12px; color: #155724; margin: 10px 0 0 0;">同一个 API Key 也可用于 Codex CLI，复制到终端执行即可</p>
+                            </div>
+
+                            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 18px; border-radius: 10px; margin-top: 15px;">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <div style="font-size: 28px;">🚀</div>
                                     <div style="flex: 1;">
-                                        <h4 style="margin: 0 0 6px 0; color: white; font-size: 16px; font-weight: 700;">下一步：安装公司级 Claude Skills</h4>
-                                        <p style="margin: 0 0 12px 0; font-size: 13px; color: white; line-height: 1.5;">提升 Claude Code 能力，安装公司定制的技能包</p>
-                                        <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 8px 20px; background: white; color: #4facfe; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.15); transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(0,0,0,0.25)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
-                                            📦 访问 GitHub 仓库 →
-                                        </a>
+                                        <h4 style="margin: 0 0 5px 0; color: white; font-size: 15px; font-weight: 700;">下一步：安装公司级 Claude Skills</h4>
+                                        <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 6px 16px; background: white; color: #4facfe; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 700;">访问 GitHub 仓库</a>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     `;
-                    result.style.display = 'flex';
-                    result.style.justifyContent = 'center';
-                    */
+                    result.style.display = 'block';
+
+                    // Scroll to result
+                    result.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
                     // Clear form
                     document.getElementById('regIdentifier').value = '';
@@ -762,8 +1117,8 @@ CLAUDE_EOF`;
                     // Refresh pool status
                     loadPoolStatus();
 
-                    // Refresh historical keys display
-                    displayMyKeys();
+                    // Refresh historical keys display (don't let errors propagate)
+                    displayMyKeys().catch(err => console.error('displayMyKeys error:', err));
                 } else {
                     result.className = 'result-box error';
                     result.innerHTML = `
@@ -829,7 +1184,7 @@ CLAUDE_EOF`;
         loadUsageHistory();
 
         // Fill dynamic API URL shown in UI
-        const dynamicApiUrl = `${window.location.protocol}//${window.location.hostname}:8317`;
+        const dynamicApiUrl = {{ service_info.base_url|tojson }};
         const apiUrlEl = document.getElementById('apiUrl');
         if (apiUrlEl) {
             apiUrlEl.textContent = dynamicApiUrl;
@@ -868,32 +1223,23 @@ CLAUDE_EOF`;
             });
         }
 
-        // Success Modal Functions
-        function showSuccessModal(apiKey, claudeCmd) {
-            const baseUrl = `${window.location.protocol}//${window.location.hostname}:8317`;
-            document.getElementById('successModalApiKey').textContent = apiKey;
-            document.getElementById('successModalApiUrl').textContent = baseUrl;
-            document.getElementById('successModalClaudeCmd').textContent = claudeCmd;
-            document.getElementById('successModal').style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        }
-
-        function closeSuccessModal() {
-            document.getElementById('successModal').style.display = 'none';
-            document.body.style.overflow = 'auto';
-        }
-
-        // Close modal when clicking outside
-        window.onclick = function(event) {
+        // Close tutorial modal when clicking outside
+        window.addEventListener('click', function(event) {
             const tutorialModal = document.getElementById('tutorialModal');
-            const successModal = document.getElementById('successModal');
             if (event.target === tutorialModal) {
                 closeTutorialModal();
             }
-            if (event.target === successModal) {
-                closeSuccessModal();
+        });
+
+        // Close tutorial modal with Escape key
+        window.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const tutorialModal = document.getElementById('tutorialModal');
+                if (tutorialModal && tutorialModal.style.display !== 'none') {
+                    closeTutorialModal();
+                }
             }
-        }
+        });
     </script>
 
     <!-- Tutorial Modal -->
@@ -1028,8 +1374,10 @@ const cf=path.join(os.homedir(),'.codex','config.toml');
 if(fs.existsSync(cf)){
   let c=fs.readFileSync(cf,'utf8');
   c=c.replace(/^openai_base_url\s*=.*\n?/m,'');
+  c=c.replace(/^model_provider\s*=\s*"local"\n?/m,'');
+  c=c.replace(/\[model_providers\.local\][\s\S]*?(?=\n\[|$)/m,'');
   fs.writeFileSync(cf,c);
-  console.log('Codex: openai_base_url removed from '+cf);
+  console.log('Codex: local proxy provider removed from '+cf);
 }else{console.log('Codex: no config.toml, skipped')}
 // Remove OPENAI_API_KEY from shell rc
 const rc=['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
@@ -1061,26 +1409,52 @@ REMOVE_EOF</pre>
                     <div style="background: #f0faf6; padding: 15px; border-radius: 8px; border: 1px solid #b2dfdb; position: relative;">
                         <pre id="codexSetupCmd" style="margin: 0; font-size: 11px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'CODEX_EOF'
 const fs=require('fs'),path=require('path'),os=require('os');
+const apiKey='<span style="color: #dc3545; font-weight: 700;">YOUR_API_KEY</span>';
 const dir=path.join(os.homedir(),'.codex');
 const sf=path.join(dir,'config.toml');
 if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
 let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
-const line='openai_base_url = "http://当前页面IP:8317/v1"';
-if(!/^openai_base_url/m.test(c)){
+function upsertTop(key,value){
+  const line=key+' = '+value;
+  const re=new RegExp('^'+key+'\\s*=.*$','m');
+  if(re.test(c)){c=c.replace(re,line);return}
   const idx=c.indexOf('[');
-  if(idx&gt;0){c=line+'\n'+c}else if(idx===0){c=line+'\n\n'+c}else{c=line+'\n'+c}
-}else{c=c.replace(/^openai_base_url\s*=.*/m,line)}
-fs.writeFileSync(sf,c);
-console.log('Codex config done: '+sf);
-// Auto-persist OPENAI_API_KEY to shell rc
-const rc=['.zshrc','.bashrc'].map(f=&gt;path.join(os.homedir(),f)).find(f=&gt;fs.existsSync(f));
-if(rc){
+  c=idx&gt;=0?line+'\n'+c:line+'\n'+c;
+}
+upsertTop('model_provider','"local"');
+upsertTop('model','"gpt-5.5"');
+upsertTop('model_reasoning_effort','"high"');
+upsertTop('personality','"pragmatic"');
+c=c.replace(/^openai_base_url\s*=.*\n?/m,'');
+const providerBlock=[
+  '[model_providers.local]',
+  'name = "local"',
+  'base_url = "{{ service_info.base_url }}/v1"',
+  'env_key = "OPENAI_API_KEY"',
+  'wire_api = "responses"'
+].join('\n');
+if(/\[model_providers\.local\][\s\S]*?(?=\n\[|$)/m.test(c)){
+  c=c.replace(/\[model_providers\.local\][\s\S]*?(?=\n\[|$)/m,providerBlock);
+}else{
+  c=c.trimEnd()+'\n\n'+providerBlock;
+}
+fs.writeFileSync(sf,c.trimEnd()+'\n');
+const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=&gt;path.join(os.homedir(),f)).find(f=&gt;fs.existsSync(f));
+if(apiKey==='YOUR_API_KEY'){
+  console.log('Codex config done: '+sf);
+  console.log('Replace YOUR_API_KEY with your real API key, or use the generated command after requesting a key.');
+}else if(rc){
   const content=fs.readFileSync(rc,'utf8');
-  if(!content.includes('OPENAI_API_KEY')){
-    fs.appendFileSync(rc,'\nexport OPENAI_API_KEY="<span style="color: #dc3545; font-weight: 700;">YOUR_API_KEY</span>"\n');
+  const line='export OPENAI_API_KEY="'+apiKey+'"';
+  if(/^export OPENAI_API_KEY=.*/m.test(content)){
+    fs.writeFileSync(rc,content.replace(/^export OPENAI_API_KEY=.*/m,line));
+    console.log('Updated OPENAI_API_KEY in '+rc);
+  }else{
+    fs.appendFileSync(rc,'\n'+line+'\n');
     console.log('Added OPENAI_API_KEY to '+rc);
-  }else{console.log('OPENAI_API_KEY already in '+rc+', update it manually if needed')}
-}else{console.log('No .bashrc/.zshrc found. Add manually: export OPENAI_API_KEY=YOUR_API_KEY')}
+  }
+}else{console.log('No .bashrc/.zshrc found. Add manually: export OPENAI_API_KEY='+apiKey)}
+console.log('Codex config done: '+sf);
 CODEX_EOF</pre>
                         <button onclick="copyElementText('codexSetupCmd', this)" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;">
                             复制 Codex 配置命令
@@ -1095,79 +1469,6 @@ CODEX_EOF</pre>
         </div>
     </div>
 
-    <!-- Success Modal -->
-    <div id="successModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; justify-content: center; align-items: center;">
-        <div style="background: white; border-radius: 16px; max-width: 700px; max-height: 85vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); position: relative; margin: 20px; animation: slideIn 0.3s ease-out;">
-            <div style="position: sticky; top: 0; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 25px; border-radius: 16px 16px 0 0; display: flex; justify-content: space-between; align-items: center; z-index: 1;">
-                <h3 style="margin: 0; font-size: 20px; font-weight: 700;">✅ 申请成功！</h3>
-                <button onclick="closeSuccessModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
-            </div>
-
-            <div style="padding: 30px;">
-                <!-- API Key -->
-                <div style="margin-bottom: 25px;">
-                    <p style="font-size: 15px; color: #333; margin: 0 0 12px 0; font-weight: 600;">🔑 您的 API Key</p>
-                    <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
-                        <code id="successModalApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px; word-break: break-all; font-weight: 600;"></code>
-                        <button class="copy-btn" onclick="copyToClipboard('successModalApiKey')">复制</button>
-                    </div>
-                </div>
-
-                <!-- API URL -->
-                <div style="margin-bottom: 25px;">
-                    <p style="font-size: 15px; color: #333; margin: 0 0 12px 0; font-weight: 600;">🌐 API 服务地址</p>
-                    <div style="display: flex; align-items: center; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
-                        <code id="successModalApiUrl" style="flex: 1; font-family: monospace; color: #667eea; font-size: 13px; font-weight: 600;"></code>
-                        <button class="copy-btn" onclick="copyToClipboard('successModalApiUrl')">复制</button>
-                    </div>
-                </div>
-
-                <!-- Claude Code Command -->
-                <div style="margin-bottom: 25px;">
-                    <p style="font-size: 15px; color: #333; margin: 0 0 12px 0; font-weight: 600;">⚡ Claude Code 一键配置命令</p>
-                    <div style="display: flex; align-items: start; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
-                        <code id="successModalClaudeCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap; line-height: 1.5;"></code>
-                        <button class="copy-btn" onclick="copyToClipboard('successModalClaudeCmd')" style="flex-shrink: 0;">复制</button>
-                    </div>
-                    <p style="font-size: 13px; color: #999; margin: 10px 0 0 0; line-height: 1.6;">💡 复制命令到终端执行，即可自动配置 Claude Code</p>
-                </div>
-
-                <!-- Tutorial Link -->
-                <div style="background: linear-gradient(135deg, #e0e7ff 0%, #f0f4ff 100%); padding: 20px; border-radius: 10px; border: 1px solid #d4ddff; text-align: center;">
-                    <p style="margin: 0 0 15px 0; font-size: 14px; color: #667eea; font-weight: 600;">📖 不知道如何使用？</p>
-                    <button onclick="closeSuccessModal(); showTutorialModal();" style="padding: 10px 24px; background: #667eea; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);" onmouseover="this.style.background='#5568d3'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.background='#667eea'; this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(102, 126, 234, 0.3)'">
-                        查看详细使用教程 →
-                    </button>
-                </div>
-
-                <!-- Skills Recommendation -->
-                <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 20px; border-radius: 10px; margin-top: 25px; box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3); border: 2px solid rgba(255,255,255,0.4);">
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <div style="font-size: 32px;">🚀</div>
-                        <div style="flex: 1;">
-                            <h4 style="margin: 0 0 6px 0; color: white; font-size: 16px; font-weight: 700;">下一步：安装公司级 Claude Skills</h4>
-                            <p style="margin: 0 0 12px 0; font-size: 13px; color: white; line-height: 1.5;">提升 Claude Code 能力，安装公司定制的技能包</p>
-                            <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 8px 20px; background: white; color: #4facfe; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.15); transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(0,0,0,0.25)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.15)'">
-                                📦 访问 GitHub 仓库 →
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <style>
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-    </style>
+    <!-- Success Modal removed - using inline results instead -->
 </body>
 </html>

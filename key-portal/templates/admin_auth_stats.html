@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>认证文件统计 - Key Portal</title>
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --ink: #142033;
+            --muted: #6b7589;
+            --line: #dfe6f0;
+            --blue: #2454d6;
+            --blue-soft: #e8efff;
+            --green: #138a52;
+            --green-soft: #e8f7ef;
+            --orange: #b96c00;
+            --orange-soft: #fff4db;
+            --red: #c93535;
+            --red-soft: #fff0f0;
+            --shadow: 0 18px 45px rgba(34, 49, 76, 0.10);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background:
+                radial-gradient(circle at 12% 8%, rgba(36, 84, 214, 0.12), transparent 28%),
+                radial-gradient(circle at 88% 0%, rgba(19, 138, 82, 0.10), transparent 24%),
+                linear-gradient(180deg, #f7f9fc 0%, var(--bg) 100%);
+            color: var(--ink);
+            min-height: 100vh;
+            padding: 26px;
+        }
+        .container { max-width: 1440px; margin: 0 auto; }
+        .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 18px; }
+        .eyebrow { color: var(--blue); font-weight: 800; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 8px; }
+        h1 { font-size: clamp(28px, 3vw, 44px); line-height: 1; letter-spacing: -0.05em; color: #10192b; margin: 0; }
+        .subtitle { color: var(--muted); margin: 12px 0 0; max-width: 880px; line-height: 1.65; }
+        .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 330px; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 40px;
+            padding: 10px 16px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 800;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+            white-space: nowrap;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn.primary { color: white; background: #102044; box-shadow: 0 10px 22px rgba(16, 32, 68, 0.24); }
+        .btn.secondary { color: #20304d; background: rgba(255,255,255,0.86); border-color: var(--line); }
+        .btn.green { color: var(--green); background: var(--green-soft); border-color: #bfe8d1; }
+        .btn.orange { color: var(--orange); background: var(--orange-soft); border-color: #ffd88b; }
+        .meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: var(--muted);
+            background: rgba(255,255,255,0.76);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 9px 13px;
+            margin: 0 0 18px;
+        }
+        .meta::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #19a463;
+            box-shadow: 0 0 0 5px rgba(25, 164, 99, 0.12);
+        }
+        .warning-banner {
+            display: none;
+            margin: 0 0 18px;
+            padding: 13px 15px;
+            border: 1px solid #ffd29a;
+            border-radius: 16px;
+            color: #804900;
+            background: rgba(255, 247, 230, 0.92);
+            line-height: 1.55;
+            box-shadow: 0 8px 22px rgba(128, 73, 0, 0.08);
+        }
+        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 22px; }
+        .node-card {
+            background: rgba(255,255,255,0.92);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            padding: 18px;
+            box-shadow: var(--shadow);
+        }
+        .node-card h3 { margin: 0 0 15px 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .node-pill { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; color: var(--blue); background: var(--blue-soft); padding: 5px 10px; border-radius: 999px; white-space: nowrap; font-weight: 800; }
+        .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin: 8px 0; color: var(--muted); }
+        .line strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+        .table-card { background: rgba(255,255,255,0.94); padding: 22px; border-radius: 24px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+        .table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+        .table-title h2 { color: #10192b; margin: 0; font-size: 24px; letter-spacing: -0.03em; }
+        .table-title p { color: var(--muted); margin-top: 6px; font-size: 13px; }
+        .loading, .empty-state { text-align: center; padding: 42px 18px; color: var(--muted); border: 1px dashed var(--line); border-radius: 18px; background: var(--panel-soft); }
+        .auth-list { display: grid; gap: 14px; }
+        .auth-card {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            background: var(--panel);
+            box-shadow: 0 10px 28px rgba(34, 49, 76, 0.07);
+        }
+        .auth-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 5px;
+            background: var(--blue);
+        }
+        .auth-card.status-active::before { background: var(--green); }
+        .auth-card.status-warning::before { background: #e19a14; }
+        .auth-card.status-error::before { background: var(--red); }
+        .auth-main { display: grid; grid-template-columns: minmax(260px, 0.86fr) minmax(280px, 1fr) minmax(280px, 1fr) minmax(190px, 0.72fr); gap: 14px; padding: 18px 18px 15px 22px; align-items: stretch; }
+        .identity { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+        .identity-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .account { font-weight: 900; color: #10192b; font-size: 17px; overflow-wrap: anywhere; }
+        .sub { color: var(--muted); font-size: 12px; line-height: 1.45; }
+        .auth-status { display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 900; white-space: nowrap; }
+        .auth-status.active { background: var(--green-soft); color: var(--green); }
+        .auth-status.warning { background: var(--orange-soft); color: var(--orange); }
+        .auth-status.error { background: var(--red-soft); color: var(--red); }
+        .auth-status.other { background: #edf1f5; color: #526070; }
+        .auth-msg { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; line-height: 1.45; }
+        .metric-block { border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); padding: 15px; }
+        .metric-block.primary { border-color: #cfdcff; background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); }
+        .metric-block h4 { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; color: #172846; font-size: 14px; margin: 0 0 12px; }
+        .range { color: var(--muted); font-size: 12px; font-weight: 700; }
+        .used { font-size: clamp(21px, 2vw, 30px); font-weight: 950; letter-spacing: -0.045em; color: #10192b; font-variant-numeric: tabular-nums; }
+        .unit { color: var(--muted); font-size: 12px; margin: 2px 0 12px; }
+        .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .mini { padding: 9px 10px; border-radius: 12px; background: rgba(255,255,255,0.72); border: 1px solid rgba(223,230,240,0.78); }
+        .mini span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+        .mini strong { display: block; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+        .quota-placeholder { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cfd7e5; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; color: var(--muted); font-size: 12px; }
+        .quota-placeholder b { color: #526070; }
+        .health-panel { border: 1px solid var(--line); border-radius: 18px; background: var(--panel-soft); padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        .health-line { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+        .health-line strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+        .error-note { color: var(--red); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+        .secondary-metrics { border-top: 1px solid var(--line); background: #fbfcff; padding: 0 18px 0 22px; }
+        .secondary-metrics summary { cursor: pointer; color: var(--blue); font-weight: 850; font-size: 13px; padding: 13px 0; user-select: none; }
+        .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 0 0 16px; }
+        .detail-box { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
+        .detail-box h5 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+        .detail-box .detail-value { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+        .detail-box .detail-value strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+        .time-grid { grid-column: span 2; }
+        @media (max-width: 1180px) {
+            .auth-main { grid-template-columns: 1fr 1fr; }
+            .health-panel { grid-column: span 2; }
+            .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 760px) {
+            body { padding: 16px; }
+            .topbar, .table-head { align-items: stretch; flex-direction: column; }
+            .actions { justify-content: flex-start; min-width: 0; }
+            .auth-main { grid-template-columns: 1fr; }
+            .health-panel { grid-column: auto; }
+            .detail-grid { grid-template-columns: 1fr; }
+            .time-grid { grid-column: auto; }
+            .quota-placeholder { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topbar">
+            <div>
+                <div class="eyebrow">Key Portal Operations</div>
+                <h1>认证文件整体统计</h1>
+                <p class="subtitle">认证明细现在优先展示 5 小时和 7 天两个关键窗口；限额与剩余额度当前未由后端提供，因此只展示真实已用量并标记待接入。</p>
+            </div>
+            <div class="actions">
+                <a class="btn secondary" href="/">返回首页</a>
+                <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
+                <a class="btn green" href="/management.html#/" target="_blank">old 管理后台</a>
+                <a class="btn orange" href="/b/management.html#/" target="_blank">node-b 管理后台</a>
+            </div>
+        </div>
+        <div id="authStatsMeta" class="meta">加载中...</div>
+        <div id="authStatsWarnings" class="warning-banner"></div>
+
+        <div class="summary" id="authStatsSummary">
+            <div class="loading">正在加载...</div>
+        </div>
+
+        <div class="table-card">
+            <div class="table-head">
+                <div class="table-title">
+                    <h2>认证文件明细</h2>
+                    <p>主视图只保留账号、5 小时窗口、7 天窗口和健康状态；展开后查看 1h、24h、累计和时间信息。</p>
+                </div>
+                <button class="btn primary" onclick="loadAuthStats(true)">刷新认证统计</button>
+            </div>
+            <div class="loading" id="loading">正在加载...</div>
+            <div class="auth-list" id="authStatsCards" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let authStatsLoading = false;
+        const AUTH_STATS_REFRESH_MS = 5000;
+
+        function formatNumberFull(num) {
+            return Number(num || 0).toLocaleString('zh-CN');
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '-';
+            const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+            if (!match) return String(value).replace('T', ' ').replace('Z', '').split('.')[0];
+            const utcMs = Date.UTC(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3]),
+                Number(match[4]),
+                Number(match[5]),
+                Number(match[6])
+            );
+            const bj = new Date(utcMs + 8 * 60 * 60 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${bj.getUTCFullYear()}-${pad(bj.getUTCMonth() + 1)}-${pad(bj.getUTCDate())} ${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function formatPercent(value) {
+            const num = Number(value || 0);
+            return num ? num.toFixed(num >= 10 ? 1 : 2) + '%' : '0%';
+        }
+
+        function windowStat(row, windowName) {
+            return row?.[windowName] || {};
+        }
+
+        function statusInfo(row) {
+            const hardUnavailable = row.disabled || row.unavailable;
+            if (hardUnavailable) {
+                return { cls: 'error', cardCls: 'status-error', text: row.disabled ? '禁用' : '不可用' };
+            }
+            if (row.status === 'error') {
+                return { cls: 'warning', cardCls: 'status-warning', text: '最近异常' };
+            }
+            if (row.status === 'active') {
+                return { cls: 'active', cardCls: 'status-active', text: '可用' };
+            }
+            return { cls: 'other', cardCls: 'status-other', text: row.status || '-' };
+        }
+
+        function renderMetricBlock(title, rangeLabel, bucket, primary = false) {
+            return `<div class="metric-block ${primary ? 'primary' : ''}">
+                <h4><span>${title}</span><span class="range">${rangeLabel}</span></h4>
+                <div class="used">${formatNumberFull(bucket?.tokens || 0)}</div>
+                <div class="unit">Tokens 已用</div>
+                <div class="metric-grid">
+                    <div class="mini"><span>请求</span><strong>${formatNumberFull(bucket?.requests || 0)}</strong></div>
+                    <div class="mini"><span>成功 / 失败</span><strong>${formatNumberFull(bucket?.success || 0)} / ${formatNumberFull(bucket?.failure || 0)}</strong></div>
+                    <div class="mini"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
+                    <div class="mini"><span>均值 Tokens/请求</span><strong>${formatNumberFull(bucket?.avg_tokens_per_request || 0)}</strong></div>
+                </div>
+                <div class="quota-placeholder">
+                    <span><b>限额</b>：限额未配置</span>
+                    <span><b>剩余</b>：待后端接入</span>
+                </div>
+            </div>`;
+        }
+
+        function renderWindowDetail(title, bucket) {
+            return `<div class="detail-box">
+                <h5>${title}</h5>
+                <div class="detail-value"><span>请求</span><strong>${formatNumberFull(bucket?.requests || 0)}</strong></div>
+                <div class="detail-value"><span>Tokens</span><strong>${formatNumberFull(bucket?.tokens || 0)}</strong></div>
+                <div class="detail-value"><span>成功 / 失败</span><strong>${formatNumberFull(bucket?.success || 0)} / ${formatNumberFull(bucket?.failure || 0)}</strong></div>
+                <div class="detail-value"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
+            </div>`;
+        }
+
+        function renderAuthCard(row) {
+            const info = statusInfo(row);
+            const statusMsg = row.status_explanation || row.status_message || '';
+            const msg = statusMsg ? `<div class="auth-msg" title="${escapeHtml(statusMsg)}">${escapeHtml(statusMsg)}</div>` : '';
+            const lastError = row.last_error_at ? `${formatDateTime(row.last_error_at)}${row.last_error_status ? ' / ' + escapeHtml(row.last_error_status) : ''}` : '-';
+            const errorMsg = row.last_error_message ? `<div class="error-note" title="${escapeHtml(row.last_error_message)}">${escapeHtml(row.last_error_message)}</div>` : '';
+            const plan = row.plan_type || row.provider || '未标记计划';
+            return `<article class="auth-card ${info.cardCls}">
+                <div class="auth-main">
+                    <section class="identity">
+                        <div class="identity-top">
+                            <span class="node-pill">${escapeHtml(row.node || '-')}</span>
+                            <span class="auth-status ${info.cls}">${escapeHtml(info.text)}</span>
+                        </div>
+                        <div>
+                            <div class="account">${escapeHtml(row.account || '-')}</div>
+                            <div class="sub">${escapeHtml(plan)}${row.auth_index ? ' · ' + escapeHtml(row.auth_index) : ''}</div>
+                        </div>
+                        ${msg}
+                    </section>
+                    ${renderMetricBlock('近 5 小时', '过去 5 小时', windowStat(row, 'last_5h'), true)}
+                    ${renderMetricBlock('近 7 天', '过去 7 天', windowStat(row, 'last_7d'), true)}
+                    <section class="health-panel">
+                        <div class="health-line"><span>最近请求</span><strong>${formatDateTime(row.last_request_at)}</strong></div>
+                        <div class="health-line"><span>最近失败</span><strong>${lastError}</strong></div>
+                        <div class="health-line"><span>5h 成功率</span><strong>${formatPercent(row.last_5h?.success_rate)}</strong></div>
+                        <div class="health-line"><span>7d 成功率</span><strong>${formatPercent(row.last_7d?.success_rate)}</strong></div>
+                        ${errorMsg}
+                    </section>
+                </div>
+                <details class="secondary-metrics">
+                    <summary>展开 1h / 24h / 累计 / 时间信息</summary>
+                    <div class="detail-grid">
+                        ${renderWindowDetail('近 1 小时', windowStat(row, 'last_1h'))}
+                        ${renderWindowDetail('近 24 小时', windowStat(row, 'last_24h'))}
+                        ${renderWindowDetail('累计', windowStat(row, 'total'))}
+                        <div class="detail-box time-grid">
+                            <h5>时间信息</h5>
+                            <div class="detail-value"><span>最近请求</span><strong>${formatDateTime(row.last_request_at)}</strong></div>
+                            <div class="detail-value"><span>最近失败</span><strong>${lastError}</strong></div>
+                            <div class="detail-value"><span>文件更新</span><strong>${formatDateTime(row.updated_at)}</strong></div>
+                        </div>
+                    </div>
+                </details>
+            </article>`;
+        }
+
+        function renderWarnings(errors) {
+            const warningEl = document.getElementById('authStatsWarnings');
+            if (!errors || !errors.length) {
+                warningEl.style.display = 'none';
+                warningEl.innerHTML = '';
+                return;
+            }
+            warningEl.innerHTML = `<strong>部分节点统计异常：</strong>${errors.map(err => `<div>${escapeHtml(typeof err === 'string' ? err : JSON.stringify(err))}</div>`).join('')}`;
+            warningEl.style.display = 'block';
+        }
+
+        async function loadAuthStats(force = false) {
+            if (authStatsLoading) return;
+            authStatsLoading = true;
+            const loading = document.getElementById('loading');
+            const cardsEl = document.getElementById('authStatsCards');
+            try {
+                const resp = await fetch('/api/auth-stats');
+                const data = await resp.json();
+                const summaryEl = document.getElementById('authStatsSummary');
+                const metaEl = document.getElementById('authStatsMeta');
+                const generated = formatDateTime(data.generated_at);
+                const cacheAge = Number(data.cache_age_seconds || 0).toFixed(1);
+                const refreshingText = data.refreshing ? '，后台刷新中' : '';
+                metaEl.textContent = `生成时间：${generated} 北京时间，缓存年龄：${cacheAge}s${refreshingText}，页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 读取最新缓存`;
+                renderWarnings(data.errors || []);
+
+                const nodes = data.nodes || {};
+                const nodeNames = Object.keys(nodes).sort();
+                summaryEl.innerHTML = nodeNames.length ? nodeNames.map(node => {
+                    const n = nodes[node];
+                    return `<div class="node-card">
+                        <h3>${escapeHtml(node)} <span class="node-pill">${formatNumberFull(n.auth_files || 0)} files</span></h3>
+                        <div class="line"><span>可用 / 最近异常 / 不可用</span><strong>${formatNumberFull(n.active || 0)} / ${formatNumberFull(n.warning || 0)} / ${formatNumberFull(n.unavailable || 0)}</strong></div>
+                        <div class="line"><span>5h 请求 / Tokens / 失败率</span><strong>${formatNumberFull(n.last_5h?.requests || 0)} / ${formatNumberFull(n.last_5h?.tokens || 0)} / ${formatPercent(n.last_5h?.failure_rate)}</strong></div>
+                        <div class="line"><span>7d 请求 / Tokens / 失败率</span><strong>${formatNumberFull(n.last_7d?.requests || 0)} / ${formatNumberFull(n.last_7d?.tokens || 0)} / ${formatPercent(n.last_7d?.failure_rate)}</strong></div>
+                        <div class="line"><span>1h 请求 / 24h 请求</span><strong>${formatNumberFull(n.last_1h?.requests || 0)} / ${formatNumberFull(n.last_24h?.requests || 0)}</strong></div>
+                    </div>`;
+                }).join('') : '<div class="empty-state">暂无节点数据</div>';
+
+                const rows = data.auth_files || [];
+                cardsEl.innerHTML = rows.length ? rows.map(renderAuthCard).join('') : '<div class="empty-state">暂无认证文件数据</div>';
+                loading.style.display = 'none';
+                cardsEl.style.display = 'grid';
+            } catch (e) {
+                loading.textContent = '加载失败：' + e.message;
+                loading.style.display = 'block';
+                cardsEl.style.display = 'none';
+            } finally {
+                authStatsLoading = false;
+            }
+        }
+
+        loadAuthStats();
+        setInterval(() => {
+            if (document.visibilityState === 'visible') loadAuthStats();
+        }, AUTH_STATS_REFRESH_MS);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') loadAuthStats(true);
+        });
+    </script>
+</body>
+</html>

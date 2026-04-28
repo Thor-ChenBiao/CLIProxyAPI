@@ -10,6 +10,7 @@ import os
 import re
 import requests
 import subprocess
+import threading
 from datetime import datetime, timedelta
 from collections import defaultdict
 from urllib.parse import urlparse, parse_qs
@@ -41,8 +42,16 @@ USER_MAPPING_FILE = os.path.join(os.path.dirname(__file__), "user_mapping.json")
 _stats_cache = {
     "data": None,  # Full usage data from CLIProxyAPI
     "last_update": 0,  # timestamp
-    "ttl": 5  # cache 5 seconds
+    "ttl": 3  # cache management usage calls; keep dashboard near-real-time
 }
+
+_auth_stats_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 15,
+    "refreshing": False
+}
+_auth_stats_cache_lock = threading.Lock()
 
 # User keys cache and file path
 USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
@@ -68,6 +77,9 @@ def _login_url() -> str:
 
 
 def _api_base_url() -> str:
+    base = os.environ.get("PUBLIC_API_BASE_URL", "").strip()
+    if base:
+        return base.rstrip("/")
     return _public_base_url().replace(":8080", ":8317")
 
 
@@ -259,10 +271,8 @@ def get_usage_stats_cached():
     if _stats_cache["data"] and (now - _stats_cache["last_update"]) < _stats_cache["ttl"]:
         return _stats_cache["data"], None
 
-    # Fetch from API
-    data, err = call_management_api("GET", "/v0/management/usage")
-    if err:
-        return None, err
+    # Fetch from all CLIProxyAPI nodes
+    data = get_cluster_usage()
 
     # Update cache
     _stats_cache["data"] = data
@@ -497,12 +507,428 @@ def call_management_api(method, endpoint, data=None):
         return None, str(e)
 
 
+
+CLIPROXY_NODES = [
+    {"name": "old", "url": "http://127.0.0.1:8317"},
+    {"name": "node-b", "url": "http://172.31.26.28:8317"},
+]
+
+
+def call_management_api_node(node, method, endpoint, data=None, timeout=30):
+    """Call one CLIProxyAPI management endpoint."""
+    url = f"{node['url']}{endpoint}"
+    headers = {"X-Management-Key": config.CLIPROXY_MANAGEMENT_KEY}
+    try:
+        if method == "GET":
+            resp = requests.get(url, headers=headers, timeout=timeout)
+        elif method == "POST":
+            resp = requests.post(url, headers=headers, json=data, timeout=timeout)
+        else:
+            return None, f"Unsupported method: {method}"
+        if resp.status_code == 200:
+            return resp.json(), None
+        return None, f"API error: {resp.status_code} - {resp.text}"
+    except Exception as e:
+        return None, str(e)
+
+
+def merge_usage_payloads(results):
+    """Merge /v0/management/usage results from all nodes."""
+    merged_usage = {
+        "total_requests": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "total_tokens": 0,
+        "apis": {},
+        "tokens_by_day": defaultdict(int),
+        "requests_by_day": defaultdict(int),
+        "tokens_by_hour": defaultdict(int),
+        "requests_by_hour": defaultdict(int),
+        "success_by_hour": defaultdict(int),
+        "failure_by_hour": defaultdict(int),
+        "latency_sum_by_hour": defaultdict(int),
+        "latency_count_by_hour": defaultdict(int),
+    }
+    node_summaries = []
+    errors = []
+
+    def add_int_dict(target, source):
+        for key, value in (source or {}).items():
+            try:
+                target[key] += int(value or 0)
+            except Exception:
+                pass
+
+    def detail_hour_key(detail):
+        value = str(detail.get("timestamp") or "")
+        if len(value) >= 13 and value[10] == "T" and value[11:13].isdigit():
+            return value[11:13]
+        return None
+
+    for node_name, payload, err in results:
+        if err:
+            errors.append({"node": node_name, "error": err})
+            continue
+        usage = (payload or {}).get("usage", {})
+        node_summaries.append({
+            "node": node_name,
+            "total_requests": usage.get("total_requests", 0),
+            "success_count": usage.get("success_count", 0),
+            "failure_count": usage.get("failure_count", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        })
+        for key in ("total_requests", "success_count", "failure_count", "total_tokens"):
+            merged_usage[key] += int(usage.get(key, 0) or 0)
+        add_int_dict(merged_usage["tokens_by_day"], usage.get("tokens_by_day", {}))
+        add_int_dict(merged_usage["requests_by_day"], usage.get("requests_by_day", {}))
+        add_int_dict(merged_usage["tokens_by_hour"], usage.get("tokens_by_hour", {}))
+        add_int_dict(merged_usage["requests_by_hour"], usage.get("requests_by_hour", {}))
+        add_int_dict(merged_usage["success_by_hour"], usage.get("success_by_hour", {}))
+        add_int_dict(merged_usage["failure_by_hour"], usage.get("failure_by_hour", {}))
+        add_int_dict(merged_usage["latency_sum_by_hour"], usage.get("latency_sum_by_hour", {}))
+        add_int_dict(merged_usage["latency_count_by_hour"], usage.get("latency_count_by_hour", {}))
+        derive_success_failure_by_hour = not usage.get("success_by_hour") and not usage.get("failure_by_hour")
+        derive_latency_by_hour = not usage.get("latency_sum_by_hour") and not usage.get("latency_count_by_hour")
+
+        for api_key, api_stats in (usage.get("apis", {}) or {}).items():
+            out_api = merged_usage["apis"].setdefault(api_key, {
+                "total_requests": 0,
+                "total_tokens": 0,
+                "models": {},
+                "nodes": {},
+            })
+            out_api["total_requests"] += int(api_stats.get("total_requests", 0) or 0)
+            out_api["total_tokens"] += int(api_stats.get("total_tokens", 0) or 0)
+            out_api["nodes"][node_name] = {
+                "total_requests": api_stats.get("total_requests", 0),
+                "total_tokens": api_stats.get("total_tokens", 0),
+            }
+            for model, model_stats in (api_stats.get("models", {}) or {}).items():
+                out_model = out_api["models"].setdefault(model, {
+                    "total_requests": 0,
+                    "total_tokens": 0,
+                    "details": [],
+                })
+                out_model["total_requests"] += int(model_stats.get("total_requests", 0) or 0)
+                out_model["total_tokens"] += int(model_stats.get("total_tokens", 0) or 0)
+                for detail in model_stats.get("details", []) or []:
+                    if isinstance(detail, dict):
+                        detail = dict(detail)
+                        detail["node"] = node_name
+                        detail["api_key"] = api_key
+                        detail["model"] = model
+                        out_model["details"].append(detail)
+                        hour_key = detail_hour_key(detail)
+                        if derive_success_failure_by_hour and hour_key:
+                            if detail.get("failed"):
+                                merged_usage["failure_by_hour"][hour_key] += 1
+                            else:
+                                merged_usage["success_by_hour"][hour_key] += 1
+                        if derive_latency_by_hour and hour_key:
+                            try:
+                                latency_ms = int(detail.get("latency_ms") or 0)
+                            except Exception:
+                                latency_ms = 0
+                            if latency_ms > 0:
+                                merged_usage["latency_sum_by_hour"][hour_key] += latency_ms
+                                merged_usage["latency_count_by_hour"][hour_key] += 1
+
+    merged_usage["avg_latency_ms_by_hour"] = {
+        hour: round(merged_usage["latency_sum_by_hour"][hour] / count, 2)
+        for hour, count in merged_usage["latency_count_by_hour"].items()
+        if count
+    }
+    for key in ("tokens_by_day", "requests_by_day", "tokens_by_hour", "requests_by_hour", "success_by_hour", "failure_by_hour", "latency_sum_by_hour", "latency_count_by_hour", "avg_latency_ms_by_hour"):
+        merged_usage[key] = dict(merged_usage[key])
+    return {"usage": merged_usage, "failed_requests": merged_usage["failure_count"], "nodes": node_summaries, "node_errors": errors}
+
+
+
+def strip_usage_details(payload):
+    """Return usage payload without high-cardinality model details for dashboard counters."""
+    payload = json.loads(json.dumps(payload))
+    for api_stats in (payload.get("usage", {}).get("apis", {}) or {}).values():
+        for model_stats in (api_stats.get("models", {}) or {}).values():
+            model_stats.pop("details", None)
+    return payload
+
+
+def _with_auth_stats_cache_metadata(data, now=None, refreshing=None):
+    import time
+    now = now or time.time()
+    result = dict(data)
+    result["cache_ttl_seconds"] = _auth_stats_cache["ttl"]
+    result["cache_age_seconds"] = round(now - _auth_stats_cache["last_update"], 3)
+    result["refreshing"] = _auth_stats_cache["refreshing"] if refreshing is None else refreshing
+    return result
+
+
+def refresh_auth_stats_cache():
+    import time
+    try:
+        data = build_auth_stats()
+        now = time.time()
+        with _auth_stats_cache_lock:
+            _auth_stats_cache["data"] = data
+            _auth_stats_cache["last_update"] = now
+    finally:
+        with _auth_stats_cache_lock:
+            _auth_stats_cache["refreshing"] = False
+
+
+def start_auth_stats_refresh():
+    with _auth_stats_cache_lock:
+        if _auth_stats_cache["refreshing"]:
+            return False
+        _auth_stats_cache["refreshing"] = True
+    threading.Thread(target=refresh_auth_stats_cache, daemon=True).start()
+    return True
+
+
+def get_auth_stats_cached():
+    import time
+    now = time.time()
+    with _auth_stats_cache_lock:
+        cached = _auth_stats_cache["data"]
+        last_update = _auth_stats_cache["last_update"]
+        ttl = _auth_stats_cache["ttl"]
+        refreshing = _auth_stats_cache["refreshing"]
+    if cached and (now - last_update) < ttl:
+        return _with_auth_stats_cache_metadata(cached, now, refreshing)
+    if cached:
+        start_auth_stats_refresh()
+        return _with_auth_stats_cache_metadata(cached, now, True)
+    data = build_auth_stats()
+    now = time.time()
+    with _auth_stats_cache_lock:
+        _auth_stats_cache["data"] = data
+        _auth_stats_cache["last_update"] = now
+        _auth_stats_cache["refreshing"] = False
+    return _with_auth_stats_cache_metadata(data, now, False)
+
+def call_management_api_all(method, endpoint, data=None, timeout=30):
+    results = []
+    for node in CLIPROXY_NODES:
+        payload, err = call_management_api_node(node, method, endpoint, data=data, timeout=timeout)
+        results.append((node["name"], payload, err))
+    return results
+
+
+def get_cluster_usage():
+    return merge_usage_payloads(call_management_api_all("GET", "/v0/management/usage", timeout=30))
+
+
+def get_cluster_auth_files():
+    files = []
+    errors = []
+    for node_name, payload, err in call_management_api_all("GET", "/v0/management/auth-files", timeout=30):
+        if err:
+            errors.append({"node": node_name, "error": err})
+            continue
+        for item in (payload or {}).get("files", []) or []:
+            if isinstance(item, dict):
+                item = dict(item)
+                item["node"] = node_name
+                files.append(item)
+    return files, errors
+
+
+def parse_detail_time(value):
+    if not value:
+        return None
+    text = str(value)
+    match = re.match(r"^(.*T\d{2}:\d{2}:\d{2})\.(\d+)(Z|[+-]\d{2}:?\d{2})?$", text)
+    if match:
+        frac = match.group(2)[:6]
+        suffix = match.group(3) or ""
+        text = f"{match.group(1)}.{frac}{suffix}"
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def build_auth_stats():
+    usage_payload = get_cluster_usage()
+    files, auth_errors = get_cluster_auth_files()
+    now = datetime.utcnow()
+    windows = {
+        "last_1h": now - timedelta(hours=1),
+        "last_5h": now - timedelta(hours=5),
+        "last_24h": now - timedelta(hours=24),
+        "last_7d": now - timedelta(days=7),
+        "total": None,
+    }
+    window_names = tuple(windows.keys())
+
+    stats = {}
+
+    def empty_window():
+        return {
+            "requests": 0,
+            "success": 0,
+            "failure": 0,
+            "tokens": 0,
+            "failure_rate": 0,
+            "success_rate": 0,
+            "avg_tokens_per_request": 0,
+        }
+
+    def enrich_window(bucket):
+        requests_count = bucket.get("requests", 0) or 0
+        if requests_count:
+            bucket["failure_rate"] = round((bucket.get("failure", 0) or 0) * 100 / requests_count, 2)
+            bucket["success_rate"] = round((bucket.get("success", 0) or 0) * 100 / requests_count, 2)
+            bucket["avg_tokens_per_request"] = round((bucket.get("tokens", 0) or 0) / requests_count, 2)
+        else:
+            bucket["failure_rate"] = 0
+            bucket["success_rate"] = 0
+            bucket["avg_tokens_per_request"] = 0
+        return bucket
+
+    def detail_error_message(detail):
+        for key in ("error", "error_message", "message", "status_message", "reason"):
+            value = detail.get(key)
+            if isinstance(value, dict):
+                value = value.get("message") or value.get("error") or json.dumps(value, ensure_ascii=False)
+            if value:
+                return str(value)
+        return "请求失败"
+
+    def detail_error_status(detail):
+        for key in ("status", "status_code", "http_status", "code"):
+            value = detail.get(key)
+            if value:
+                return str(value)
+        return ""
+
+    def status_explanation(stat):
+        if stat.get("disabled"):
+            return "认证文件已禁用，不参与调度。"
+        if stat.get("unavailable"):
+            return "认证文件被标记为不可用，需要人工处理。"
+        if stat.get("status") == "error":
+            msg = stat.get("last_error_message") or stat.get("status_message") or "最近有失败记录。"
+            return f"最近有失败记录：{msg}"
+        if stat.get("last_5h", {}).get("failure", 0):
+            return "最近 5 小时有失败请求，但账号未被标记为不可用。"
+        if stat.get("last_5h", {}).get("requests", 0):
+            return "最近 5 小时有成功请求。"
+        return "当前未发现不可用标记。"
+
+    auth_index_map = {}
+    account_map = {}
+    for f in files:
+        key = f.get("auth_index") or f.get("account") or f.get("email") or f.get("id") or f.get("name")
+        if not key:
+            continue
+        node = f.get("node", "")
+        account = f.get("account") or f.get("email") or f.get("label") or f.get("name") or key
+        stats_key = f"{node}:{key}"
+        stats[stats_key] = {
+            "node": node,
+            "account": account,
+            "auth_index": f.get("auth_index", ""),
+            "provider": f.get("provider") or f.get("type", ""),
+            "plan_type": (f.get("id_token") or {}).get("plan_type", ""),
+            "status": f.get("status", ""),
+            "status_message": f.get("status_message", ""),
+            "unavailable": bool(f.get("unavailable", False)),
+            "disabled": bool(f.get("disabled", False)),
+            "updated_at": f.get("updated_at") or f.get("modtime", ""),
+            "last_request_at": "",
+            "last_error_at": "",
+            "last_error_message": "",
+            "last_error_status": "",
+        }
+        for window_name in window_names:
+            stats[stats_key][window_name] = empty_window()
+        if stats[stats_key].get("auth_index"):
+            auth_index_map[stats[stats_key]["auth_index"]] = stats[stats_key]
+        if account:
+            account_map[account] = stats[stats_key]
+
+    def find_stat(detail):
+        auth_index = detail.get("auth_index")
+        source = detail.get("source")
+        if auth_index and auth_index in auth_index_map:
+            return auth_index_map[auth_index]
+        if source and source in account_map:
+            return account_map[source]
+        for account, stat in account_map.items():
+            if source and source in account:
+                return stat
+        return None
+
+    for api_stats in (usage_payload.get("usage", {}).get("apis", {}) or {}).values():
+        for model_stats in (api_stats.get("models", {}) or {}).values():
+            for detail in model_stats.get("details", []) or []:
+                if not isinstance(detail, dict):
+                    continue
+                stat = find_stat(detail)
+                if not stat:
+                    continue
+                when = parse_detail_time(detail.get("timestamp"))
+                tokens = int((detail.get("tokens") or {}).get("total_tokens", 0) or 0)
+                failed = bool(detail.get("failed", False))
+                for window_name, start_time in windows.items():
+                    if start_time is not None and (when is None or when < start_time):
+                        continue
+                    bucket = stat[window_name]
+                    bucket["requests"] += 1
+                    bucket["tokens"] += tokens
+                    if failed:
+                        bucket["failure"] += 1
+                    else:
+                        bucket["success"] += 1
+                if when and (not stat["last_request_at"] or when > parse_detail_time(stat["last_request_at"])):
+                    stat["last_request_at"] = detail.get("timestamp", "")
+                if failed and when and (not stat["last_error_at"] or when > parse_detail_time(stat["last_error_at"])):
+                    stat["last_error_at"] = detail.get("timestamp", "")
+                    stat["last_error_message"] = detail_error_message(detail)
+                    stat["last_error_status"] = detail_error_status(detail)
+
+    node_summary = {}
+    for stat in stats.values():
+        for window_name in window_names:
+            enrich_window(stat[window_name])
+        stat["status_explanation"] = status_explanation(stat)
+
+        node = stat["node"] or "unknown"
+        summary = node_summary.setdefault(node, {
+            "auth_files": 0,
+            "active": 0,
+            "warning": 0,
+            "unavailable": 0,
+        })
+        for window_name in window_names:
+            summary.setdefault(window_name, empty_window())
+        summary["auth_files"] += 1
+        if stat.get("disabled") or stat.get("unavailable"):
+            summary["unavailable"] += 1
+        else:
+            summary["active"] += 1
+        if stat.get("status") == "error" and not (stat.get("disabled") or stat.get("unavailable")):
+            summary["warning"] += 1
+        for window_name in window_names:
+            for metric in ("requests", "success", "failure", "tokens"):
+                summary[window_name][metric] += stat[window_name][metric]
+
+    for summary in node_summary.values():
+        for window_name in window_names:
+            enrich_window(summary[window_name])
+
+    return {
+        "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),
+        "nodes": node_summary,
+        "errors": usage_payload.get("node_errors", []) + auth_errors,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
 def get_auth_files():
-    """Get list of auth files from CLIProxyAPI."""
-    data, err = call_management_api("GET", "/v0/management/auth-files")
-    if err:
-        return []
-    return data.get("files", [])
+    """Get list of auth files from all CLIProxyAPI nodes."""
+    files, _ = get_cluster_auth_files()
+    return files
 
 
 def get_auth_file_detail(path):
@@ -637,11 +1063,8 @@ def save_usage_history():
 def sync_usage_from_api():
     """Sync usage data from CLIProxyAPI to database and CSV."""
     try:
-        # 1. Fetch data from Management API
-        data, err = call_management_api("GET", "/v0/management/usage")
-        if err:
-            print(f"[UsageSync] API error: {err}")
-            return False
+        # 1. Fetch data from all Management APIs
+        data = get_cluster_usage()
 
         # 2. Build key-to-user mapping
         user_keys_data = load_user_keys()
@@ -895,13 +1318,21 @@ def register_page():
 @app.route("/my-keys")
 def my_keys_page():
     """User's keys management page."""
-    return render_template("my_keys.html")
+    service_info = dict(config.SERVICE_INFO)
+    service_info["base_url"] = _api_base_url()
+    return render_template("my_keys.html", service_info=service_info)
 
 
 @app.route("/admin/users")
 def admin_users_page():
     """Admin page for user statistics."""
     return render_template("admin_users.html")
+
+
+@app.route("/admin/auth-stats")
+def admin_auth_stats_page():
+    """Admin page for auth file statistics."""
+    return render_template("admin_auth_stats.html")
 
 
 @app.route("/login")
@@ -989,11 +1420,17 @@ def submit_callback():
 
 @app.route("/api/usage")
 def get_usage():
-    """Get usage statistics from CLIProxyAPI."""
-    data, err = call_management_api("GET", "/v0/management/usage")
+    """Get aggregated usage statistics from all CLIProxyAPI nodes."""
+    data, err = get_usage_stats_cached()
     if err:
         return jsonify({"error": err, "usage": {}}), 200
-    return jsonify(data)
+    return jsonify(strip_usage_details(data))
+
+
+@app.route("/api/auth-stats")
+def get_auth_stats():
+    """Get per-auth-file usage windows across all nodes."""
+    return jsonify(get_auth_stats_cached())
 
 
 @app.route("/api/keys")
@@ -1032,17 +1469,17 @@ def get_keys():
 @app.route("/api/usage-history")
 def get_usage_history():
     """Get historical usage data with aggregations."""
-    # Sync latest data first
-    sync_usage_from_api()
-
     data = get_usage_history_aggregated()
 
-    # Also get hourly data from current API
-    api_data, err = call_management_api("GET", "/v0/management/usage")
+    # Also get hourly data from aggregated current API
+    api_data, err = get_usage_stats_cached()
     if not err:
         usage = api_data.get("usage", {})
         data["tokens_by_hour"] = usage.get("tokens_by_hour", {})
         data["requests_by_hour"] = usage.get("requests_by_hour", {})
+        data["success_by_hour"] = usage.get("success_by_hour", {})
+        data["failure_by_hour"] = usage.get("failure_by_hour", {})
+        data["avg_latency_ms_by_hour"] = usage.get("avg_latency_ms_by_hour", {})
 
     return jsonify(data)
 
@@ -1222,12 +1659,16 @@ def query_by_key():
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
-    # Get stats for all keys of this user
+    # Get stats for all keys of this user.
+    # Keep top-level totals scoped to the queried key so older cached pages
+    # still show per-key usage in the "My keys" history cards.
     stats_data, _ = get_usage_stats_cached()
     apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
 
-    total_requests = 0
-    total_tokens = 0
+    user_total_requests = 0
+    user_total_tokens = 0
+    queried_key_requests = 0
+    queried_key_tokens = 0
     all_keys = []
 
     for key in user.get("api_keys", []):
@@ -1237,8 +1678,11 @@ def query_by_key():
         requests = key_stats.get("total_requests", 0)
         tokens = key_stats.get("total_tokens", 0)
 
-        total_requests += requests
-        total_tokens += tokens
+        user_total_requests += requests
+        user_total_tokens += tokens
+        if key == api_key:
+            queried_key_requests = requests
+            queried_key_tokens = tokens
 
         all_keys.append({
             "key": key,
@@ -1250,8 +1694,10 @@ def query_by_key():
 
     return jsonify({
         "identifier": identifier,
-        "total_requests": total_requests,
-        "total_tokens": total_tokens,
+        "total_requests": queried_key_requests,
+        "total_tokens": queried_key_tokens,
+        "user_total_requests": user_total_requests,
+        "user_total_tokens": user_total_tokens,
         "all_keys": all_keys
     })
 
@@ -1489,7 +1935,7 @@ def broadcast_usage_update():
     """Broadcast usage update to all connected WebSocket clients."""
     global _last_usage_state
     try:
-        data, err = call_management_api("GET", "/v0/management/usage")
+        data, err = get_usage_stats_cached()
         if err:
             return
 
@@ -1497,26 +1943,8 @@ def broadcast_usage_update():
         current_tokens = usage.get("total_tokens", 0)
         current_requests = usage.get("total_requests", 0)
 
-        # Detect CLIProxyAPI restart
-        if detect_cliproxy_restart(current_tokens, current_requests):
-            print("[Restart] 🔧 Initiating automatic snapshot recovery...")
-
-            # Import snapshot to restore data
-            if import_cliproxy_snapshot():
-                print("[Restart] ✅ Snapshot restored successfully!")
-
-                # Fetch updated data after restoration
-                data, err = call_management_api("GET", "/v0/management/usage")
-                if not err:
-                    usage = data.get("usage", {})
-                    current_tokens = usage.get("total_tokens", 0)
-                    current_requests = usage.get("total_requests", 0)
-                    print(f"[Restart] 📊 Restored state: {current_tokens:,} tokens, {current_requests:,} requests")
-                else:
-                    print(f"[Restart] ⚠️  Failed to fetch data after restore: {err}")
-            else:
-                print("[Restart] ❌ Failed to restore snapshot")
-                print("[Restart] ℹ️  CLIProxyAPI will continue with fresh statistics")
+        # Cluster mode aggregates multiple nodes; per-node counters can move independently
+        # as auth files migrate, so the single-node restart recovery heuristic is disabled.
 
         # Only broadcast if there's a change
         if (current_tokens != _last_usage_state["total_tokens"] or
@@ -1602,12 +2030,15 @@ if __name__ == "__main__":
         id="snapshot_export"
     )
 
-    # Real-time usage broadcast every 3 seconds
+    # Real-time usage broadcast. Keep this modest: management usage payloads
+    # grow with traffic and can create large short-lived objects.
     scheduler.add_job(
         broadcast_usage_update,
         "interval",
-        seconds=3,
-        id="usage_broadcast"
+        seconds=15,
+        id="usage_broadcast",
+        max_instances=1,
+        coalesce=True
     )
 
     scheduler.start()
@@ -1616,7 +2047,7 @@ if __name__ == "__main__":
     print(f"  - Usage sync:   every 1 hour")
     print(f"  - Git sync:     daily at 00:05")
     print(f"  - Snapshot:     every 5 min")
-    print(f"  - Broadcast:    every 3 sec")
+    print(f"  - Broadcast:    every 15 sec")
 
     # Initial sync and snapshot export
     sync_usage_from_api()
