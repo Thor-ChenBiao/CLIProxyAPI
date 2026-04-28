@@ -422,16 +422,7 @@
 
         socket.on('usage_update', (data) => {
             console.log('[WebSocket] Usage update:', data);
-            animateCounter('todayTokenCounter', data.today_tokens || 0);
-            animateCounter('totalTokenCounter', data.total_tokens || 0);
-            animateCounter('todayRequestCounter', data.today_requests || 0);
-            animateCounter('totalRequestCounter', data.total_requests || 0);
-            document.getElementById('totalTokens').textContent = formatNumber(data.total_tokens || 0);
-            document.getElementById('totalRequests').textContent = formatNumber(data.total_requests || 0);
-            const successRate = data.total_requests > 0
-                ? Math.round((data.success_count / data.total_requests) * 100) + '%'
-                : '-';
-            document.getElementById('successRate').textContent = successRate;
+            applyUsageSummary(data);
         });
 
         socket.on('disconnect', () => {
@@ -444,6 +435,31 @@
             document.getElementById('view' + view.charAt(0).toUpperCase() + view.slice(1)).classList.add('active');
             renderChart();
             renderRequestQualityChart();
+        }
+
+        function applyUsageSummary(data) {
+            const totalTokens = data.total_tokens || 0;
+            const totalRequests = data.total_requests || 0;
+            animateCounter('todayTokenCounter', data.today_tokens || 0);
+            animateCounter('totalTokenCounter', totalTokens);
+            animateCounter('todayRequestCounter', data.today_requests || 0);
+            animateCounter('totalRequestCounter', totalRequests);
+            document.getElementById('totalTokens').textContent = formatNumber(totalTokens);
+            document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
+            const successRate = totalRequests > 0
+                ? Math.round(((data.success_count || 0) / totalRequests) * 100) + '%'
+                : '-';
+            document.getElementById('successRate').textContent = successRate;
+        }
+
+        async function loadUsageSummary() {
+            try {
+                const resp = await fetch('/api/usage-summary');
+                const data = await resp.json();
+                applyUsageSummary(data);
+            } catch (e) {
+                console.error('Load usage summary error:', e);
+            }
         }
 
         function getRecentBeijingHourBuckets() {
@@ -778,33 +794,11 @@
 
         async function loadUsageHistory() {
             try {
+                loadUsageSummary();
+
                 // Load history data
                 const histResp = await fetch('/api/usage-history');
                 usageData = await histResp.json();
-
-                // Load current usage for stats
-                const usageResp = await fetch('/api/usage');
-                const usageJson = await usageResp.json();
-                const usage = usageJson.usage || {};
-
-                // Update stats
-                document.getElementById('totalTokens').textContent = formatNumber(usage.total_tokens || 0);
-                document.getElementById('totalRequests').textContent = formatNumber(usage.total_requests || 0);
-                const successRate = usage.total_requests > 0
-                    ? Math.round((usage.success_count / usage.total_requests) * 100) + '%'
-                    : '-';
-                document.getElementById('successRate').textContent = successRate;
-
-                // Update token counters with animation
-                const today = new Date().toISOString().split('T')[0];
-                const tokensByDay = usage.tokens_by_day || {};
-                const requestsByDay = usage.requests_by_day || {};
-                const todayTokens = tokensByDay[today] || 0;
-                const todayRequests = requestsByDay[today] || 0;
-                animateCounter('todayTokenCounter', todayTokens);
-                animateCounter('totalTokenCounter', usage.total_tokens || 0);
-                animateCounter('todayRequestCounter', todayRequests);
-                animateCounter('totalRequestCounter', usage.total_requests || 0);
 
                 // Render charts
                 renderChart();

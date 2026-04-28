@@ -24,19 +24,15 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
         requests_by_day = usage.get("requests_by_day", {})
         apis = usage.get("apis", {})
 
-        # 1. Sync daily totals to database
-        for date in set(list(tokens_by_day.keys()) + list(requests_by_day.keys())):
-            db.upsert_daily_usage(
-                date=date,
-                total_requests=requests_by_day.get(date, 0),
-                success_count=requests_by_day.get(date, 0),  # Approximate
-                failure_count=0,  # Not available in aggregated data
-                total_tokens=tokens_by_day.get(date, 0),
-                input_tokens=0,
-                output_tokens=0
-            )
-
-        # 2. Aggregate user usage by date + user + api_key
+        # 1. Aggregate request details by date and by date + user + api_key.
+        daily_detail_map = defaultdict(lambda: {
+            'total_requests': 0,
+            'success_count': 0,
+            'failure_count': 0,
+            'total_tokens': 0,
+            'input_tokens': 0,
+            'output_tokens': 0,
+        })
         usage_map = defaultdict(lambda: {
             'total_requests': 0,
             'success_count': 0,
@@ -78,6 +74,18 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
 
                     failed = detail.get('failed', False)
                     tokens_info = detail.get('tokens', {})
+                    total_tokens = tokens_info.get('total_tokens', 0)
+                    input_tokens = tokens_info.get('input_tokens', 0)
+                    output_tokens = tokens_info.get('output_tokens', 0)
+
+                    daily_detail_map[date]['total_requests'] += 1
+                    if failed:
+                        daily_detail_map[date]['failure_count'] += 1
+                    else:
+                        daily_detail_map[date]['success_count'] += 1
+                    daily_detail_map[date]['total_tokens'] += total_tokens
+                    daily_detail_map[date]['input_tokens'] += input_tokens
+                    daily_detail_map[date]['output_tokens'] += output_tokens
 
                     key = (date, user_email, api_key)
 
@@ -87,11 +95,35 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                     else:
                         usage_map[key]['success_count'] += 1
 
-                    usage_map[key]['total_tokens'] += tokens_info.get('total_tokens', 0)
-                    usage_map[key]['input_tokens'] += tokens_info.get('input_tokens', 0)
-                    usage_map[key]['output_tokens'] += tokens_info.get('output_tokens', 0)
+                    usage_map[key]['total_tokens'] += total_tokens
+                    usage_map[key]['input_tokens'] += input_tokens
+                    usage_map[key]['output_tokens'] += output_tokens
 
-        # 3. Insert into database
+        # 2. Sync daily totals to database.
+        for date in set(list(tokens_by_day.keys()) + list(requests_by_day.keys()) + list(daily_detail_map.keys())):
+            detail_stats = daily_detail_map.get(date, {})
+            if detail_stats.get('total_requests', 0):
+                success_count = detail_stats['success_count']
+                failure_count = detail_stats['failure_count']
+                input_tokens = detail_stats['input_tokens']
+                output_tokens = detail_stats['output_tokens']
+            else:
+                success_count = requests_by_day.get(date, 0)
+                failure_count = 0
+                input_tokens = 0
+                output_tokens = 0
+
+            db.upsert_daily_usage(
+                date=date,
+                total_requests=max(requests_by_day.get(date, 0), detail_stats.get('total_requests', 0)),
+                success_count=success_count,
+                failure_count=failure_count,
+                total_tokens=max(tokens_by_day.get(date, 0), detail_stats.get('total_tokens', 0)),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens
+            )
+
+        # 3. Insert user usage into database.
         for (date, user_email, api_key), stats in usage_map.items():
             db.upsert_user_usage(
                 date=date,

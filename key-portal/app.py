@@ -47,6 +47,13 @@ _stats_cache = {
     "ttl": 3  # cache management usage calls; keep dashboard near-real-time
 }
 
+_usage_summary_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 1
+}
+_usage_summary_cache_lock = threading.Lock()
+
 _auth_stats_cache = {
     "data": None,
     "last_update": 0,
@@ -485,6 +492,7 @@ def send_feishu_notification(receiver_email, title, content):
 
 # Snapshot file path
 SNAPSHOT_FILE = os.path.join(os.path.dirname(__file__), "data", "cliproxy_snapshot.json")
+SNAPSHOT_DIR = os.path.join(os.path.dirname(__file__), "data", "cliproxy_snapshots")
 
 # State for restart detection
 _cliproxy_state = {
@@ -970,6 +978,113 @@ def get_cluster_usage():
     return merge_usage_payloads(call_management_api_all("GET", "/v0/management/usage", timeout=30))
 
 
+def usage_summary_from_payload(payload):
+    usage = (payload or {}).get("usage", {}) or {}
+    return {
+        "total_requests": int(usage.get("total_requests", 0) or 0),
+        "success_count": int(usage.get("success_count", 0) or 0),
+        "failure_count": int(usage.get("failure_count", 0) or 0),
+        "total_tokens": int(usage.get("total_tokens", 0) or 0),
+        "tokens_by_day": dict(usage.get("tokens_by_day", {}) or {}),
+        "requests_by_day": dict(usage.get("requests_by_day", {}) or {}),
+        "tokens_by_hour": dict(usage.get("tokens_by_hour", {}) or {}),
+        "requests_by_hour": dict(usage.get("requests_by_hour", {}) or {}),
+        "success_by_hour": dict(usage.get("success_by_hour", {}) or {}),
+        "failure_by_hour": dict(usage.get("failure_by_hour", {}) or {}),
+        "latency_sum_by_hour": dict(usage.get("latency_sum_by_hour", {}) or {}),
+        "latency_count_by_hour": dict(usage.get("latency_count_by_hour", {}) or {}),
+        "avg_latency_ms_by_hour": dict(usage.get("avg_latency_ms_by_hour", {}) or {}),
+    }
+
+
+def merge_usage_summary_payloads(results):
+    merged = {
+        "total_requests": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "total_tokens": 0,
+        "tokens_by_day": defaultdict(int),
+        "requests_by_day": defaultdict(int),
+        "tokens_by_hour": defaultdict(int),
+        "requests_by_hour": defaultdict(int),
+        "success_by_hour": defaultdict(int),
+        "failure_by_hour": defaultdict(int),
+        "latency_sum_by_hour": defaultdict(int),
+        "latency_count_by_hour": defaultdict(int),
+    }
+    errors = []
+    node_summaries = []
+    for node_name, payload, err in results:
+        if err:
+            errors.append({"node": node_name, "error": err})
+            continue
+        summary = usage_summary_from_payload(payload)
+        for key in ("total_requests", "success_count", "failure_count", "total_tokens"):
+            merged[key] += summary.get(key, 0)
+        for key in ("tokens_by_day", "requests_by_day", "tokens_by_hour", "requests_by_hour", "success_by_hour", "failure_by_hour", "latency_sum_by_hour", "latency_count_by_hour"):
+            for bucket, value in (summary.get(key, {}) or {}).items():
+                merged[key][bucket] += int(value or 0)
+        node_summaries.append({"node": node_name, **{k: summary.get(k, 0) for k in ("total_requests", "success_count", "failure_count", "total_tokens")}})
+    merged["avg_latency_ms_by_hour"] = {
+        hour: round(merged["latency_sum_by_hour"][hour] / count, 2)
+        for hour, count in merged["latency_count_by_hour"].items()
+        if count
+    }
+    for key in ("tokens_by_day", "requests_by_day", "tokens_by_hour", "requests_by_hour", "success_by_hour", "failure_by_hour", "latency_sum_by_hour", "latency_count_by_hour", "avg_latency_ms_by_hour"):
+        merged[key] = dict(merged[key])
+    return {"usage": merged, "failed_requests": merged["failure_count"], "nodes": node_summaries, "node_errors": errors}
+
+
+def get_cluster_usage_summary():
+    results = []
+    for node in CLIPROXY_NODES:
+        payload, err = call_management_api_node(node, "GET", "/v0/management/usage/summary", timeout=10)
+        if err:
+            payload, err = call_management_api_node(node, "GET", "/v0/management/usage", timeout=30)
+        results.append((node["name"], payload, err))
+    return merge_usage_summary_payloads(results)
+
+
+def build_usage_summary_response(payload):
+    usage = usage_summary_from_payload(payload)
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_tokens = int((usage.get("tokens_by_day") or {}).get(today, 0) or 0)
+    today_requests = int((usage.get("requests_by_day") or {}).get(today, 0) or 0)
+    total_requests = int(usage.get("total_requests", 0) or 0)
+    success_count = int(usage.get("success_count", 0) or 0)
+    failure_count = int(usage.get("failure_count", 0) or 0)
+    return {
+        "today": today,
+        "today_tokens": today_tokens,
+        "today_requests": today_requests,
+        "total_tokens": int(usage.get("total_tokens", 0) or 0),
+        "total_requests": total_requests,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "failed_requests": failure_count,
+    }
+
+
+def get_usage_summary_cached():
+    now = time.time()
+    with _usage_summary_cache_lock:
+        cached = _usage_summary_cache["data"]
+        if cached and (now - _usage_summary_cache["last_update"]) < _usage_summary_cache["ttl"]:
+            return dict(cached, cache_age_seconds=round(now - _usage_summary_cache["last_update"], 3)), None
+
+    if _stats_cache["data"] and (now - _stats_cache["last_update"]) < _stats_cache["ttl"]:
+        summary = build_usage_summary_response(_stats_cache["data"])
+    else:
+        data = get_cluster_usage_summary()
+        summary = build_usage_summary_response(data)
+
+    now = time.time()
+    with _usage_summary_cache_lock:
+        _usage_summary_cache["data"] = summary
+        _usage_summary_cache["last_update"] = now
+    return dict(summary, cache_age_seconds=0), None
+
+
 def get_cluster_auth_files():
     files = []
     errors = []
@@ -1434,28 +1549,89 @@ def get_usage_history_aggregated():
 # Snapshot Management (delegated to snapshot module)
 # ============================================================================
 
-def export_cliproxy_snapshot():
-    """Export complete usage snapshot from CLIProxyAPI."""
-    try:
-        print(f"[Snapshot] Exporting usage data from CLIProxyAPI...")
-        data, err = call_management_api("GET", "/v0/management/usage/export")
+def snapshot_file_for_node(node_name):
+    """Return the per-node snapshot path."""
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", node_name or "unknown")
+    return os.path.join(SNAPSHOT_DIR, f"{safe_name}.json")
 
-        if err:
-            print(f"[Snapshot] Export failed: {err}")
-            return False
 
-        # Save to file
+def snapshot_totals(snapshot_data):
+    usage = (snapshot_data or {}).get("usage", {}) or {}
+    return int(usage.get("total_tokens", 0) or 0), int(usage.get("total_requests", 0) or 0)
+
+
+def load_snapshot_file(path):
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def import_snapshot_to_node(node, snapshot_data, label):
+    """Import a snapshot into one node and return whether it succeeded."""
+    if not snapshot_data:
+        return False
+    print(f"[Snapshot] Importing {label} into {node['name']}...")
+    data, err = call_management_api_node(node, "POST", "/v0/management/usage/import", snapshot_data, timeout=60)
+    if err:
+        print(f"[Snapshot] Import failed for {node['name']}: {err}")
+        return False
+    print(
+        f"[Snapshot] Imported {node['name']}: "
+        f"added={data.get('added', 0):,}, skipped={data.get('skipped', 0):,}, "
+        f"total_requests={data.get('total_requests', 0):,}"
+    )
+    return True
+
+
+def export_node_snapshot(node):
+    """Export one node snapshot, restoring the last snapshot first if a restart is detected."""
+    node_name = node["name"]
+    path = snapshot_file_for_node(node_name)
+    data, err = call_management_api_node(node, "GET", "/v0/management/usage/export", timeout=60)
+    if err:
+        print(f"[Snapshot] Export failed for {node_name}: {err}")
+        return False
+
+    current_tokens, current_requests = snapshot_totals(data)
+    previous = load_snapshot_file(path)
+    if previous:
+        previous_tokens, previous_requests = snapshot_totals(previous)
+        if current_tokens < previous_tokens or current_requests < previous_requests:
+            print(
+                f"[Snapshot] Restart detected on {node_name}: "
+                f"current={current_tokens:,}/{current_requests:,}, "
+                f"snapshot={previous_tokens:,}/{previous_requests:,}. Restoring before export."
+            )
+            if import_snapshot_to_node(node, previous, path):
+                data, err = call_management_api_node(node, "GET", "/v0/management/usage/export", timeout=60)
+                if err:
+                    print(f"[Snapshot] Export after restore failed for {node_name}: {err}")
+                    return False
+                current_tokens, current_requests = snapshot_totals(data)
+            else:
+                return False
+
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+    # Keep the legacy single-node file for compatibility with older tooling.
+    if node_name == CLIPROXY_NODES[0]["name"]:
         os.makedirs(os.path.dirname(SNAPSHOT_FILE), exist_ok=True)
         with open(SNAPSHOT_FILE, "w") as f:
             json.dump(data, f, indent=2)
 
-        usage = data.get("usage", {})
-        total_tokens = usage.get("total_tokens", 0)
-        total_requests = usage.get("total_requests", 0)
+    print(f"[Snapshot] Exported {node_name}: {current_tokens:,} tokens, {current_requests:,} requests -> {path}")
+    return True
 
-        print(f"[Snapshot] ✅ Exported: {total_tokens:,} tokens, {total_requests:,} requests")
-        print(f"[Snapshot] Saved to: {SNAPSHOT_FILE}")
-        return True
+
+def export_cliproxy_snapshot():
+    """Export complete usage snapshots from all CLIProxyAPI nodes."""
+    try:
+        print("[Snapshot] Exporting usage data from CLIProxyAPI nodes...")
+        results = [export_node_snapshot(node) for node in CLIPROXY_NODES]
+        return any(results)
 
     except Exception as e:
         print(f"[Snapshot] Export error: {e}")
@@ -1465,43 +1641,21 @@ def export_cliproxy_snapshot():
 
 
 def import_cliproxy_snapshot():
-    """Import previously exported snapshot into CLIProxyAPI."""
+    """Import previously exported snapshots into CLIProxyAPI nodes."""
     try:
-        if not os.path.exists(SNAPSHOT_FILE):
-            print(f"[Snapshot] No snapshot file found at {SNAPSHOT_FILE}")
-            return False
-
-        print(f"[Snapshot] Loading snapshot from {SNAPSHOT_FILE}...")
-        with open(SNAPSHOT_FILE, "r") as f:
-            snapshot = json.load(f)
-
-        exported_at = snapshot.get("exported_at", "unknown")
-        usage = snapshot.get("usage", {})
-        total_tokens = usage.get("total_tokens", 0)
-        total_requests = usage.get("total_requests", 0)
-
-        print(f"[Snapshot] Snapshot info:")
-        print(f"  Exported at: {exported_at}")
-        print(f"  Tokens:      {total_tokens:,}")
-        print(f"  Requests:    {total_requests:,}")
-
-        print(f"[Snapshot] Importing into CLIProxyAPI...")
-        data, err = call_management_api("POST", "/v0/management/usage/import", snapshot)
-
-        if err:
-            print(f"[Snapshot] Import failed: {err}")
-            return False
-
-        added = data.get("added", 0)
-        skipped = data.get("skipped", 0)
-        new_total_requests = data.get("total_requests", 0)
-
-        print(f"[Snapshot] ✅ Import completed:")
-        print(f"  Added:          {added:,} records")
-        print(f"  Skipped:        {skipped:,} records")
-        print(f"  Total requests: {new_total_requests:,}")
-
-        return True
+        imported = False
+        for index, node in enumerate(CLIPROXY_NODES):
+            path = snapshot_file_for_node(node["name"])
+            if not os.path.exists(path) and index == 0 and os.path.exists(SNAPSHOT_FILE):
+                path = SNAPSHOT_FILE
+            snapshot_data = load_snapshot_file(path)
+            if not snapshot_data:
+                print(f"[Snapshot] No snapshot file found for {node['name']} at {path}")
+                continue
+            tokens, requests_count = snapshot_totals(snapshot_data)
+            print(f"[Snapshot] Found {node['name']} snapshot: {tokens:,} tokens, {requests_count:,} requests")
+            imported = import_snapshot_to_node(node, snapshot_data, path) or imported
+        return imported
 
     except Exception as e:
         print(f"[Snapshot] Import error: {e}")
@@ -1706,6 +1860,15 @@ def get_usage():
     return jsonify(strip_usage_details(data))
 
 
+@app.route("/api/usage-summary")
+def get_usage_summary():
+    """Get lightweight dashboard usage counters."""
+    data, err = get_usage_summary_cached()
+    if err:
+        return jsonify({"error": err}), 200
+    return jsonify(data)
+
+
 @app.route("/api/auth-stats")
 def get_auth_stats():
     """Get per-auth-file usage windows across all nodes."""
@@ -1750,15 +1913,14 @@ def get_usage_history():
     """Get historical usage data with aggregations."""
     data = get_usage_history_aggregated()
 
-    # Also get hourly data from aggregated current API
-    api_data, err = get_usage_stats_cached()
-    if not err:
-        usage = api_data.get("usage", {})
-        data["tokens_by_hour"] = usage.get("tokens_by_hour", {})
-        data["requests_by_hour"] = usage.get("requests_by_hour", {})
-        data["success_by_hour"] = usage.get("success_by_hour", {})
-        data["failure_by_hour"] = usage.get("failure_by_hour", {})
-        data["avg_latency_ms_by_hour"] = usage.get("avg_latency_ms_by_hour", {})
+    # Also get hourly data from the lightweight live summary.
+    api_data = get_cluster_usage_summary()
+    usage = api_data.get("usage", {})
+    data["tokens_by_hour"] = usage.get("tokens_by_hour", {})
+    data["requests_by_hour"] = usage.get("requests_by_hour", {})
+    data["success_by_hour"] = usage.get("success_by_hour", {})
+    data["failure_by_hour"] = usage.get("failure_by_hour", {})
+    data["avg_latency_ms_by_hour"] = usage.get("avg_latency_ms_by_hour", {})
 
     return jsonify(data)
 
@@ -2214,13 +2376,12 @@ def broadcast_usage_update():
     """Broadcast usage update to all connected WebSocket clients."""
     global _last_usage_state
     try:
-        data, err = get_usage_stats_cached()
+        data, err = get_usage_summary_cached()
         if err:
             return
 
-        usage = data.get("usage", {})
-        current_tokens = usage.get("total_tokens", 0)
-        current_requests = usage.get("total_requests", 0)
+        current_tokens = data.get("total_tokens", 0)
+        current_requests = data.get("total_requests", 0)
 
         # Cluster mode aggregates multiple nodes; per-node counters can move independently
         # as auth files migrate, so the single-node restart recovery heuristic is disabled.
@@ -2231,16 +2392,13 @@ def broadcast_usage_update():
             _last_usage_state["total_tokens"] = current_tokens
             _last_usage_state["total_requests"] = current_requests
 
-            today = datetime.now().strftime("%Y-%m-%d")
-            today_tokens = usage.get("tokens_by_day", {}).get(today, 0)
-            today_requests = usage.get("requests_by_day", {}).get(today, 0)
-
             socketio.emit("usage_update", {
                 "total_tokens": current_tokens,
                 "total_requests": current_requests,
-                "today_tokens": today_tokens,
-                "today_requests": today_requests,
-                "success_count": usage.get("success_count", 0),
+                "today_tokens": data.get("today_tokens", 0),
+                "today_requests": data.get("today_requests", 0),
+                "success_count": data.get("success_count", 0),
+                "failure_count": data.get("failure_count", 0),
                 "timestamp": datetime.now().isoformat()
             })
             print(f"[WebSocket] Broadcast usage update: {current_tokens:,} tokens")
@@ -2275,6 +2433,9 @@ if __name__ == "__main__":
 
     print("[Startup] Loading usage history...")
     load_usage_history()
+
+    print("[Startup] Restoring CLIProxyAPI usage snapshots...")
+    import_cliproxy_snapshot()
 
     # Start scheduler
     scheduler.add_job(

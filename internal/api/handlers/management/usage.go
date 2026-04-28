@@ -32,6 +32,18 @@ func (h *Handler) GetUsageStatistics(c *gin.Context) {
 	})
 }
 
+// GetUsageSummary returns aggregate usage counters without per-request details.
+func (h *Handler) GetUsageSummary(c *gin.Context) {
+	var summary usage.StatisticsSummary
+	if h != nil && h.usageStats != nil {
+		summary = h.usageStats.Summary()
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"usage":           summary,
+		"failed_requests": summary.FailureCount,
+	})
+}
+
 // ExportUsageStatistics returns a complete usage snapshot for backup/migration.
 func (h *Handler) ExportUsageStatistics(c *gin.Context) {
 	var snapshot usage.StatisticsSnapshot

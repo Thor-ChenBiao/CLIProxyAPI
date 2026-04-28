@@ -67,10 +67,14 @@ type RequestStatistics struct {
 
 	apis map[string]*apiStats
 
-	requestsByDay  map[string]int64
-	requestsByHour map[int]int64
-	tokensByDay    map[string]int64
-	tokensByHour   map[int]int64
+	requestsByDay      map[string]int64
+	requestsByHour     map[int]int64
+	successByHour      map[int]int64
+	failureByHour      map[int]int64
+	latencySumByHour   map[int]int64
+	latencyCountByHour map[int]int64
+	tokensByDay        map[string]int64
+	tokensByHour       map[int]int64
 }
 
 // apiStats holds aggregated metrics for a single API key.
@@ -115,10 +119,33 @@ type StatisticsSnapshot struct {
 
 	APIs map[string]APISnapshot `json:"apis"`
 
-	RequestsByDay  map[string]int64 `json:"requests_by_day"`
-	RequestsByHour map[string]int64 `json:"requests_by_hour"`
-	TokensByDay    map[string]int64 `json:"tokens_by_day"`
-	TokensByHour   map[string]int64 `json:"tokens_by_hour"`
+	RequestsByDay      map[string]int64   `json:"requests_by_day"`
+	RequestsByHour     map[string]int64   `json:"requests_by_hour"`
+	SuccessByHour      map[string]int64   `json:"success_by_hour"`
+	FailureByHour      map[string]int64   `json:"failure_by_hour"`
+	LatencySumByHour   map[string]int64   `json:"latency_sum_by_hour"`
+	LatencyCountByHour map[string]int64   `json:"latency_count_by_hour"`
+	AvgLatencyMsByHour map[string]float64 `json:"avg_latency_ms_by_hour"`
+	TokensByDay        map[string]int64   `json:"tokens_by_day"`
+	TokensByHour       map[string]int64   `json:"tokens_by_hour"`
+}
+
+// StatisticsSummary contains only low-cardinality aggregate counters.
+type StatisticsSummary struct {
+	TotalRequests int64 `json:"total_requests"`
+	SuccessCount  int64 `json:"success_count"`
+	FailureCount  int64 `json:"failure_count"`
+	TotalTokens   int64 `json:"total_tokens"`
+
+	RequestsByDay      map[string]int64   `json:"requests_by_day"`
+	RequestsByHour     map[string]int64   `json:"requests_by_hour"`
+	SuccessByHour      map[string]int64   `json:"success_by_hour"`
+	FailureByHour      map[string]int64   `json:"failure_by_hour"`
+	LatencySumByHour   map[string]int64   `json:"latency_sum_by_hour"`
+	LatencyCountByHour map[string]int64   `json:"latency_count_by_hour"`
+	AvgLatencyMsByHour map[string]float64 `json:"avg_latency_ms_by_hour"`
+	TokensByDay        map[string]int64   `json:"tokens_by_day"`
+	TokensByHour       map[string]int64   `json:"tokens_by_hour"`
 }
 
 // APISnapshot summarises metrics for a single API key.
@@ -143,11 +170,15 @@ func GetRequestStatistics() *RequestStatistics { return defaultRequestStatistics
 // NewRequestStatistics constructs an empty statistics store.
 func NewRequestStatistics() *RequestStatistics {
 	return &RequestStatistics{
-		apis:           make(map[string]*apiStats),
-		requestsByDay:  make(map[string]int64),
-		requestsByHour: make(map[int]int64),
-		tokensByDay:    make(map[string]int64),
-		tokensByHour:   make(map[int]int64),
+		apis:               make(map[string]*apiStats),
+		requestsByDay:      make(map[string]int64),
+		requestsByHour:     make(map[int]int64),
+		successByHour:      make(map[int]int64),
+		failureByHour:      make(map[int]int64),
+		latencySumByHour:   make(map[int]int64),
+		latencyCountByHour: make(map[int]int64),
+		tokensByDay:        make(map[string]int64),
+		tokensByHour:       make(map[int]int64),
 	}
 }
 
@@ -180,6 +211,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	dayKey := timestamp.Format("2006-01-02")
 	hourKey := timestamp.Hour()
+	latencyMs := normaliseLatency(record.Latency)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,7 +231,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	s.updateAPIStats(stats, modelName, RequestDetail{
 		Timestamp: timestamp,
-		LatencyMs: normaliseLatency(record.Latency),
+		LatencyMs: latencyMs,
 		Source:    record.Source,
 		AuthIndex: record.AuthIndex,
 		Tokens:    detail,
@@ -208,6 +240,15 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 
 	s.requestsByDay[dayKey]++
 	s.requestsByHour[hourKey]++
+	if success {
+		s.successByHour[hourKey]++
+	} else {
+		s.failureByHour[hourKey]++
+	}
+	if latencyMs > 0 {
+		s.latencySumByHour[hourKey] += latencyMs
+		s.latencyCountByHour[hourKey]++
+	}
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
 }
@@ -268,6 +309,112 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 	for hour, v := range s.requestsByHour {
 		key := formatHour(hour)
 		result.RequestsByHour[key] = v
+	}
+
+	result.SuccessByHour = make(map[string]int64, len(s.successByHour))
+	for hour, v := range s.successByHour {
+		key := formatHour(hour)
+		result.SuccessByHour[key] = v
+	}
+
+	result.FailureByHour = make(map[string]int64, len(s.failureByHour))
+	for hour, v := range s.failureByHour {
+		key := formatHour(hour)
+		result.FailureByHour[key] = v
+	}
+
+	result.LatencySumByHour = make(map[string]int64, len(s.latencySumByHour))
+	for hour, v := range s.latencySumByHour {
+		key := formatHour(hour)
+		result.LatencySumByHour[key] = v
+	}
+
+	result.LatencyCountByHour = make(map[string]int64, len(s.latencyCountByHour))
+	for hour, v := range s.latencyCountByHour {
+		key := formatHour(hour)
+		result.LatencyCountByHour[key] = v
+	}
+
+	result.AvgLatencyMsByHour = make(map[string]float64, len(s.latencyCountByHour))
+	for hour, count := range s.latencyCountByHour {
+		if count <= 0 {
+			continue
+		}
+		key := formatHour(hour)
+		result.AvgLatencyMsByHour[key] = float64(s.latencySumByHour[hour]) / float64(count)
+	}
+
+	result.TokensByDay = make(map[string]int64, len(s.tokensByDay))
+	for k, v := range s.tokensByDay {
+		result.TokensByDay[k] = v
+	}
+
+	result.TokensByHour = make(map[string]int64, len(s.tokensByHour))
+	for hour, v := range s.tokensByHour {
+		key := formatHour(hour)
+		result.TokensByHour[key] = v
+	}
+
+	return result
+}
+
+// Summary returns aggregate counters without per-API or per-request details.
+func (s *RequestStatistics) Summary() StatisticsSummary {
+	result := StatisticsSummary{}
+	if s == nil {
+		return result
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result.TotalRequests = s.totalRequests
+	result.SuccessCount = s.successCount
+	result.FailureCount = s.failureCount
+	result.TotalTokens = s.totalTokens
+
+	result.RequestsByDay = make(map[string]int64, len(s.requestsByDay))
+	for k, v := range s.requestsByDay {
+		result.RequestsByDay[k] = v
+	}
+
+	result.RequestsByHour = make(map[string]int64, len(s.requestsByHour))
+	for hour, v := range s.requestsByHour {
+		key := formatHour(hour)
+		result.RequestsByHour[key] = v
+	}
+
+	result.SuccessByHour = make(map[string]int64, len(s.successByHour))
+	for hour, v := range s.successByHour {
+		key := formatHour(hour)
+		result.SuccessByHour[key] = v
+	}
+
+	result.FailureByHour = make(map[string]int64, len(s.failureByHour))
+	for hour, v := range s.failureByHour {
+		key := formatHour(hour)
+		result.FailureByHour[key] = v
+	}
+
+	result.LatencySumByHour = make(map[string]int64, len(s.latencySumByHour))
+	for hour, v := range s.latencySumByHour {
+		key := formatHour(hour)
+		result.LatencySumByHour[key] = v
+	}
+
+	result.LatencyCountByHour = make(map[string]int64, len(s.latencyCountByHour))
+	for hour, v := range s.latencyCountByHour {
+		key := formatHour(hour)
+		result.LatencyCountByHour[key] = v
+	}
+
+	result.AvgLatencyMsByHour = make(map[string]float64, len(s.latencyCountByHour))
+	for hour, count := range s.latencyCountByHour {
+		if count <= 0 {
+			continue
+		}
+		key := formatHour(hour)
+		result.AvgLatencyMsByHour[key] = float64(s.latencySumByHour[hour]) / float64(count)
 	}
 
 	result.TokensByDay = make(map[string]int64, len(s.tokensByDay))
@@ -376,6 +523,15 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 
 	s.requestsByDay[dayKey]++
 	s.requestsByHour[hourKey]++
+	if detail.Failed {
+		s.failureByHour[hourKey]++
+	} else {
+		s.successByHour[hourKey]++
+	}
+	if detail.LatencyMs > 0 {
+		s.latencySumByHour[hourKey] += detail.LatencyMs
+		s.latencyCountByHour[hourKey]++
+	}
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
 }

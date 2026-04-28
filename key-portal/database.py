@@ -38,6 +38,19 @@ def upsert_daily_usage(date, total_requests, success_count, failure_count,
     with get_db_connection() as conn:
         cursor = conn.cursor()
         now = datetime.utcnow().isoformat() + 'Z'
+        existing = cursor.execute("""
+            SELECT total_requests, success_count, failure_count,
+                   total_tokens, input_tokens, output_tokens
+            FROM daily_usage
+            WHERE date = ?
+        """, (date,)).fetchone()
+        if existing:
+            total_requests = max(total_requests, existing['total_requests'] or 0)
+            success_count = max(success_count, existing['success_count'] or 0)
+            failure_count = max(failure_count, existing['failure_count'] or 0)
+            total_tokens = max(total_tokens, existing['total_tokens'] or 0)
+            input_tokens = max(input_tokens, existing['input_tokens'] or 0)
+            output_tokens = max(output_tokens, existing['output_tokens'] or 0)
 
         cursor.execute("""
             INSERT OR REPLACE INTO daily_usage
@@ -62,6 +75,19 @@ def upsert_user_usage(date, user_email, api_key, total_requests,
     with get_db_connection() as conn:
         cursor = conn.cursor()
         now = datetime.utcnow().isoformat() + 'Z'
+        existing = cursor.execute("""
+            SELECT total_requests, success_count, failure_count,
+                   total_tokens, input_tokens, output_tokens
+            FROM user_usage
+            WHERE date = ? AND user_email = ? AND api_key = ?
+        """, (date, user_email, api_key)).fetchone()
+        if existing:
+            total_requests = max(total_requests, existing['total_requests'] or 0)
+            success_count = max(success_count, existing['success_count'] or 0)
+            failure_count = max(failure_count, existing['failure_count'] or 0)
+            total_tokens = max(total_tokens, existing['total_tokens'] or 0)
+            input_tokens = max(input_tokens, existing['input_tokens'] or 0)
+            output_tokens = max(output_tokens, existing['output_tokens'] or 0)
 
         cursor.execute("""
             INSERT OR REPLACE INTO user_usage
