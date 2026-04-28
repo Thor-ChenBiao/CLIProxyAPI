@@ -412,6 +412,8 @@
         let requestQualityChart = null;
         let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {} };
         let currentView = 'hour';
+        let usageSummaryPollTimer = null;
+        let usageSummaryLoading = false;
 
         // WebSocket connection
         const socket = io();
@@ -453,13 +455,23 @@
         }
 
         async function loadUsageSummary() {
+            if (usageSummaryLoading) return;
+            usageSummaryLoading = true;
             try {
                 const resp = await fetch('/api/usage-summary');
                 const data = await resp.json();
                 applyUsageSummary(data);
             } catch (e) {
                 console.error('Load usage summary error:', e);
+            } finally {
+                usageSummaryLoading = false;
             }
+        }
+
+        function startUsageSummaryPolling() {
+            if (usageSummaryPollTimer) return;
+            loadUsageSummary();
+            usageSummaryPollTimer = setInterval(loadUsageSummary, 1000);
         }
 
         function getRecentBeijingHourBuckets() {
@@ -1174,8 +1186,9 @@ export OPENAI_API_KEY="${apiKey}"`;
             }
         };
 
-        // Load usage on page load (WebSocket handles real-time updates)
+        // Load usage on page load and keep the lightweight counters fresh.
         loadUsageHistory();
+        startUsageSummaryPolling();
 
         // Fill dynamic API URL shown in UI
         const dynamicApiUrl = {{ service_info.base_url|tojson }};
