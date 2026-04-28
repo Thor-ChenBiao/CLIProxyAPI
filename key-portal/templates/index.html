@@ -376,6 +376,9 @@
 
             const currentValue = counterState[elementId] || 0;
             counterState[elementId] = targetValue;
+            const tokenKey = elementId + ':token';
+            const animationToken = (counterState[tokenKey] || 0) + 1;
+            counterState[tokenKey] = animationToken;
 
             // Check if this is a header token counter
             const isTodayCounter = elementId === 'todayTokenCounter' || elementId === 'todayRequestCounter';
@@ -391,6 +394,7 @@
             const diff = targetValue - currentValue;
 
             function update(currentTime) {
+                if (counterState[tokenKey] !== animationToken) return;
                 const elapsed = currentTime - startTime;
                 const progress = Math.min(elapsed / duration, 1);
                 // Easing function
@@ -401,6 +405,7 @@
                 if (progress < 1) {
                     requestAnimationFrame(update);
                 } else {
+                    if (counterState[tokenKey] !== animationToken) return;
                     el.textContent = formatter(targetValue);
                 }
             }
@@ -414,6 +419,7 @@
         let currentView = 'hour';
         let usageSummaryPollTimer = null;
         let usageSummaryLoading = false;
+        let lastUsageSummary = { today: '', today_tokens: 0, today_requests: 0, total_tokens: 0, total_requests: 0, success_count: 0, failure_count: 0 };
 
         // WebSocket connection
         const socket = io();
@@ -424,7 +430,7 @@
 
         socket.on('usage_update', (data) => {
             console.log('[WebSocket] Usage update:', data);
-            applyUsageSummary(data);
+            loadUsageSummary();
         });
 
         socket.on('disconnect', () => {
@@ -440,16 +446,31 @@
         }
 
         function applyUsageSummary(data) {
-            const totalTokens = data.total_tokens || 0;
-            const totalRequests = data.total_requests || 0;
-            animateCounter('todayTokenCounter', data.today_tokens || 0);
+            const today = data.today || lastUsageSummary.today || '';
+            const sameDay = !lastUsageSummary.today || !today || today === lastUsageSummary.today;
+            const totalTokens = Math.max(data.total_tokens || 0, lastUsageSummary.total_tokens || 0);
+            const totalRequests = Math.max(data.total_requests || 0, lastUsageSummary.total_requests || 0);
+            const successCount = Math.max(data.success_count || 0, lastUsageSummary.success_count || 0);
+            const failureCount = Math.max(data.failure_count || 0, lastUsageSummary.failure_count || 0);
+            const todayTokens = sameDay ? Math.max(data.today_tokens || 0, lastUsageSummary.today_tokens || 0) : (data.today_tokens || 0);
+            const todayRequests = sameDay ? Math.max(data.today_requests || 0, lastUsageSummary.today_requests || 0) : (data.today_requests || 0);
+            lastUsageSummary = {
+                today,
+                today_tokens: todayTokens,
+                today_requests: todayRequests,
+                total_tokens: totalTokens,
+                total_requests: totalRequests,
+                success_count: successCount,
+                failure_count: failureCount
+            };
+            animateCounter('todayTokenCounter', todayTokens);
             animateCounter('totalTokenCounter', totalTokens);
-            animateCounter('todayRequestCounter', data.today_requests || 0);
+            animateCounter('todayRequestCounter', todayRequests);
             animateCounter('totalRequestCounter', totalRequests);
             document.getElementById('totalTokens').textContent = formatNumber(totalTokens);
             document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
             const successRate = totalRequests > 0
-                ? Math.round(((data.success_count || 0) / totalRequests) * 100) + '%'
+                ? Math.round((successCount / totalRequests) * 100) + '%'
                 : '-';
             document.getElementById('successRate').textContent = successRate;
         }
