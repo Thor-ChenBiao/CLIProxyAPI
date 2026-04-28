@@ -11,6 +11,8 @@ import re
 import requests
 import subprocess
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from collections import defaultdict
 from urllib.parse import urlparse, parse_qs
@@ -52,6 +54,13 @@ _auth_stats_cache = {
     "refreshing": False
 }
 _auth_stats_cache_lock = threading.Lock()
+
+_auth_quota_cache = {
+    "data": {},
+    "ttl": 300,
+    "error_ttl": 60,
+}
+_auth_quota_cache_lock = threading.Lock()
 
 # User keys cache and file path
 USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
@@ -532,6 +541,249 @@ def call_management_api_node(node, method, endpoint, data=None, timeout=30):
         return None, str(e)
 
 
+def _number_or_none(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("%"):
+            text = text[:-1].strip()
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _clamp_percent(value):
+    if value is None:
+        return None
+    return max(0, min(100, round(float(value), 2)))
+
+
+def _camel_or_snake(data, snake, camel=None):
+    if not isinstance(data, dict):
+        return None
+    if snake in data:
+        return data.get(snake)
+    if camel and camel in data:
+        return data.get(camel)
+    return None
+
+
+def _reset_at_iso(window):
+    if not isinstance(window, dict):
+        return ""
+    reset_at = _number_or_none(
+        _camel_or_snake(window, "reset_at", "resetAt")
+        or _camel_or_snake(window, "reset_time", "resetTime")
+    )
+    if reset_at and reset_at > 0:
+        try:
+            return datetime.utcfromtimestamp(reset_at).isoformat() + "Z"
+        except (OverflowError, OSError, ValueError):
+            pass
+    reset_after = _number_or_none(
+        _camel_or_snake(window, "reset_after_seconds", "resetAfterSeconds")
+        or _camel_or_snake(window, "reset_in", "resetIn")
+    )
+    if reset_after and reset_after > 0:
+        return (datetime.utcnow() + timedelta(seconds=reset_after)).isoformat() + "Z"
+    raw_reset = _camel_or_snake(window, "resets_at", "resetsAt")
+    if isinstance(raw_reset, str) and raw_reset.strip():
+        return raw_reset.strip()
+    return ""
+
+
+def _quota_window_from_used_percent(window, limit_label):
+    if not isinstance(window, dict):
+        return None
+    used_raw = _camel_or_snake(window, "used_percent", "usedPercent")
+    if used_raw is None:
+        used_raw = window.get("utilization")
+    used = _number_or_none(used_raw)
+    if used is None and _reset_at_iso(window):
+        used = 100
+    if used is None:
+        return None
+    remaining = _clamp_percent(100 - used)
+    return {
+        "limit_label": limit_label,
+        "used_percent": _clamp_percent(used),
+        "remaining_percent": remaining,
+        "reset_at": _reset_at_iso(window),
+        "limit_window_seconds": _number_or_none(_camel_or_snake(window, "limit_window_seconds", "limitWindowSeconds")),
+    }
+
+
+def _parse_json_body(body):
+    if isinstance(body, dict):
+        return body
+    if not isinstance(body, str):
+        return None
+    text = body.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _api_call_node(node, auth_index, method, url, headers, body=""):
+    payload = {
+        "auth_index": auth_index,
+        "method": method,
+        "url": url,
+        "header": headers,
+    }
+    if body:
+        payload["data"] = body
+    data, err = call_management_api_node(node, "POST", "/v0/management/api-call", data=payload, timeout=30)
+    if err:
+        raise RuntimeError(err)
+    status_code = int(data.get("status_code", 0) or 0)
+    if status_code < 200 or status_code >= 300:
+        response_body = str(data.get("body", "") or "").strip()
+        if len(response_body) > 200:
+            response_body = response_body[:200] + "..."
+        raise RuntimeError(f"provider quota API returned {status_code}: {response_body}")
+    return _parse_json_body(data.get("body"))
+
+
+def _auth_chatgpt_account_id(auth_file):
+    id_token = auth_file.get("id_token")
+    if isinstance(id_token, dict):
+        account_id = id_token.get("chatgpt_account_id") or id_token.get("chatgptAccountId")
+        if isinstance(account_id, str) and account_id.strip():
+            return account_id.strip()
+    return ""
+
+
+def _build_error_quota(provider, message):
+    return {
+        "status": "error",
+        "provider": provider,
+        "error": message,
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+        "windows": {},
+    }
+
+
+def _fetch_codex_quota(node, auth_file):
+    auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
+    account_id = _auth_chatgpt_account_id(auth_file)
+    if not auth_index:
+        return _build_error_quota("codex", "auth_index missing")
+    if not account_id:
+        return _build_error_quota("codex", "chatgpt account id missing")
+    payload = _api_call_node(node, auth_index, "GET", "https://chatgpt.com/backend-api/wham/usage", {
+        "Authorization": "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+        "Chatgpt-Account-Id": account_id,
+    })
+    if not payload:
+        return _build_error_quota("codex", "empty quota response")
+    rate_limit = payload.get("rate_limit") or payload.get("rateLimit") or {}
+    primary = rate_limit.get("primary_window") or rate_limit.get("primaryWindow")
+    secondary = rate_limit.get("secondary_window") or rate_limit.get("secondaryWindow")
+    return {
+        "status": "success",
+        "provider": "codex",
+        "plan_type": (payload.get("plan_type") or payload.get("planType") or auth_file.get("plan_type") or ""),
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+        "windows": {
+            "last_5h": _quota_window_from_used_percent(primary, "5h 原生窗口"),
+            "last_7d": _quota_window_from_used_percent(secondary, "7d 原生窗口"),
+        },
+    }
+
+
+def _pick_claude_seven_day_window(payload):
+    candidates = [
+        ("seven_day", "7d 原生窗口"),
+        ("seven_day_oauth_apps", "7d OAuth Apps"),
+        ("seven_day_opus", "7d Opus"),
+        ("seven_day_sonnet", "7d Sonnet"),
+        ("seven_day_cowork", "7d Cowork"),
+    ]
+    parsed = []
+    for key, label in candidates:
+        item = _quota_window_from_used_percent(payload.get(key), label)
+        if item:
+            parsed.append(item)
+    if not parsed:
+        return None
+    return sorted(parsed, key=lambda item: item.get("remaining_percent", 101))[0]
+
+
+def _fetch_claude_quota(node, auth_file):
+    auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
+    if not auth_index:
+        return _build_error_quota("claude", "auth_index missing")
+    payload = _api_call_node(node, auth_index, "GET", "https://api.anthropic.com/api/oauth/usage", {
+        "Authorization": "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "anthropic-beta": "oauth-2025-04-20",
+    })
+    if not payload:
+        return _build_error_quota("claude", "empty quota response")
+    return {
+        "status": "success",
+        "provider": "claude",
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+        "windows": {
+            "last_5h": _quota_window_from_used_percent(payload.get("five_hour"), "5h 原生窗口"),
+            "last_7d": _pick_claude_seven_day_window(payload),
+        },
+        "extra_usage": payload.get("extra_usage"),
+    }
+
+
+def fetch_auth_quota(node, auth_file):
+    provider = str(auth_file.get("provider") or auth_file.get("type") or "").strip().lower()
+    try:
+        if provider == "codex":
+            return _fetch_codex_quota(node, auth_file)
+        if provider == "claude":
+            return _fetch_claude_quota(node, auth_file)
+        return {
+            "status": "unsupported",
+            "provider": provider,
+            "fetched_at": datetime.utcnow().isoformat() + "Z",
+            "windows": {},
+        }
+    except Exception as e:
+        return _build_error_quota(provider, str(e))
+
+
+def get_auth_quota_cached(node, auth_file):
+    auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
+    provider = str(auth_file.get("provider") or auth_file.get("type") or "").strip().lower()
+    if not auth_index:
+        return _build_error_quota(provider, "auth_index missing")
+    cache_key = f"{node.get('name', '')}:{auth_index}:{provider}"
+    now = time.time()
+    with _auth_quota_cache_lock:
+        cached = _auth_quota_cache["data"].get(cache_key)
+        if cached:
+            ttl = _auth_quota_cache["error_ttl"] if cached.get("quota", {}).get("status") == "error" else _auth_quota_cache["ttl"]
+            if (now - cached.get("updated_at", 0)) < ttl:
+                return dict(cached["quota"], cache_age_seconds=round(now - cached.get("updated_at", now), 3))
+    quota = fetch_auth_quota(node, auth_file)
+    with _auth_quota_cache_lock:
+        _auth_quota_cache["data"][cache_key] = {
+            "updated_at": now,
+            "quota": quota,
+        }
+    return dict(quota, cache_age_seconds=0)
+
+
 def merge_usage_payloads(results):
     """Merge /v0/management/usage results from all nodes."""
     merged_usage = {
@@ -752,6 +1004,7 @@ def build_auth_stats():
     usage_payload = get_cluster_usage()
     files, auth_errors = get_cluster_auth_files()
     now = datetime.utcnow()
+    node_by_name = {node["name"]: node for node in CLIPROXY_NODES}
     windows = {
         "last_1h": now - timedelta(hours=1),
         "last_5h": now - timedelta(hours=5),
@@ -762,6 +1015,7 @@ def build_auth_stats():
     window_names = tuple(windows.keys())
 
     stats = {}
+    quota_sources = {}
 
     def empty_window():
         return {
@@ -840,6 +1094,11 @@ def build_auth_stats():
             "last_error_at": "",
             "last_error_message": "",
             "last_error_status": "",
+            "quota": {
+                "status": "unsupported",
+                "provider": f.get("provider") or f.get("type", ""),
+                "windows": {},
+            },
         }
         for window_name in window_names:
             stats[stats_key][window_name] = empty_window()
@@ -847,6 +1106,11 @@ def build_auth_stats():
             auth_index_map[stats[stats_key]["auth_index"]] = stats[stats_key]
         if account:
             account_map[account] = stats[stats_key]
+        provider = str(stats[stats_key]["provider"] or "").strip().lower()
+        if provider in ("codex", "claude") and not stats[stats_key]["disabled"]:
+            node_cfg = node_by_name.get(node)
+            if node_cfg:
+                quota_sources[stats_key] = (node_cfg, f)
 
     def find_stat(detail):
         auth_index = detail.get("auth_index")
@@ -917,6 +1181,21 @@ def build_auth_stats():
     for summary in node_summary.values():
         for window_name in window_names:
             enrich_window(summary[window_name])
+
+    if quota_sources:
+        workers = min(6, len(quota_sources))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_map = {
+                executor.submit(get_auth_quota_cached, node_cfg, auth_file): stats_key
+                for stats_key, (node_cfg, auth_file) in quota_sources.items()
+                if stats_key in stats
+            }
+            for future in as_completed(future_map):
+                stats_key = future_map[future]
+                try:
+                    stats[stats_key]["quota"] = future.result()
+                except Exception as e:
+                    stats[stats_key]["quota"] = _build_error_quota(stats[stats_key].get("provider", ""), str(e))
 
     return {
         "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),

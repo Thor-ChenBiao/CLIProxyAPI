@@ -25,10 +25,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background:
-                radial-gradient(circle at 12% 8%, rgba(36, 84, 214, 0.12), transparent 28%),
-                radial-gradient(circle at 88% 0%, rgba(19, 138, 82, 0.10), transparent 24%),
-                linear-gradient(180deg, #f7f9fc 0%, var(--bg) 100%);
+            background: linear-gradient(180deg, #f7f9fc 0%, var(--bg) 100%);
             color: var(--ink);
             min-height: 100vh;
             padding: 26px;
@@ -100,8 +97,9 @@
         }
         .node-card h3 { margin: 0 0 15px 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
         .node-pill { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; color: var(--blue); background: var(--blue-soft); padding: 5px 10px; border-radius: 999px; white-space: nowrap; font-weight: 800; }
-        .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin: 8px 0; color: var(--muted); }
-        .line strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+	        .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin: 8px 0; color: var(--muted); }
+	        .line.emphasis { padding: 8px 10px; border-radius: 12px; background: #f3f6fb; }
+	        .line strong { color: var(--ink); font-variant-numeric: tabular-nums; }
         .table-card { background: rgba(255,255,255,0.94); padding: 22px; border-radius: 24px; border: 1px solid var(--line); box-shadow: var(--shadow); }
         .table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
         .table-title h2 { color: #10192b; margin: 0; font-size: 24px; letter-spacing: -0.03em; }
@@ -126,7 +124,7 @@
         .auth-card.status-active::before { background: var(--green); }
         .auth-card.status-warning::before { background: #e19a14; }
         .auth-card.status-error::before { background: var(--red); }
-        .auth-main { display: grid; grid-template-columns: minmax(260px, 0.86fr) minmax(280px, 1fr) minmax(280px, 1fr) minmax(190px, 0.72fr); gap: 14px; padding: 18px 18px 15px 22px; align-items: stretch; }
+	        .auth-main { display: grid; grid-template-columns: minmax(250px, 0.85fr) minmax(340px, 1.2fr) minmax(260px, 0.9fr) minmax(250px, 0.8fr); gap: 14px; padding: 18px 18px 15px 22px; align-items: stretch; }
         .identity { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
         .identity-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .account { font-weight: 900; color: #10192b; font-size: 17px; overflow-wrap: anywhere; }
@@ -136,8 +134,46 @@
         .auth-status.warning { background: var(--orange-soft); color: var(--orange); }
         .auth-status.error { background: var(--red-soft); color: var(--red); }
         .auth-status.other { background: #edf1f5; color: #526070; }
-        .auth-msg { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; line-height: 1.45; }
-        .metric-block { border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); padding: 15px; }
+	        .auth-msg { max-width: 100%; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+	        .signal-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #172846; font-size: 13px; font-weight: 900; margin-bottom: 11px; }
+	        .signal-title span:last-child { color: var(--muted); font-size: 11px; font-weight: 800; }
+	        .quota-panel, .health-panel, .traffic-panel { border: 1px solid var(--line); border-radius: 18px; background: var(--panel-soft); padding: 15px; }
+	        .quota-panel { background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); border-color: #cfdcff; }
+	        .quota-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+	        .quota-window { min-width: 0; padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.78); border: 1px solid rgba(223,230,240,0.88); }
+	        .quota-window.ok { border-color: #bfe8d1; background: #f2fbf6; }
+	        .quota-window.warn { border-color: #ffd88b; background: #fff8e8; }
+	        .quota-window.danger { border-color: #ffc1c1; background: #fff4f4; }
+	        .quota-window.unknown { color: var(--muted); }
+	        .quota-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+	        .quota-top span { color: var(--muted); font-size: 12px; font-weight: 800; }
+	        .quota-top strong { color: #10192b; font-size: clamp(24px, 2.4vw, 36px); line-height: 1; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+	        .quota-window.warn .quota-top strong { color: var(--orange); }
+	        .quota-window.danger .quota-top strong { color: var(--red); }
+	        .quota-bar { height: 8px; border-radius: 999px; background: #d9e1ee; overflow: hidden; }
+	        .quota-bar span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--green); }
+	        .quota-window.warn .quota-bar span { background: #d99012; }
+	        .quota-window.danger .quota-bar span { background: var(--red); }
+	        .quota-foot { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+	        .quota-foot span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	        .quota-message { color: var(--muted); font-size: 12px; line-height: 1.45; }
+	        .health-panel { display: flex; flex-direction: column; gap: 10px; }
+	        .failure-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+	        .failure-card { border: 1px solid rgba(223,230,240,0.88); border-radius: 14px; background: #fff; padding: 10px; }
+	        .failure-card.warn { border-color: #ffd88b; background: #fff8e8; }
+	        .failure-card.danger { border-color: #ffc1c1; background: #fff4f4; }
+	        .failure-card span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; margin-bottom: 6px; }
+	        .failure-card strong { color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; }
+	        .failure-card.warn strong { color: var(--orange); }
+	        .failure-card.danger strong { color: var(--red); }
+	        .failure-card small { display: block; color: var(--muted); margin-top: 4px; font-size: 11px; }
+	        .recent-lines { display: grid; gap: 7px; }
+	        .traffic-panel { background: #fff; }
+	        .traffic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+	        .traffic-item { padding: 9px 10px; border-radius: 12px; background: var(--panel-soft); border: 1px solid rgba(223,230,240,0.82); }
+	        .traffic-item span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+	        .traffic-item strong { display: block; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+	        .metric-block { border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); padding: 15px; }
         .metric-block.primary { border-color: #cfdcff; background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); }
         .metric-block h4 { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; color: #172846; font-size: 14px; margin: 0 0 12px; }
         .range { color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -149,8 +185,7 @@
         .mini strong { display: block; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
         .quota-placeholder { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cfd7e5; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; color: var(--muted); font-size: 12px; }
         .quota-placeholder b { color: #526070; }
-        .health-panel { border: 1px solid var(--line); border-radius: 18px; background: var(--panel-soft); padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .health-line { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+	        .health-line { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
         .health-line strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
         .error-note { color: var(--red); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
         .secondary-metrics { border-top: 1px solid var(--line); background: #fbfcff; padding: 0 18px 0 22px; }
@@ -161,21 +196,22 @@
         .detail-box .detail-value { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 6px; }
         .detail-box .detail-value strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
         .time-grid { grid-column: span 2; }
-        @media (max-width: 1180px) {
-            .auth-main { grid-template-columns: 1fr 1fr; }
-            .health-panel { grid-column: span 2; }
-            .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        }
-        @media (max-width: 760px) {
+	        @media (max-width: 1180px) {
+	            .auth-main { grid-template-columns: 1fr 1fr; }
+	            .traffic-panel { grid-column: span 2; }
+	            .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	        }
+	        @media (max-width: 760px) {
             body { padding: 16px; }
             .topbar, .table-head { align-items: stretch; flex-direction: column; }
             .actions { justify-content: flex-start; min-width: 0; }
             .auth-main { grid-template-columns: 1fr; }
-            .health-panel { grid-column: auto; }
-            .detail-grid { grid-template-columns: 1fr; }
-            .time-grid { grid-column: auto; }
-            .quota-placeholder { grid-template-columns: 1fr; }
-        }
+	            .traffic-panel { grid-column: auto; }
+	            .detail-grid { grid-template-columns: 1fr; }
+	            .time-grid { grid-column: auto; }
+	            .quota-placeholder { grid-template-columns: 1fr; }
+	            .quota-grid, .failure-grid, .traffic-grid { grid-template-columns: 1fr; }
+	        }
     </style>
 </head>
 <body>
@@ -184,7 +220,7 @@
             <div>
                 <div class="eyebrow">Key Portal Operations</div>
                 <h1>认证文件整体统计</h1>
-                <p class="subtitle">认证明细现在优先展示 5 小时和 7 天两个关键窗口；限额与剩余额度当前未由后端提供，因此只展示真实已用量并标记待接入。</p>
+                <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；限额来自 provider 原生接口，后端会缓存读取结果以减少上游请求。</p>
             </div>
             <div class="actions">
                 <a class="btn secondary" href="/">返回首页</a>
@@ -204,7 +240,7 @@
             <div class="table-head">
                 <div class="table-title">
                     <h2>认证文件明细</h2>
-                    <p>主视图只保留账号、5 小时窗口、7 天窗口和健康状态；展开后查看 1h、24h、累计和时间信息。</p>
+	                    <p>主视图按关注优先排序，先看可用性、额度剩余和失败率；展开后查看原始窗口与时间信息。</p>
                 </div>
                 <button class="btn primary" onclick="loadAuthStats(true)">刷新认证统计</button>
             </div>
@@ -247,6 +283,122 @@
             return num ? num.toFixed(num >= 10 ? 1 : 2) + '%' : '0%';
         }
 
+        function formatQuotaPercent(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '--';
+            return Number.isInteger(num) ? `${num}%` : `${num.toFixed(num >= 10 ? 1 : 2)}%`;
+        }
+
+        function quotaStatusText(quota) {
+            if (!quota) return '未获取';
+            if (quota.status === 'error') return quota.error ? `获取失败：${quota.error}` : '获取失败';
+            if (quota.status === 'unsupported') return '暂未接入';
+            return '暂无窗口';
+        }
+
+        function quotaLimitText(quota, windowName) {
+            if (!quota || quota.status !== 'success') return quotaStatusText(quota);
+            const bucket = quota.windows?.[windowName];
+            return bucket?.limit_label || '原生窗口';
+        }
+
+        function quotaRemainingText(quota, windowName) {
+            if (!quota || quota.status !== 'success') return quotaStatusText(quota);
+            const bucket = quota.windows?.[windowName];
+            if (!bucket) return '暂无窗口';
+            const reset = bucket.reset_at ? ` · ${formatDateTime(bucket.reset_at)}` : '';
+            return `${formatQuotaPercent(bucket.remaining_percent)}${reset}`;
+        }
+
+        function clampPercent(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return 0;
+            return Math.max(0, Math.min(100, num));
+        }
+
+        function formatCompactNumber(value) {
+            const num = Number(value || 0);
+            if (num >= 100000000) return `${(num / 100000000).toFixed(num >= 1000000000 ? 1 : 2).replace(/\.?0+$/, '')}亿`;
+            if (num >= 10000) return `${(num / 10000).toFixed(num >= 100000 ? 1 : 2).replace(/\.?0+$/, '')}万`;
+            return formatNumberFull(num);
+        }
+
+        function quotaBucket(row, windowName) {
+            const quota = row?.quota;
+            if (!quota || quota.status !== 'success') return null;
+            return quota.windows?.[windowName] || null;
+        }
+
+        function quotaLevel(percent) {
+            const num = Number(percent);
+            if (!Number.isFinite(num)) return 'unknown';
+            if (num <= 10) return 'danger';
+            if (num <= 30) return 'warn';
+            return 'ok';
+        }
+
+        function failureLevel(rate) {
+            const num = Number(rate || 0);
+            if (num >= 20) return 'danger';
+            if (num >= 5) return 'warn';
+            return 'ok';
+        }
+
+        function minQuotaRemaining(row) {
+            const values = ['last_5h', 'last_7d']
+                .map(name => Number(quotaBucket(row, name)?.remaining_percent))
+                .filter(Number.isFinite);
+            return values.length ? Math.min(...values) : null;
+        }
+
+        function needsAttention(row) {
+            const quota = row?.quota || {};
+            const remaining = minQuotaRemaining(row);
+            return Boolean(
+                row?.disabled ||
+                row?.unavailable ||
+                row?.status === 'error' ||
+                quota.status === 'error' ||
+                (remaining !== null && remaining <= 30) ||
+                Number(row?.last_5h?.failure_rate || 0) >= 5 ||
+                Number(row?.last_7d?.failure_rate || 0) >= 10
+            );
+        }
+
+        function concernScore(row) {
+            let score = 0;
+            if (row?.disabled || row?.unavailable) score += 1000;
+            if (row?.status === 'error') score += 500;
+            if (row?.quota?.status === 'error') score += 250;
+            const remaining = minQuotaRemaining(row);
+            if (remaining !== null) score += Math.max(0, 50 - remaining) * 8;
+            score += Number(row?.last_5h?.failure_rate || 0) * 10;
+            score += Number(row?.last_7d?.failure_rate || 0) * 4;
+            score += Math.min(Number(row?.last_5h?.failure || 0), 500) * 0.3;
+            return score;
+        }
+
+        function sortAuthRows(rows) {
+            return [...rows].sort((a, b) => {
+                const diff = concernScore(b) - concernScore(a);
+                if (diff !== 0) return diff;
+                return `${a.node || ''}${a.account || ''}`.localeCompare(`${b.node || ''}${b.account || ''}`);
+            });
+        }
+
+        function computeNodeSignals(rows) {
+            return rows.reduce((acc, row) => {
+                const node = row.node || 'unknown';
+                const item = acc[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
+                if (needsAttention(row)) item.watch += 1;
+                const remaining = minQuotaRemaining(row);
+                if (remaining !== null && remaining <= 30) item.lowQuota += 1;
+                if (row?.quota?.status === 'error') item.quotaError += 1;
+                acc[node] = item;
+                return acc;
+            }, {});
+        }
+
         function windowStat(row, windowName) {
             return row?.[windowName] || {};
         }
@@ -265,7 +417,7 @@
             return { cls: 'other', cardCls: 'status-other', text: row.status || '-' };
         }
 
-        function renderMetricBlock(title, rangeLabel, bucket, primary = false) {
+        function renderMetricBlock(title, rangeLabel, bucket, quota, windowName, primary = false) {
             return `<div class="metric-block ${primary ? 'primary' : ''}">
                 <h4><span>${title}</span><span class="range">${rangeLabel}</span></h4>
                 <div class="used">${formatNumberFull(bucket?.tokens || 0)}</div>
@@ -277,10 +429,94 @@
                     <div class="mini"><span>均值 Tokens/请求</span><strong>${formatNumberFull(bucket?.avg_tokens_per_request || 0)}</strong></div>
                 </div>
                 <div class="quota-placeholder">
-                    <span><b>限额</b>：限额未配置</span>
-                    <span><b>剩余</b>：待后端接入</span>
+                    <span><b>限额</b>：${escapeHtml(quotaLimitText(quota, windowName))}</span>
+                    <span><b>剩余</b>：${escapeHtml(quotaRemainingText(quota, windowName))}</span>
                 </div>
             </div>`;
+        }
+
+        function renderQuotaWindow(label, row, windowName) {
+            const quota = row?.quota;
+            const bucket = quotaBucket(row, windowName);
+            if (!quota || quota.status !== 'success' || !bucket) {
+                return `<div class="quota-window unknown">
+                    <div class="quota-top"><span>${label}</span><strong>--</strong></div>
+                    <div class="quota-message">${escapeHtml(bucket ? '暂无窗口' : quotaStatusText(quota))}</div>
+                </div>`;
+            }
+            const remaining = clampPercent(bucket.remaining_percent);
+            const level = quotaLevel(remaining);
+            const reset = bucket.reset_at ? formatDateTime(bucket.reset_at) : '重置时间未知';
+            const resetTitle = bucket.reset_at ? `重置 ${reset}` : reset;
+            return `<div class="quota-window ${level}">
+                <div class="quota-top"><span>${label}</span><strong>${formatQuotaPercent(remaining)}</strong></div>
+                <div class="quota-bar" title="剩余 ${formatQuotaPercent(remaining)}"><span style="width:${remaining}%"></span></div>
+                <div class="quota-foot">
+                    <span title="${escapeHtml(`${bucket.limit_label || '原生窗口'} · ${resetTitle}`)}">${escapeHtml(reset)}</span>
+                </div>
+            </div>`;
+        }
+
+        function renderQuotaPanel(row) {
+            const quota = row?.quota || {};
+            const label = quota.status === 'success'
+                ? (quota.plan_type ? `${quota.provider || row.provider || 'provider'} · ${quota.plan_type}` : (quota.provider || row.provider || 'provider'))
+                : quotaStatusText(quota);
+            return `<section class="quota-panel">
+                <div class="signal-title"><strong>额度剩余</strong><span>${escapeHtml(label)}</span></div>
+                <div class="quota-grid">
+                    ${renderQuotaWindow('5h 剩余', row, 'last_5h')}
+                    ${renderQuotaWindow('7d 剩余', row, 'last_7d')}
+                </div>
+            </section>`;
+        }
+
+        function renderFailureCard(label, bucket) {
+            const level = failureLevel(bucket?.failure_rate);
+            return `<div class="failure-card ${level}">
+                <span>${label} 失败率</span>
+                <strong>${formatPercent(bucket?.failure_rate)}</strong>
+                <small>失败 ${formatNumberFull(bucket?.failure || 0)} / 请求 ${formatNumberFull(bucket?.requests || 0)}</small>
+            </div>`;
+        }
+
+        function renderHealthPanel(row, lastError, statusMsg, errorMsg) {
+            return `<section class="health-panel">
+                <div class="signal-title"><strong>健康状态</strong><span>${escapeHtml(statusInfo(row).text)}</span></div>
+                <div class="failure-grid">
+                    ${renderFailureCard('5h', windowStat(row, 'last_5h'))}
+                    ${renderFailureCard('7d', windowStat(row, 'last_7d'))}
+                </div>
+                <div class="recent-lines">
+                    <div class="health-line"><span>最近请求</span><strong>${formatDateTime(row.last_request_at)}</strong></div>
+                    <div class="health-line"><span>最近失败</span><strong>${lastError}</strong></div>
+                </div>
+                ${statusMsg ? `<div class="auth-msg" title="${escapeHtml(statusMsg)}">${escapeHtml(statusMsg)}</div>` : ''}
+                ${errorMsg}
+            </section>`;
+        }
+
+        function renderTrafficItem(label, value, title) {
+            return `<div class="traffic-item">
+                <span>${label}</span>
+                <strong title="${escapeHtml(title || value)}">${value}</strong>
+            </div>`;
+        }
+
+        function renderTrafficPanel(row) {
+            const five = windowStat(row, 'last_5h');
+            const seven = windowStat(row, 'last_7d');
+            return `<section class="traffic-panel">
+                <div class="signal-title"><strong>请求负载</strong><span>次级指标</span></div>
+                <div class="traffic-grid">
+                    ${renderTrafficItem('5h 请求', formatNumberFull(five.requests || 0))}
+                    ${renderTrafficItem('5h Tokens', formatCompactNumber(five.tokens || 0), formatNumberFull(five.tokens || 0))}
+                    ${renderTrafficItem('7d 请求', formatNumberFull(seven.requests || 0))}
+                    ${renderTrafficItem('7d Tokens', formatCompactNumber(seven.tokens || 0), formatNumberFull(seven.tokens || 0))}
+                    ${renderTrafficItem('5h 均值 Tokens/请求', formatNumberFull(five.avg_tokens_per_request || 0))}
+                    ${renderTrafficItem('7d 均值 Tokens/请求', formatNumberFull(seven.avg_tokens_per_request || 0))}
+                </div>
+            </section>`;
         }
 
         function renderWindowDetail(title, bucket) {
@@ -296,7 +532,6 @@
         function renderAuthCard(row) {
             const info = statusInfo(row);
             const statusMsg = row.status_explanation || row.status_message || '';
-            const msg = statusMsg ? `<div class="auth-msg" title="${escapeHtml(statusMsg)}">${escapeHtml(statusMsg)}</div>` : '';
             const lastError = row.last_error_at ? `${formatDateTime(row.last_error_at)}${row.last_error_status ? ' / ' + escapeHtml(row.last_error_status) : ''}` : '-';
             const errorMsg = row.last_error_message ? `<div class="error-note" title="${escapeHtml(row.last_error_message)}">${escapeHtml(row.last_error_message)}</div>` : '';
             const plan = row.plan_type || row.provider || '未标记计划';
@@ -308,21 +543,14 @@
                             <span class="auth-status ${info.cls}">${escapeHtml(info.text)}</span>
                         </div>
                         <div>
-                            <div class="account">${escapeHtml(row.account || '-')}</div>
-                            <div class="sub">${escapeHtml(plan)}${row.auth_index ? ' · ' + escapeHtml(row.auth_index) : ''}</div>
-                        </div>
-                        ${msg}
-                    </section>
-                    ${renderMetricBlock('近 5 小时', '过去 5 小时', windowStat(row, 'last_5h'), true)}
-                    ${renderMetricBlock('近 7 天', '过去 7 天', windowStat(row, 'last_7d'), true)}
-                    <section class="health-panel">
-                        <div class="health-line"><span>最近请求</span><strong>${formatDateTime(row.last_request_at)}</strong></div>
-                        <div class="health-line"><span>最近失败</span><strong>${lastError}</strong></div>
-                        <div class="health-line"><span>5h 成功率</span><strong>${formatPercent(row.last_5h?.success_rate)}</strong></div>
-                        <div class="health-line"><span>7d 成功率</span><strong>${formatPercent(row.last_7d?.success_rate)}</strong></div>
-                        ${errorMsg}
-                    </section>
-                </div>
+	                            <div class="account">${escapeHtml(row.account || '-')}</div>
+	                            <div class="sub">${escapeHtml(plan)}${row.auth_index ? ' · ' + escapeHtml(row.auth_index) : ''}</div>
+	                        </div>
+	                    </section>
+	                    ${renderQuotaPanel(row)}
+	                    ${renderHealthPanel(row, lastError, statusMsg, errorMsg)}
+	                    ${renderTrafficPanel(row)}
+	                </div>
                 <details class="secondary-metrics">
                     <summary>展开 1h / 24h / 累计 / 时间信息</summary>
                     <div class="detail-grid">
@@ -364,15 +592,19 @@
                 const generated = formatDateTime(data.generated_at);
                 const cacheAge = Number(data.cache_age_seconds || 0).toFixed(1);
                 const refreshingText = data.refreshing ? '，后台刷新中' : '';
-                metaEl.textContent = `生成时间：${generated} 北京时间，缓存年龄：${cacheAge}s${refreshingText}，页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 读取最新缓存`;
+                metaEl.textContent = `生成时间：${generated} 北京时间，统计缓存年龄：${cacheAge}s${refreshingText}，限额数据独立缓存，页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 读取最新缓存`;
                 renderWarnings(data.errors || []);
 
+                const rows = sortAuthRows(data.auth_files || []);
+                const nodeSignals = computeNodeSignals(rows);
                 const nodes = data.nodes || {};
                 const nodeNames = Object.keys(nodes).sort();
                 summaryEl.innerHTML = nodeNames.length ? nodeNames.map(node => {
                     const n = nodes[node];
+                    const signals = nodeSignals[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
                     return `<div class="node-card">
                         <h3>${escapeHtml(node)} <span class="node-pill">${formatNumberFull(n.auth_files || 0)} files</span></h3>
+                        <div class="line emphasis"><span>重点关注 / 低额度 / 限额异常</span><strong>${formatNumberFull(signals.watch)} / ${formatNumberFull(signals.lowQuota)} / ${formatNumberFull(signals.quotaError)}</strong></div>
                         <div class="line"><span>可用 / 最近异常 / 不可用</span><strong>${formatNumberFull(n.active || 0)} / ${formatNumberFull(n.warning || 0)} / ${formatNumberFull(n.unavailable || 0)}</strong></div>
                         <div class="line"><span>5h 请求 / Tokens / 失败率</span><strong>${formatNumberFull(n.last_5h?.requests || 0)} / ${formatNumberFull(n.last_5h?.tokens || 0)} / ${formatPercent(n.last_5h?.failure_rate)}</strong></div>
                         <div class="line"><span>7d 请求 / Tokens / 失败率</span><strong>${formatNumberFull(n.last_7d?.requests || 0)} / ${formatNumberFull(n.last_7d?.tokens || 0)} / ${formatPercent(n.last_7d?.failure_rate)}</strong></div>
@@ -380,7 +612,6 @@
                     </div>`;
                 }).join('') : '<div class="empty-state">暂无节点数据</div>';
 
-                const rows = data.auth_files || [];
                 cardsEl.innerHTML = rows.length ? rows.map(renderAuthCard).join('') : '<div class="empty-state">暂无认证文件数据</div>';
                 loading.style.display = 'none';
                 cardsEl.style.display = 'grid';
