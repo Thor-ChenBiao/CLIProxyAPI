@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, jsonify, redirect, url_for
@@ -297,12 +297,43 @@ def get_usage_stats_cached():
     return data, None
 
 
-def get_user_stats(email):
+def is_valid_email(value):
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", (value or "").strip()))
+
+
+def find_user_key_entries(user_keys_data, identifier):
+    target = (identifier or "").strip().lower()
+    if not target:
+        return []
+
+    users = user_keys_data.get("users", {})
+    keys_index = user_keys_data.get("keys", {})
+    user = users.get(identifier) or users.get(target)
+    matched = {}
+
+    if user:
+        for api_key in user.get("api_keys", []):
+            matched[api_key] = keys_index.get(api_key, {})
+
+    for api_key, key_info in keys_index.items():
+        owner = str(key_info.get("email", "")).strip().lower()
+        label = str(key_info.get("label", "")).strip().lower()
+        if owner == target or label == target:
+            matched.setdefault(api_key, key_info)
+
+    return [
+        {"key": api_key, **(key_info or {})}
+        for api_key, key_info in matched.items()
+    ]
+
+
+def get_user_stats(email, include_models=True):
     """Get statistics for a specific user (all their keys combined)."""
     user_keys_data = load_user_keys()
     user = user_keys_data["users"].get(email)
+    key_entries = find_user_key_entries(user_keys_data, email)
 
-    if not user:
+    if not user and not key_entries:
         return None
 
     # Get stats
@@ -318,7 +349,8 @@ def get_user_stats(email):
     total_tokens = 0
     keys_stats = []
 
-    for api_key in user.get("api_keys", []):
+    for key_meta in key_entries:
+        api_key = key_meta.get("key", "")
         key_stats = apis.get(api_key, {})
         key_requests = key_stats.get("total_requests", 0)
         key_tokens = key_stats.get("total_tokens", 0)
@@ -326,33 +358,34 @@ def get_user_stats(email):
         total_requests += key_requests
         total_tokens += key_tokens
 
-        key_info = user_keys_data["keys"].get(api_key, {})
-        keys_stats.append({
+        key_entry = {
             "key": api_key,
-            "label": key_info.get("label", ""),
+            "label": key_meta.get("label", ""),
             "total_requests": key_requests,
             "total_tokens": key_tokens,
-            "models": key_stats.get("models", {})
-        })
+        }
+        if include_models:
+            key_entry["models"] = key_stats.get("models", {})
+        keys_stats.append(key_entry)
 
     return {
         "email": email,
-        "name": user.get("name", email),
+        "name": (user or {}).get("name", email),
         "total_requests": total_requests,
         "total_tokens": total_tokens,
         "keys": keys_stats,
-        "key_count": len(user.get("api_keys", []))
+        "key_count": len(key_entries)
     }
 
 
-def get_all_users_stats():
+def get_all_users_stats(include_models=True):
     """Get statistics for all users, sorted by token usage."""
     user_keys_data = load_user_keys()
     users = user_keys_data.get("users", {})
 
     all_stats = []
     for email in users:
-        user_stat = get_user_stats(email)
+        user_stat = get_user_stats(email, include_models=include_models)
         if user_stat:
             all_stats.append(user_stat)
 
@@ -380,6 +413,7 @@ def get_all_users_stats_by_period(period="month"):
         email = stat['user_email']
         user_info = users.get(email, {})
         name = user_info.get("name", email)
+        matched_keys = find_user_key_entries(user_keys_data, email)
 
         all_stats.append({
             "email": email,
@@ -387,7 +421,7 @@ def get_all_users_stats_by_period(period="month"):
             "period": stat['period'],
             "total_requests": stat['total_requests'],
             "total_tokens": stat['total_tokens'],
-            "key_count": len(stat['api_keys'])
+            "key_count": len(matched_keys) or len(stat['api_keys'])
         })
 
     return all_stats
@@ -1113,6 +1147,36 @@ def parse_detail_time(value):
         return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
     except Exception:
         return None
+
+
+def parse_detail_time_utc(value):
+    if not value:
+        return None
+    text = str(value)
+    match = re.match(r"^(.*T\d{2}:\d{2}:\d{2})\.(\d+)(Z|[+-]\d{2}:?\d{2})?$", text)
+    if match:
+        frac = match.group(2)[:6]
+        suffix = match.group(3) or ""
+        text = f"{match.group(1)}.{frac}{suffix}"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        return parsed
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def beijing_date_hour(value):
+    parsed = parse_detail_time_utc(value)
+    if not parsed:
+        return None, None
+    beijing_time = parsed + timedelta(hours=8)
+    return beijing_time.strftime("%Y-%m-%d"), beijing_time.hour
+
+
+def beijing_today():
+    return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
 def build_auth_stats():
@@ -1929,26 +1993,77 @@ def get_usage_history():
 # User Keys API Routes
 # ============================================================================
 
+def reassign_key_email(api_key, new_email):
+    user_data = load_user_keys()
+    users = user_data.get("users", {})
+    keys_index = user_data.get("keys", {})
+    key_info = keys_index.get(api_key)
+    if not key_info:
+        return False, "Key 不存在", None
+
+    old_email = key_info.get("email", "")
+    label = key_info.get("label", "")
+    created_at = key_info.get("created_at", datetime.utcnow().isoformat() + "Z")
+
+    for user in users.values():
+        user["api_keys"] = [key for key in user.get("api_keys", []) if key != api_key]
+
+    if new_email not in users:
+        users[new_email] = {
+            "email": new_email,
+            "name": new_email,
+            "api_keys": [],
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+    if api_key not in users[new_email].get("api_keys", []):
+        users[new_email].setdefault("api_keys", []).append(api_key)
+
+    for email in list(users.keys()):
+        if email != new_email and not users[email].get("api_keys"):
+            del users[email]
+
+    keys_index[api_key] = {
+        **key_info,
+        "email": new_email,
+        "label": label or new_email,
+        "created_at": created_at,
+    }
+
+    pool = load_key_pool()
+    if api_key in pool.get("assigned", {}):
+        pool["assigned"][api_key] = new_email
+
+    if not save_user_keys(user_data):
+        return False, "保存用户 Key 数据失败", None
+    if not save_key_pool(pool):
+        return False, "保存 Key 池数据失败", None
+
+    migrated_rows = db.reassign_user_usage_key(api_key, new_email)
+    return True, None, {"old_email": old_email, "new_email": new_email, "migrated_rows": migrated_rows}
+
+
 @app.route("/api/register-key", methods=["POST"])
 def register_key():
     """Register a new user and assign an API key."""
-    data = request.get_json()
-    identifier = data.get("email", "").strip()  # email field but can be any identifier
+    data = request.get_json() or {}
+    email = data.get("email", "").strip().lower()
     name = data.get("name", "").strip()
     label = data.get("label", "").strip()
 
-    # Validate identifier (just need non-empty)
-    if not identifier:
-        return jsonify({"error": "请输入标识"}), 400
+    if not email:
+        return jsonify({"error": "请输入邮箱"}), 400
+    if not is_valid_email(email):
+        return jsonify({"error": "请输入有效的邮箱"}), 400
+    if not email.endswith("@zilliz.com"):
+        return jsonify({"error": "申请 Key 请使用 zilliz.com 公司邮箱"}), 400
 
-    # Use identifier as both email and name if not provided
     if not name:
-        name = identifier
+        name = email
     if not label:
-        label = identifier
+        label = name or email
 
     # Assign key
-    api_key, error = assign_key_to_user(identifier, name, label)
+    api_key, error = assign_key_to_user(email, name, label)
 
     if error:
         return jsonify({"error": error}), 500
@@ -1956,9 +2071,30 @@ def register_key():
     return jsonify({
         "success": True,
         "api_key": api_key,
-        "identifier": identifier,
+        "identifier": name,
+        "email": email,
         "message": "API Key 申请成功！"
     })
+
+
+@app.route("/api/update-key-email", methods=["POST"])
+def update_key_email():
+    data = request.get_json() or {}
+    api_key = data.get("api_key", "").strip()
+    email = data.get("email", "").strip().lower()
+
+    if not api_key:
+        return jsonify({"error": "请提供 API Key"}), 400
+    if not email:
+        return jsonify({"error": "请输入邮箱"}), 400
+    if not is_valid_email(email):
+        return jsonify({"error": "请输入有效的邮箱"}), 400
+
+    success, error, result = reassign_key_email(api_key, email)
+    if not success:
+        return jsonify({"error": error}), 400
+
+    return jsonify({"success": True, **result})
 
 
 @app.route("/api/my-keys", methods=["POST"])
@@ -2046,7 +2182,7 @@ def api_get_all_users_stats():
     elif aggregation == "year":
         stats = get_all_users_stats_by_period("year")
     else:  # total
-        stats = get_all_users_stats()
+        stats = get_all_users_stats(include_models=False)
 
     # Calculate totals
     total_users = len(set(s.get("email", "") for s in stats))
@@ -2140,6 +2276,136 @@ def query_by_key():
         "user_total_requests": user_total_requests,
         "user_total_tokens": user_total_tokens,
         "all_keys": all_keys
+    })
+
+
+@app.route("/api/user-keys")
+def api_get_user_keys():
+    email = request.args.get("email", "").strip()
+    date = request.args.get("date", "").strip()
+
+    if not email:
+        return jsonify({"error": "请提供用户标识"}), 400
+    if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return jsonify({"error": "日期格式应为 YYYY-MM-DD"}), 400
+
+    user_data = load_user_keys()
+    user = user_data.get("users", {}).get(email)
+    date_stats = db.get_user_key_usage_for_date(email, date) if date else {}
+    key_entries = find_user_key_entries(user_data, email)
+
+    if not user and not date_stats and not key_entries:
+        return jsonify({"error": "用户不存在"}), 404
+
+    api_keys = [entry.get("key", "") for entry in key_entries] or list(date_stats.keys())
+    if date:
+        stats_by_key = date_stats
+    else:
+        stats_data, _ = get_usage_stats_cached()
+        stats_by_key = (stats_data.get("usage", {}).get("apis", {}) if stats_data else {})
+
+    keys_info = []
+    for api_key in api_keys:
+        key_meta = user_data.get("keys", {}).get(api_key, {})
+        key_stats = stats_by_key.get(api_key, {})
+        keys_info.append({
+            "key": api_key,
+            "label": key_meta.get("label", ""),
+            "created_at": key_meta.get("created_at", ""),
+            "total_requests": key_stats.get("total_requests", 0),
+            "success_count": key_stats.get("success_count", 0),
+            "failure_count": key_stats.get("failure_count", 0),
+            "total_tokens": key_stats.get("total_tokens", 0),
+            "input_tokens": key_stats.get("input_tokens", 0),
+            "output_tokens": key_stats.get("output_tokens", 0),
+        })
+
+    keys_info.sort(key=lambda item: item.get("total_tokens", 0), reverse=True)
+    return jsonify({
+        "email": email,
+        "name": (user or {}).get("name", email),
+        "date": date,
+        "keys": keys_info,
+    })
+
+
+@app.route("/api/user-key-timeseries")
+def api_get_user_key_timeseries():
+    email = request.args.get("email", "").strip()
+    api_key = request.args.get("api_key", "").strip()
+    date = request.args.get("date", "").strip() or beijing_today()
+
+    if not api_key:
+        return jsonify({"error": "请提供 API Key"}), 400
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return jsonify({"error": "日期格式应为 YYYY-MM-DD"}), 400
+
+    user_data = load_user_keys()
+    key_info = user_data.get("keys", {}).get(api_key, {})
+    owner = key_info.get("email", email)
+    if email and owner and owner != email and owner.lower() != email.lower():
+        return jsonify({"error": "该 Key 不属于该用户"}), 403
+
+    stats_data, err = get_usage_stats_cached()
+    if err:
+        return jsonify({"error": err}), 500
+
+    api_stats = (stats_data.get("usage", {}).get("apis", {}) if stats_data else {}).get(api_key, {})
+    if not api_stats and not key_info:
+        return jsonify({"error": "Key 不存在"}), 404
+
+    buckets = []
+    for hour in range(24):
+        buckets.append({
+            "hour": f"{hour:02d}",
+            "requests": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        })
+
+    for model_name, model_stats in (api_stats.get("models", {}) or {}).items():
+        for detail in model_stats.get("details", []) or []:
+            if not isinstance(detail, dict):
+                continue
+            timestamp = str(detail.get("timestamp") or "")
+            detail_date, hour = beijing_date_hour(timestamp)
+            if detail_date != date or hour is None:
+                continue
+
+            tokens_info = detail.get("tokens", {}) or {}
+            failed_value = detail.get("failed", False)
+            failed = failed_value.lower() == "true" if isinstance(failed_value, str) else bool(failed_value)
+
+            bucket = buckets[hour]
+            bucket["requests"] += 1
+            if failed:
+                bucket["failure_count"] += 1
+            else:
+                bucket["success_count"] += 1
+            bucket["total_tokens"] += int(tokens_info.get("total_tokens", 0) or 0)
+            bucket["input_tokens"] += int(tokens_info.get("input_tokens", 0) or 0)
+            bucket["output_tokens"] += int(tokens_info.get("output_tokens", 0) or 0)
+
+    totals = {
+        "requests": sum(bucket["requests"] for bucket in buckets),
+        "success_count": sum(bucket["success_count"] for bucket in buckets),
+        "failure_count": sum(bucket["failure_count"] for bucket in buckets),
+        "total_tokens": sum(bucket["total_tokens"] for bucket in buckets),
+        "input_tokens": sum(bucket["input_tokens"] for bucket in buckets),
+        "output_tokens": sum(bucket["output_tokens"] for bucket in buckets),
+    }
+
+    return jsonify({
+        "email": owner,
+        "key": api_key,
+        "label": key_info.get("label", ""),
+        "date": date,
+        "timezone": "Asia/Shanghai",
+        "buckets": buckets,
+        "totals": totals,
     })
 
 

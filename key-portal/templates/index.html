@@ -180,10 +180,20 @@
 
                 <div style="max-width: 600px; margin: 0 auto;">
                     <div style="margin-bottom: 20px; text-align: left;">
-                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">标识 *</label>
-                        <input type="text" id="regIdentifier" placeholder="邮箱 或 描述（如：张三-工作电脑、AI项目测试、产品部）"
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">使用标识 / 标签 *</label>
+                        <input type="text" id="regIdentifier" placeholder="如：张三-工作电脑、AI项目测试、产品部"
                             style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px;">
-                        <p style="font-size: 13px; color: #999; margin-top: 5px;">用于识别和统计，可以是邮箱、姓名、场景描述等</p>
+                        <p style="font-size: 13px; color: #999; margin-top: 5px;">用于区分设备或用途，会作为 Key 标签展示</p>
+                    </div>
+
+                    <div style="margin-bottom: 20px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">公司邮箱 *</label>
+                        <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;">
+                            <input type="text" id="regEmailPrefix" placeholder="your.name"
+                                style="flex: 1; min-width: 0; padding: 12px 15px; border: none; outline: none; font-size: 15px;">
+                            <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-left: 1px solid #d4ddff; font-size: 15px; font-weight: 600; white-space: nowrap;">@zilliz.com</span>
+                        </div>
+                        <p style="font-size: 13px; color: #999; margin-top: 5px;">只需要填写 @zilliz.com 前面的部分，用于把 Key 归属和用量统计到正确用户</p>
                     </div>
 
                     <button class="btn btn-primary" onclick="registerUserKey()" id="regBtn">申请 API Key</button>
@@ -344,6 +354,21 @@
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        function escapeAttr(value) {
+            return escapeHtml(value).replace(/`/g, '&#96;');
+        }
+
+        function isValidEmail(value) {
+            return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || '').trim());
+        }
+
+        function buildZillizEmail(prefixValue) {
+            let prefix = String(prefixValue || '').trim().toLowerCase();
+            if (prefix.endsWith('@zilliz.com')) prefix = prefix.slice(0, -'@zilliz.com'.length);
+            if (!prefix || prefix.includes('@') || /\s/.test(prefix)) return '';
+            return `${prefix}@zilliz.com`;
         }
 
         function formatDateTime(value) {
@@ -879,14 +904,23 @@
         function saveMyKey(keyInfo) {
             try {
                 const keys = getMyKeys();
-                // Check if key already exists
-                if (!keys.find(k => k.key === keyInfo.key)) {
-                    keys.unshift(keyInfo); // Add to beginning
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
+                const existing = keys.find(k => k.key === keyInfo.key);
+                if (existing) {
+                    Object.assign(existing, keyInfo);
+                } else {
+                    keys.unshift(keyInfo);
                 }
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
             } catch (e) {
                 console.error('Failed to save to localStorage:', e);
             }
+        }
+
+        function updateStoredKey(apiKey, updates) {
+            const keys = getMyKeys();
+            const item = keys.find(k => k.key === apiKey);
+            if (item) Object.assign(item, updates);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
         }
 
         function removeMyKey(apiKey) {
@@ -934,34 +968,48 @@
                 const stats = item.stats;
                 const requests = stats ? stats.total_requests : 0;
                 const tokens = stats ? stats.total_tokens : 0;
+                const inferredEmail = item.email || (stats && isValidEmail(stats.identifier) ? stats.identifier : '');
+                const emailText = inferredEmail || '未填写邮箱';
+                const emailColor = inferredEmail ? '#666' : '#ad6800';
 
                 return `
                     <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="flex: 1;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+                            <div style="flex: 1; min-width: 260px;">
                                 <div style="font-size: 15px; color: #333; margin-bottom: 6px; font-weight: 600;">
-                                    ${item.identifier}
+                                    ${escapeHtml(item.identifier || '未命名 Key')}
                                 </div>
                                 <div style="font-family: 'Courier New', monospace; font-size: 12px; color: #667eea; background: #f0f4ff; padding: 4px 8px; border-radius: 4px; display: inline-block;">
-                                    ${item.key}
+                                    ${escapeHtml(item.key)}
                                 </div>
                                 <div style="font-size: 12px; color: #999; margin-top: 8px;">
                                     📅 ${formatDateTime(item.created_at)}
                                 </div>
+                                <div style="margin-top: 10px; font-size: 12px; color: ${emailColor}; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                                    <span>邮箱：<span id="historyEmailText${index}">${escapeHtml(emailText)}</span></span>
+                                    <button onclick="showEmailEditor(${index})" title="修改邮箱" style="width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: #f0f4ff; color: #667eea; cursor: pointer; font-size: 12px; line-height: 22px;">✎</button>
+                                </div>
+                                <div id="historyEmailEditor${index}" style="display: none; margin-top: 8px; padding: 10px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px;">
+                                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                        <input id="historyEmail${index}" type="email" value="${escapeAttr(inferredEmail)}" placeholder="your.name@company.com" style="flex: 1; min-width: 220px; padding: 8px 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 13px;">
+                                        <button id="historyEmailBtn${index}" onclick="updateKeyEmail('${escapeAttr(item.key)}', ${index})" style="padding: 8px 12px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">保存</button>
+                                        <button onclick="hideEmailEditor(${index})" style="padding: 8px 12px; background: white; color: #666; border: 1px solid #d9d9d9; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">取消</button>
+                                    </div>
+                                </div>
                             </div>
-                            <div style="text-align: center; margin: 0 20px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
+                            <div style="text-align: center; margin: 0 10px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
                                 <div style="font-size: 11px; color: #667eea; font-weight: 600; margin-bottom: 3px;">请求数</div>
                                 <div style="font-size: 20px; font-weight: 700; color: #667eea;">${requests.toLocaleString()}</div>
                             </div>
-                            <div style="text-align: center; margin-right: 20px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
+                            <div style="text-align: center; margin-right: 10px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
                                 <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">Tokens</div>
                                 <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
                             </div>
                             <div style="display: flex; gap: 8px;">
-                                <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 6px rgba(102,126,234,0.3)'">
+                                <button onclick="viewKeyDetails('${escapeAttr(item.key)}')" style="padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 6px rgba(102,126,234,0.3)'">
                                     查看详情
                                 </button>
-                                <button onclick="removeMyKey('${item.key}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
+                                <button onclick="removeMyKey('${escapeAttr(item.key)}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
                                     删除
                                 </button>
                             </div>
@@ -973,6 +1021,62 @@
 
         function viewKeyDetails(apiKey) {
             window.open(`/my-keys?key=${apiKey}`, '_blank');
+        }
+
+        function showEmailEditor(index) {
+            const editor = document.getElementById(`historyEmailEditor${index}`);
+            const input = document.getElementById(`historyEmail${index}`);
+            if (editor) editor.style.display = 'block';
+            if (input) input.focus();
+        }
+
+        function hideEmailEditor(index) {
+            const editor = document.getElementById(`historyEmailEditor${index}`);
+            if (editor) editor.style.display = 'none';
+        }
+
+        async function updateKeyEmail(apiKey, index) {
+            const input = document.getElementById(`historyEmail${index}`);
+            const btn = document.getElementById(`historyEmailBtn${index}`);
+            const email = input ? input.value.trim().toLowerCase() : '';
+
+            if (!email) {
+                alert('请输入邮箱');
+                return;
+            }
+            if (!isValidEmail(email)) {
+                alert('请输入有效的邮箱');
+                return;
+            }
+
+            const originalText = btn ? btn.textContent : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '保存中...';
+            }
+
+            try {
+                const resp = await fetch('/api/update-key-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, email })
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) {
+                    throw new Error(data.error || '保存失败');
+                }
+                updateStoredKey(apiKey, { email });
+                const text = document.getElementById(`historyEmailText${index}`);
+                if (text) text.textContent = email;
+                hideEmailEditor(index);
+            } catch (e) {
+                alert('保存失败：' + e.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText || '保存邮箱';
+                }
+            }
         }
 
         async function loadPoolStatus() {
@@ -987,11 +1091,17 @@
 
         async function registerUserKey() {
             const identifier = document.getElementById('regIdentifier').value.trim();
+            const emailPrefix = document.getElementById('regEmailPrefix').value.trim();
+            const email = buildZillizEmail(emailPrefix);
             const btn = document.getElementById('regBtn');
             const result = document.getElementById('regResult');
 
             if (!identifier) {
-                alert('请输入标识');
+                alert('请输入使用标识 / 标签');
+                return;
+            }
+            if (!email) {
+                alert('请输入 @zilliz.com 前面的邮箱部分');
                 return;
             }
 
@@ -1003,7 +1113,7 @@
                 const resp = await fetch('/api/register-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: identifier, name: identifier, label: identifier })
+                    body: JSON.stringify({ email, name: identifier, label: identifier })
                 });
 
                 const data = await resp.json();
@@ -1079,6 +1189,7 @@ export OPENAI_API_KEY="${apiKey}"`;
                     saveMyKey({
                         key: apiKey,
                         identifier: identifier,
+                        email: email,
                         created_at: new Date().toISOString()
                     });
 
@@ -1140,6 +1251,7 @@ export OPENAI_API_KEY="${apiKey}"`;
 
                     // Clear form
                     document.getElementById('regIdentifier').value = '';
+                    document.getElementById('regEmailPrefix').value = '';
 
                     // Refresh pool status
                     loadPoolStatus();

@@ -11,9 +11,10 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: #f5f7fa;
             padding: 20px;
+            color: #333;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1280px;
             margin: 0 auto;
         }
         h1 {
@@ -62,6 +63,7 @@
             padding: 15px;
             text-align: left;
             border-bottom: 1px solid #e0e0e0;
+            vertical-align: top;
         }
         th {
             background: #f8f9fa;
@@ -69,9 +71,23 @@
             color: #333;
             position: sticky;
             top: 0;
+            z-index: 1;
         }
-        tr:hover {
+        #usersTable .col-period { width: 160px; min-width: 160px; white-space: nowrap; }
+        #usersTable .col-rank { width: 96px; white-space: nowrap; }
+        #usersTable .col-email { width: 34%; }
+        #usersTable .col-keys { width: 96px; white-space: nowrap; }
+        #usersTable .col-requests { width: 120px; white-space: nowrap; }
+        #usersTable .col-tokens { width: 150px; white-space: nowrap; }
+        .user-row {
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .user-row:hover {
             background: #f8f9fa;
+        }
+        .user-row.expanded {
+            background: #f7f8ff;
         }
         .rank {
             font-weight: bold;
@@ -80,6 +96,12 @@
         .rank.gold { color: #ffd700; }
         .rank.silver { color: #c0c0c0; }
         .rank.bronze { color: #cd7f32; }
+        .toggle {
+            display: inline-block;
+            width: 18px;
+            color: #667eea;
+            font-weight: bold;
+        }
         .loading {
             text-align: center;
             padding: 50px;
@@ -102,6 +124,7 @@
             display: flex;
             gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
         .aggregation-btn {
             padding: 10px 24px;
@@ -145,115 +168,266 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             transition: width 0.3s;
         }
+        .detail-row > td {
+            padding: 0 15px 18px 15px;
+            background: #fbfbff;
+            border-bottom: 1px solid #dfe3ff;
+        }
+        .key-panel {
+            border: 1px solid #e2e6ff;
+            border-radius: 10px;
+            background: #fff;
+            padding: 16px;
+            margin-top: 8px;
+        }
+        .key-panel-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+            color: #444;
+            font-weight: 700;
+        }
+        .key-panel-note {
+            color: #777;
+            font-size: 13px;
+            font-weight: 400;
+        }
+        .key-table th,
+        .key-table td {
+            padding: 11px 12px;
+            border-bottom: 1px solid #eef0f7;
+        }
+        .key-table th {
+            position: static;
+            background: #f6f7ff;
+        }
+        .key-row {
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .key-row:hover {
+            background: #f8f9ff;
+        }
+        .key-row.expanded {
+            background: #f2f4ff;
+        }
+        .key-code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            color: #4b5563;
+            white-space: nowrap;
+        }
+        .chart-detail-row > td {
+            padding: 0 12px 14px 42px;
+            background: #fff;
+        }
+        .chart-panel {
+            border-left: 4px solid #667eea;
+            background: #fafbff;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .chart-toolbar {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .chart-toolbar input {
+            border: 1px solid #cfd5f5;
+            border-radius: 6px;
+            padding: 7px 9px;
+            font-size: 14px;
+            background: white;
+        }
+        .chart-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .chart-metric {
+            background: white;
+            border: 1px solid #e5e7fb;
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .chart-metric-value {
+            font-size: 20px;
+            font-weight: 800;
+            color: #4f46e5;
+            margin-bottom: 3px;
+        }
+        .chart-metric-label {
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .chart-svg-wrap {
+            background: white;
+            border: 1px solid #e5e7fb;
+            border-radius: 8px;
+            padding: 10px;
+            overflow-x: auto;
+        }
+        .chart-svg {
+            width: 100%;
+            min-width: 720px;
+            height: 280px;
+            display: block;
+        }
+        .chart-hover-point {
+            cursor: crosshair;
+        }
+        .chart-tooltip {
+            position: fixed;
+            display: none;
+            pointer-events: none;
+            z-index: 9999;
+            background: rgba(17, 24, 39, 0.94);
+            color: white;
+            padding: 8px 10px;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: nowrap;
+        }
+        .legend {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            color: #555;
+            font-size: 13px;
+        }
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .empty-state,
+        .error-state,
+        .inline-loading {
+            padding: 18px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            color: #666;
+            text-align: center;
+        }
+        .error-state {
+            color: #b42318;
+            background: #fff4f2;
+        }
+        @media (max-width: 900px) {
+            body { padding: 12px; }
+            .users-table { padding: 16px; }
+            th, td { padding: 10px; }
+            .chart-detail-row > td { padding-left: 12px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 16px;">
             <h1 style="margin: 0;">📊 用户使用统计</h1>
             <a href="/" style="display: inline-block; padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(102,126,234,0.5)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(102,126,234,0.3)'">
                 🏠 返回首页
             </a>
         </div>
-        <p class="subtitle">实时更新，按 Token 使用量排序</p>
+        <p class="subtitle">点击用户展开 Key，点击 Key 查看当天请求次数和 Token 曲线</p>
 
         <div id="statsContent">
-
-        <div class="summary" id="summary">
-            <div class="summary-card">
-                <div class="summary-value" id="totalUsers">-</div>
-                <div class="summary-label">总用户数</div>
-            </div>
-            <div class="summary-card">
-                <div class="summary-value" id="totalKeys">-</div>
-                <div class="summary-label">总 Keys</div>
-            </div>
-            <div class="summary-card">
-                <div class="summary-value" id="totalRequests">-</div>
-                <div class="summary-label">总请求数</div>
-            </div>
-            <div class="summary-card">
-                <div class="summary-value" id="totalTokens">-</div>
-                <div class="summary-label">总 Tokens</div>
-            </div>
-        </div>
-
-        <div class="users-table">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <button class="refresh-btn" onclick="loadStats()">🔄 刷新数据</button>
-                    <div class="aggregation-buttons">
-                        <button class="aggregation-btn" data-aggregation="total" onclick="changeAggregation('total')">累计总量</button>
-                        <button class="aggregation-btn active" data-aggregation="day" onclick="changeAggregation('day')">按日</button>
-                        <button class="aggregation-btn" data-aggregation="month" onclick="changeAggregation('month')">按月</button>
-                        <button class="aggregation-btn" data-aggregation="year" onclick="changeAggregation('year')">按年</button>
-                    </div>
+            <div class="summary" id="summary">
+                <div class="summary-card">
+                    <div class="summary-value" id="totalUsers">-</div>
+                    <div class="summary-label">总用户数</div>
                 </div>
-                <button id="exportBtn" class="refresh-btn" onclick="exportToExcel()" style="background: #28a745; display: none;">📥 导出 Excel</button>
+                <div class="summary-card">
+                    <div class="summary-value" id="totalKeys">-</div>
+                    <div class="summary-label">总 Keys</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-value" id="totalRequests">-</div>
+                    <div class="summary-label">总请求数</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-value" id="totalTokens">-</div>
+                    <div class="summary-label">总 Tokens</div>
+                </div>
             </div>
 
-            <div class="loading" id="loading">正在加载...</div>
+            <div class="users-table">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; gap: 16px; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                        <button class="refresh-btn" onclick="loadStats()">🔄 刷新数据</button>
+                        <div class="aggregation-buttons">
+                            <button class="aggregation-btn" data-aggregation="total" onclick="changeAggregation('total', event)">累计总量</button>
+                            <button class="aggregation-btn active" data-aggregation="day" onclick="changeAggregation('day', event)">按日</button>
+                            <button class="aggregation-btn" data-aggregation="month" onclick="changeAggregation('month', event)">按月</button>
+                            <button class="aggregation-btn" data-aggregation="year" onclick="changeAggregation('year', event)">按年</button>
+                        </div>
+                    </div>
+                    <button id="exportBtn" class="refresh-btn" onclick="exportToExcel()" style="background: #28a745; display: none;">📥 导出 CSV</button>
+                </div>
 
-            <table id="usersTable" style="display: none;">
-                <thead id="usersTableHead">
-                    <tr>
-                        <th>排名</th>
-                        <th>用户</th>
-                        <th>邮箱</th>
-                        <th>Keys 数量</th>
-                        <th>请求数</th>
-                        <th>Token 使用</th>
-                        <th>占比</th>
-                    </tr>
-                </thead>
-                <tbody id="usersTableBody"></tbody>
-            </table>
+                <div class="loading" id="loading">正在加载...</div>
+
+                <table id="usersTable" style="display: none;">
+                    <thead id="usersTableHead"></thead>
+                    <tbody id="usersTableBody"></tbody>
+                </table>
+            </div>
         </div>
-
-        </div> <!-- End statsContent -->
-
     </div>
 
     <script>
-        let currentUserEmail = '';
         let allUsersData = [];
         let currentAggregation = 'day';
+        const expandedUsers = new Map();
+        const expandedKeys = new Map();
 
-        function changeAggregation(aggregation) {
+        function changeAggregation(aggregation, evt) {
             currentAggregation = aggregation;
-
-            // Update button states
-            document.querySelectorAll('.aggregation-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
-
-            // Reload stats
+            expandedUsers.clear();
+            expandedKeys.clear();
+            document.querySelectorAll('.aggregation-btn').forEach(btn => btn.classList.remove('active'));
+            const target = evt ? evt.currentTarget : document.querySelector(`[data-aggregation="${aggregation}"]`);
+            if (target) target.classList.add('active');
             loadStats();
         }
 
-        // Auto-load on page open
         (function() {
-            // Show export button
             document.getElementById('exportBtn').style.display = 'block';
-            // Load data
             loadStats();
         })();
 
         function exportToExcel() {
+            const isAggregated = currentAggregation === 'day' || currentAggregation === 'month' || currentAggregation === 'year';
+            let csv = isAggregated
+                ? 'Period,Identifier,Email,Keys Count,Total Requests,Total Tokens\n'
+                : 'Identifier,Email,Keys Count,Total Requests,Total Tokens\n';
 
-            // Create CSV content
-            let csv = 'Identifier,Keys Count,Total Requests,Total Tokens\n';
             allUsersData.forEach(user => {
-                csv += `"${user.name}",${user.key_count},${user.total_requests},${user.total_tokens}\n`;
+                if (isAggregated) {
+                    csv += `"${user.period || ''}","${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0}\n`;
+                } else {
+                    csv += `"${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0}\n`;
+                }
             });
 
-            // Download
-            const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
             link.setAttribute('href', url);
-            link.setAttribute('download', `user_stats_${new Date().toISOString().split('T')[0]}.csv`);
+            link.setAttribute('download', `user_stats_${currentAggregation}_${new Date().toISOString().split('T')[0]}.csv`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
@@ -261,7 +435,21 @@
         }
 
         function formatNumber(num) {
-            return num.toLocaleString();
+            return Number(num || 0).toLocaleString();
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            }[ch]));
+        }
+
+        function escapeAttr(value) {
+            return escapeHtml(value).replace(/`/g, '&#96;');
         }
 
         function getRankClass(rank) {
@@ -278,122 +466,454 @@
             return rank;
         }
 
+        function maskedKey(key) {
+            const text = String(key || '');
+            if (text.length <= 14) return `${text.slice(0, 4)}••••${text.slice(-4)}`;
+            return `${text.slice(0, 13)}••••••••${text.slice(-6)}`;
+        }
+
+        function todayIso() {
+            const parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Shanghai',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).formatToParts(new Date());
+            const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+            return `${values.year}-${values.month}-${values.day}`;
+        }
+
+        function rowStateKey(user) {
+            return `${currentAggregation}|${user.period || 'total'}|${user.email || user.name || ''}`;
+        }
+
+        function chartStateKey(rowKey, apiKey) {
+            return `${rowKey}|${apiKey}`;
+        }
+
         async function loadStats() {
             const loading = document.getElementById('loading');
             const table = document.getElementById('usersTable');
 
+            loading.textContent = '正在加载...';
             loading.style.display = 'block';
             table.style.display = 'none';
 
             try {
-                // Use current aggregation
-                const aggregation = currentAggregation;
-
-                // Fetch data with aggregation parameter
-                const url = `/api/all-users-stats?aggregation=${aggregation}`;
-
-                const response = await fetch(url);
+                const response = await fetch(`/api/all-users-stats?aggregation=${encodeURIComponent(currentAggregation)}`);
                 const data = await response.json();
-
-                // Save data for export
-                allUsersData = data.users;
-
-                // Update summary
-                document.getElementById('totalUsers').textContent = formatNumber(data.summary.total_users);
-                document.getElementById('totalKeys').textContent = formatNumber(data.summary.total_keys);
-                document.getElementById('totalRequests').textContent = formatNumber(data.summary.total_requests);
-                document.getElementById('totalTokens').textContent = formatNumber(data.summary.total_tokens);
-
-                // Update table header based on aggregation
-                const thead = document.getElementById('usersTableHead');
-                const isAggregated = aggregation === 'day' || aggregation === 'month' || aggregation === 'year';
-
-                if (isAggregated) {
-                    thead.innerHTML = `
-                        <tr>
-                            <th>时间</th>
-                            <th>用户</th>
-                            <th>邮箱</th>
-                            <th>Keys 数量</th>
-                            <th>请求数</th>
-                            <th>Token 使用</th>
-                            <th>占比</th>
-                        </tr>
-                    `;
-                } else {
-                    thead.innerHTML = `
-                        <tr>
-                            <th>排名</th>
-                            <th>用户</th>
-                            <th>邮箱</th>
-                            <th>Keys 数量</th>
-                            <th>请求数</th>
-                            <th>Token 使用</th>
-                            <th>占比</th>
-                        </tr>
-                    `;
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
                 }
 
-                // Update table body
-                const tbody = document.getElementById('usersTableBody');
-                tbody.innerHTML = '';
+                allUsersData = data.users || [];
+                document.getElementById('totalUsers').textContent = formatNumber(data.summary?.total_users);
+                document.getElementById('totalKeys').textContent = formatNumber(data.summary?.total_keys);
+                document.getElementById('totalRequests').textContent = formatNumber(data.summary?.total_requests);
+                document.getElementById('totalTokens').textContent = formatNumber(data.summary?.total_tokens);
 
-                const maxTokens = data.summary.total_tokens;
-
-                data.users.forEach((user, index) => {
-                    const percentage = maxTokens > 0 ? (user.total_tokens / maxTokens * 100).toFixed(1) : 0;
-
-                    const row = tbody.insertRow();
-
-                    if (isAggregated) {
-                        // Show period instead of rank (no Chinese characters)
-                        const periodDisplay = user.period;
-
-                        row.innerHTML = `
-                            <td><strong>${periodDisplay}</strong></td>
-                            <td>${user.name}</td>
-                            <td>${user.email}</td>
-                            <td>${user.key_count}</td>
-                            <td>${formatNumber(user.total_requests)}</td>
-                            <td>${formatNumber(user.total_tokens)}</td>
-                            <td>
-                                ${percentage}%
-                                <div class="progress-bar">
-                                    <div class="progress-fill" style="width: ${percentage}%"></div>
-                                </div>
-                            </td>
-                        `;
-                    } else {
-                        // Show rank for total aggregation
-                        const rank = index + 1;
-                        row.innerHTML = `
-                            <td><span class="rank ${getRankClass(rank)}">${getRankEmoji(rank)}</span></td>
-                            <td><strong>${user.name}</strong></td>
-                            <td>${user.email}</td>
-                            <td>${user.key_count}</td>
-                            <td>${formatNumber(user.total_requests)}</td>
-                            <td>${formatNumber(user.total_tokens)}</td>
-                            <td>
-                                ${percentage}%
-                                <div class="progress-bar">
-                                    <div class="progress-fill" style="width: ${percentage}%"></div>
-                                </div>
-                            </td>
-                        `;
-                    }
-
-                    row.style.cursor = 'default';
-                });
-
+                renderTable(data.summary || {});
                 loading.style.display = 'none';
                 table.style.display = 'table';
-
             } catch (error) {
                 loading.textContent = '加载失败：' + error.message;
             }
         }
 
-        // Don't auto-load on page load - wait for verification
+        function renderTable(summary) {
+            const thead = document.getElementById('usersTableHead');
+            const tbody = document.getElementById('usersTableBody');
+            const isAggregated = currentAggregation === 'day' || currentAggregation === 'month' || currentAggregation === 'year';
+
+            thead.innerHTML = isAggregated ? `
+                <tr>
+                    <th class="col-period">时间</th>
+                    <th class="col-email">邮箱</th>
+                    <th class="col-keys">Keys 数量</th>
+                    <th class="col-requests">请求数</th>
+                    <th class="col-tokens">Token 使用</th>
+                    <th>占比</th>
+                </tr>
+            ` : `
+                <tr>
+                    <th class="col-rank">排名</th>
+                    <th class="col-email">邮箱</th>
+                    <th class="col-keys">Keys 数量</th>
+                    <th class="col-requests">请求数</th>
+                    <th class="col-tokens">Token 使用</th>
+                    <th>占比</th>
+                </tr>
+            `;
+
+            tbody.innerHTML = '';
+            const maxTokens = Number(summary.total_tokens || 0);
+
+            allUsersData.forEach((user, index) => {
+                const key = rowStateKey(user);
+                const expanded = expandedUsers.has(key);
+                const percentage = maxTokens > 0 ? (Number(user.total_tokens || 0) / maxTokens * 100).toFixed(1) : '0.0';
+                const row = tbody.insertRow();
+                row.className = `user-row${expanded ? ' expanded' : ''}`;
+
+                if (isAggregated) {
+                    row.innerHTML = `
+                        <td class="col-period"><span class="toggle">${expanded ? '▾' : '▸'}</span><strong>${escapeHtml(user.period || '')}</strong></td>
+                        <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
+                        <td class="col-keys">${formatNumber(user.key_count)}</td>
+                        <td class="col-requests">${formatNumber(user.total_requests)}</td>
+                        <td class="col-tokens">${formatNumber(user.total_tokens)}</td>
+                        <td>
+                            ${percentage}%
+                            <div class="progress-bar"><div class="progress-fill" style="width: ${percentage}%"></div></div>
+                        </td>
+                    `;
+                } else {
+                    const rank = index + 1;
+                    row.innerHTML = `
+                        <td class="col-rank"><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="rank ${getRankClass(rank)}">${getRankEmoji(rank)}</span></td>
+                        <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
+                        <td class="col-keys">${formatNumber(user.key_count)}</td>
+                        <td class="col-requests">${formatNumber(user.total_requests)}</td>
+                        <td class="col-tokens">${formatNumber(user.total_tokens)}</td>
+                        <td>
+                            ${percentage}%
+                            <div class="progress-bar"><div class="progress-fill" style="width: ${percentage}%"></div></div>
+                        </td>
+                    `;
+                }
+
+                row.addEventListener('click', () => toggleUser(key, user));
+
+                if (expanded) {
+                    const detailRow = tbody.insertRow();
+                    detailRow.className = 'detail-row';
+                    const cell = detailRow.insertCell();
+                    cell.colSpan = 6;
+                    cell.innerHTML = renderUserExpansion(key, user);
+                    bindUserExpansion(detailRow, key, user);
+                }
+            });
+        }
+
+        function toggleUser(key, user) {
+            if (expandedUsers.has(key)) {
+                expandedUsers.delete(key);
+                for (const chartKey of Array.from(expandedKeys.keys())) {
+                    if (chartKey.startsWith(`${key}|`)) expandedKeys.delete(chartKey);
+                }
+                renderTable(currentSummary());
+                return;
+            }
+
+            expandedUsers.set(key, { loading: true, error: '', keys: [], date: userKeyListDate(user) });
+            renderTable(currentSummary());
+            fetchUserKeys(key, user);
+        }
+
+        function currentSummary() {
+            return {
+                total_tokens: allUsersData.reduce((sum, user) => sum + Number(user.total_tokens || 0), 0)
+            };
+        }
+
+        function userKeyListDate(user) {
+            return currentAggregation === 'day' ? (user.period || todayIso()) : '';
+        }
+
+        async function fetchUserKeys(key, user) {
+            const params = new URLSearchParams({ email: user.email || '' });
+            const date = userKeyListDate(user);
+            if (date) params.set('date', date);
+
+            try {
+                const response = await fetch(`/api/user-keys?${params.toString()}`);
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                const state = expandedUsers.get(key);
+                if (!state) return;
+                state.loading = false;
+                state.keys = data.keys || [];
+                state.date = data.date || date;
+                renderTable(currentSummary());
+            } catch (error) {
+                const state = expandedUsers.get(key);
+                if (!state) return;
+                state.loading = false;
+                state.error = error.message;
+                renderTable(currentSummary());
+            }
+        }
+
+        function renderUserExpansion(rowKey, user) {
+            const state = expandedUsers.get(rowKey);
+            if (!state) return '';
+            if (state.loading) {
+                return '<div class="key-panel"><div class="inline-loading">正在加载这个用户的 Key...</div></div>';
+            }
+            if (state.error) {
+                return `<div class="key-panel"><div class="error-state">${escapeHtml(state.error)}</div></div>`;
+            }
+            if (!state.keys.length) {
+                return '<div class="key-panel"><div class="empty-state">这个用户当前没有可展示的 Key 数据</div></div>';
+            }
+
+            const note = state.date ? `当前展开的是 ${escapeHtml(state.date)} 的 Key 用量` : '当前展开的是累计 Key 用量';
+            const rows = state.keys.map(apiKey => renderKeyRow(rowKey, user, apiKey)).join('');
+            return `
+                <div class="key-panel">
+                    <div class="key-panel-title">
+                        <span>${escapeHtml(user.name || user.email || '')} 的 Keys</span>
+                        <span class="key-panel-note">${note}</span>
+                    </div>
+                    <table class="key-table">
+                        <thead>
+                            <tr>
+                                <th>Key</th>
+                                <th>标签</th>
+                                <th>请求数</th>
+                                <th>Token 使用</th>
+                                <th>成功 / 失败</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        function renderKeyRow(rowKey, user, apiKey) {
+            const key = chartStateKey(rowKey, apiKey.key);
+            const expanded = expandedKeys.has(key);
+            const success = Number(apiKey.success_count || 0);
+            const failure = Number(apiKey.failure_count || 0);
+            const keyRow = `
+                <tr class="key-row${expanded ? ' expanded' : ''}" data-api-key="${escapeAttr(apiKey.key)}">
+                    <td><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="key-code" title="${escapeAttr(maskedKey(apiKey.key))}">${escapeHtml(maskedKey(apiKey.key))}</span></td>
+                    <td>${escapeHtml(apiKey.label || '')}</td>
+                    <td>${formatNumber(apiKey.total_requests)}</td>
+                    <td>${formatNumber(apiKey.total_tokens)}</td>
+                    <td>${formatNumber(success)} / ${formatNumber(failure)}</td>
+                </tr>
+            `;
+            if (!expanded) return keyRow;
+            return keyRow + `
+                <tr class="chart-detail-row">
+                    <td colspan="5">${renderChartPanel(rowKey, user, apiKey.key)}</td>
+                </tr>
+            `;
+        }
+
+        function bindUserExpansion(detailRow, rowKey, user) {
+            detailRow.querySelectorAll('.key-row').forEach(keyRow => {
+                keyRow.addEventListener('click', event => {
+                    event.stopPropagation();
+                    toggleKey(rowKey, user, keyRow.dataset.apiKey);
+                });
+            });
+            detailRow.querySelectorAll('.chart-date-input').forEach(input => {
+                input.addEventListener('click', event => event.stopPropagation());
+                input.addEventListener('change', event => {
+                    event.stopPropagation();
+                    loadKeyTimeseries(rowKey, user, input.dataset.apiKey, input.value);
+                });
+            });
+            bindChartTooltips(detailRow);
+        }
+
+        function getChartTooltip() {
+            let tooltip = document.getElementById('chartTooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.id = 'chartTooltip';
+                tooltip.className = 'chart-tooltip';
+                document.body.appendChild(tooltip);
+            }
+            return tooltip;
+        }
+
+        function bindChartTooltips(root) {
+            const tooltip = getChartTooltip();
+            root.querySelectorAll('.chart-hover-point').forEach(point => {
+                point.addEventListener('mousemove', event => {
+                    tooltip.innerHTML = point.dataset.tooltip || '';
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = `${event.clientX + 12}px`;
+                    tooltip.style.top = `${event.clientY + 12}px`;
+                });
+                point.addEventListener('mouseleave', () => {
+                    tooltip.style.display = 'none';
+                });
+            });
+        }
+
+        function toggleKey(rowKey, user, apiKey) {
+            const key = chartStateKey(rowKey, apiKey);
+            if (expandedKeys.has(key)) {
+                expandedKeys.delete(key);
+                renderTable(currentSummary());
+                return;
+            }
+
+            const date = currentAggregation === 'day' ? (user.period || todayIso()) : todayIso();
+            expandedKeys.set(key, { loading: true, error: '', data: null, date });
+            renderTable(currentSummary());
+            loadKeyTimeseries(rowKey, user, apiKey, date);
+        }
+
+        async function loadKeyTimeseries(rowKey, user, apiKey, date) {
+            const key = chartStateKey(rowKey, apiKey);
+            const state = expandedKeys.get(key) || {};
+            state.loading = true;
+            state.error = '';
+            state.date = date;
+            expandedKeys.set(key, state);
+            renderTable(currentSummary());
+
+            const params = new URLSearchParams({
+                email: user.email || '',
+                api_key: apiKey,
+                date
+            });
+
+            try {
+                const response = await fetch(`/api/user-key-timeseries?${params.toString()}`);
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                const latest = expandedKeys.get(key);
+                if (!latest) return;
+                latest.loading = false;
+                latest.data = data;
+                latest.date = data.date || date;
+                renderTable(currentSummary());
+            } catch (error) {
+                const latest = expandedKeys.get(key);
+                if (!latest) return;
+                latest.loading = false;
+                latest.error = error.message;
+                renderTable(currentSummary());
+            }
+        }
+
+        function renderChartPanel(rowKey, user, apiKey) {
+            const key = chartStateKey(rowKey, apiKey);
+            const state = expandedKeys.get(key) || { date: todayIso() };
+            const date = state.date || todayIso();
+
+            if (state.loading) {
+                return `
+                    <div class="chart-panel">
+                        <div class="chart-toolbar">
+                            <strong>${escapeHtml(maskedKey(apiKey))} 的日内曲线</strong>
+                            <label>日期 <input class="chart-date-input" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(date)}"></label>
+                        </div>
+                        <div class="inline-loading">正在加载曲线...</div>
+                    </div>
+                `;
+            }
+            if (state.error) {
+                return `
+                    <div class="chart-panel">
+                        <div class="chart-toolbar">
+                            <strong>${escapeHtml(maskedKey(apiKey))} 的日内曲线</strong>
+                            <label>日期 <input class="chart-date-input" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(date)}"></label>
+                        </div>
+                        <div class="error-state">${escapeHtml(state.error)}</div>
+                    </div>
+                `;
+            }
+
+            const data = state.data;
+            if (!data) {
+                return '<div class="chart-panel"><div class="empty-state">暂无曲线数据</div></div>';
+            }
+
+            const totals = data.totals || {};
+            return `
+                <div class="chart-panel">
+                    <div class="chart-toolbar">
+                        <div>
+                            <strong>${escapeHtml(maskedKey(apiKey))} 的日内曲线</strong>
+                            <div class="key-panel-note">按北京时间（UTC+8）聚合为 24 个小时桶</div>
+                        </div>
+                        <div class="legend">
+                            <span class="legend-item"><span class="legend-dot" style="background:#667eea"></span>Token</span>
+                            <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>请求数</span>
+                            <label>日期 <input class="chart-date-input" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(data.date || date)}"></label>
+                        </div>
+                    </div>
+                    <div class="chart-metrics">
+                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.total_tokens)}</div><div class="chart-metric-label">当日 Tokens</div></div>
+                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.requests)}</div><div class="chart-metric-label">当日请求数</div></div>
+                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.success_count)}</div><div class="chart-metric-label">成功请求</div></div>
+                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.failure_count)}</div><div class="chart-metric-label">失败请求</div></div>
+                    </div>
+                    ${renderSvgChart(data.buckets || [])}
+                </div>
+            `;
+        }
+
+        function renderSvgChart(buckets) {
+            const width = 980;
+            const height = 280;
+            const left = 62;
+            const right = 62;
+            const top = 24;
+            const bottom = 36;
+            const plotWidth = width - left - right;
+            const plotHeight = height - top - bottom;
+            const tokens = buckets.map(bucket => Number(bucket.total_tokens || 0));
+            const requests = buckets.map(bucket => Number(bucket.requests || 0));
+            const maxTokens = Math.max(...tokens, 1);
+            const maxRequests = Math.max(...requests, 1);
+            const xFor = index => left + (buckets.length <= 1 ? 0 : (index / (buckets.length - 1)) * plotWidth);
+            const tokenY = value => top + plotHeight - (value / maxTokens) * plotHeight;
+            const requestY = value => top + plotHeight - (value / maxRequests) * plotHeight;
+            const tokenPoints = tokens.map((value, index) => `${xFor(index).toFixed(1)},${tokenY(value).toFixed(1)}`).join(' ');
+            const requestPoints = requests.map((value, index) => `${xFor(index).toFixed(1)},${requestY(value).toFixed(1)}`).join(' ');
+            const grid = [0, 0.25, 0.5, 0.75, 1].map(ratio => {
+                const y = top + plotHeight * ratio;
+                return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" stroke="#edf0fb" stroke-width="1"/>`;
+            }).join('');
+            const labels = buckets.filter((_, index) => index % 3 === 0 || index === 23).map((bucket, index, arr) => {
+                const originalIndex = Number(bucket.hour || 0);
+                const x = xFor(originalIndex);
+                return `<text x="${x}" y="${height - 12}" text-anchor="middle" fill="#6b7280" font-size="11">${escapeHtml(bucket.hour)}:00</text>`;
+            }).join('');
+            const dots = buckets.map((bucket, index) => {
+                const x = xFor(index);
+                const ty = tokenY(tokens[index]);
+                const ry = requestY(requests[index]);
+                const tooltip = escapeAttr(`北京时间 ${bucket.hour}:00<br>Token：${formatNumber(tokens[index])}<br>请求数：${formatNumber(requests[index])}<br>成功：${formatNumber(bucket.success_count || 0)} / 失败：${formatNumber(bucket.failure_count || 0)}`);
+                return `
+                    <circle cx="${x.toFixed(1)}" cy="${ty.toFixed(1)}" r="2.5" fill="#667eea"></circle>
+                    <circle cx="${x.toFixed(1)}" cy="${ry.toFixed(1)}" r="2.5" fill="#16a34a"></circle>
+                    <circle class="chart-hover-point" data-tooltip="${tooltip}" cx="${x.toFixed(1)}" cy="${ty.toFixed(1)}" r="9" fill="transparent"></circle>
+                    <circle class="chart-hover-point" data-tooltip="${tooltip}" cx="${x.toFixed(1)}" cy="${ry.toFixed(1)}" r="9" fill="transparent"></circle>
+                `;
+            }).join('');
+
+            return `
+                <div class="chart-svg-wrap">
+                    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Key 日内用量曲线">
+                        <rect x="0" y="0" width="${width}" height="${height}" fill="white"/>
+                        ${grid}
+                        <line x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}" stroke="#d1d5db"/>
+                        <line x1="${width - right}" y1="${top}" x2="${width - right}" y2="${height - bottom}" stroke="#d1d5db"/>
+                        <line x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}" stroke="#d1d5db"/>
+                        <text x="${left}" y="15" text-anchor="start" fill="#667eea" font-size="12">Token max ${formatNumber(maxTokens)}</text>
+                        <text x="${width - right}" y="15" text-anchor="end" fill="#16a34a" font-size="12">请求 max ${formatNumber(maxRequests)}</text>
+                        <polyline points="${tokenPoints}" fill="none" stroke="#667eea" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+                        <polyline points="${requestPoints}" fill="none" stroke="#16a34a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+                        ${dots}
+                        ${labels}
+                    </svg>
+                </div>
+            `;
+        }
     </script>
 </body>
 </html>

@@ -105,6 +105,57 @@ def upsert_user_usage(date, user_email, api_key, total_requests,
         conn.commit()
 
 
+def reassign_user_usage_key(api_key, new_user_email):
+    """Move existing user_usage rows for one key to a new user, merging duplicates."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        rows = cursor.execute("""
+            SELECT date, user_email, total_requests, success_count, failure_count,
+                   total_tokens, input_tokens, output_tokens
+            FROM user_usage
+            WHERE api_key = ? AND user_email != ?
+        """, (api_key, new_user_email)).fetchall()
+
+        now = datetime.utcnow().isoformat() + 'Z'
+        for row in rows:
+            existing = cursor.execute("""
+                SELECT total_requests, success_count, failure_count,
+                       total_tokens, input_tokens, output_tokens
+                FROM user_usage
+                WHERE date = ? AND user_email = ? AND api_key = ?
+            """, (row['date'], new_user_email, api_key)).fetchone()
+
+            if existing:
+                cursor.execute("""
+                    UPDATE user_usage
+                    SET total_requests = ?, success_count = ?, failure_count = ?,
+                        total_tokens = ?, input_tokens = ?, output_tokens = ?, updated_at = ?
+                    WHERE date = ? AND user_email = ? AND api_key = ?
+                """, (
+                    max(row['total_requests'] or 0, existing['total_requests'] or 0),
+                    max(row['success_count'] or 0, existing['success_count'] or 0),
+                    max(row['failure_count'] or 0, existing['failure_count'] or 0),
+                    max(row['total_tokens'] or 0, existing['total_tokens'] or 0),
+                    max(row['input_tokens'] or 0, existing['input_tokens'] or 0),
+                    max(row['output_tokens'] or 0, existing['output_tokens'] or 0),
+                    now,
+                    row['date'], new_user_email, api_key,
+                ))
+                cursor.execute("""
+                    DELETE FROM user_usage
+                    WHERE date = ? AND user_email = ? AND api_key = ?
+                """, (row['date'], row['user_email'], api_key))
+            else:
+                cursor.execute("""
+                    UPDATE user_usage
+                    SET user_email = ?, updated_at = ?
+                    WHERE date = ? AND user_email = ? AND api_key = ?
+                """, (new_user_email, now, row['date'], row['user_email'], api_key))
+
+        conn.commit()
+        return len(rows)
+
+
 def get_daily_usage_history():
     """Get all daily usage records."""
     with get_db_connection() as conn:
@@ -257,6 +308,37 @@ def get_all_users_total_usage():
             })
 
         return results
+
+
+def get_user_key_usage_for_date(user_email, date):
+    """Get per-key usage for one user on one date."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                api_key,
+                total_requests,
+                success_count,
+                failure_count,
+                total_tokens,
+                input_tokens,
+                output_tokens
+            FROM user_usage
+            WHERE user_email = ? AND date = ?
+            ORDER BY total_tokens DESC
+        """, (user_email, date))
+
+        return {
+            row['api_key']: {
+                'total_requests': row['total_requests'] or 0,
+                'success_count': row['success_count'] or 0,
+                'failure_count': row['failure_count'] or 0,
+                'total_tokens': row['total_tokens'] or 0,
+                'input_tokens': row['input_tokens'] or 0,
+                'output_tokens': row['output_tokens'] or 0,
+            }
+            for row in cursor.fetchall()
+        }
 
 
 def get_usage_aggregated():

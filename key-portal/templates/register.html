@@ -133,8 +133,12 @@
 
         <form id="registerForm">
             <div class="form-group">
-                <label for="email">邮箱 *</label>
-                <input type="email" id="email" name="email" required placeholder="your@email.com">
+                <label for="emailPrefix">公司邮箱 *</label>
+                <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;">
+                    <input type="text" id="emailPrefix" name="emailPrefix" required placeholder="your.name" style="flex: 1; min-width: 0; border: none; outline: none; padding: 12px 15px; font-size: 15px;">
+                    <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-left: 1px solid #d4ddff; font-size: 15px; font-weight: 600; white-space: nowrap;">@zilliz.com</span>
+                </div>
+                <p style="font-size: 13px; color: #999; margin-top: 5px;">只需要填写 @zilliz.com 前面的部分</p>
             </div>
 
             <div class="form-group">
@@ -167,14 +171,28 @@
                 document.getElementById('unusedCount').textContent = data.unused;
             });
 
+        function buildZillizEmail(prefixValue) {
+            let prefix = String(prefixValue || '').trim().toLowerCase();
+            if (prefix.endsWith('@zilliz.com')) prefix = prefix.slice(0, -'@zilliz.com'.length);
+            if (!prefix || prefix.includes('@') || /\s/.test(prefix)) return '';
+            return `${prefix}@zilliz.com`;
+        }
+
         document.getElementById('registerForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            const email = document.getElementById('email').value.trim();
+            const email = buildZillizEmail(document.getElementById('emailPrefix').value);
             const name = document.getElementById('name').value.trim();
             const label = document.getElementById('label').value.trim();
             const submitBtn = document.getElementById('submitBtn');
             const result = document.getElementById('result');
+
+            if (!email) {
+                result.className = 'result error';
+                result.innerHTML = '<strong>❌ 请输入 @zilliz.com 前面的邮箱部分</strong>';
+                result.style.display = 'block';
+                return;
+            }
 
             submitBtn.disabled = true;
             submitBtn.textContent = '申请中...';
