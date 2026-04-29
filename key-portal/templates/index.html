@@ -390,48 +390,56 @@
             return num ? num.toFixed(num >= 10 ? 1 : 2) + '%' : '0%';
         }
 
-        // Animated counter effect
+        // Smooth flowing counter effect
         const counterState = {};
+        let counterAnimationFrame = null;
+
+        function counterFormatter(elementId) {
+            const isFullCounter = elementId === 'todayTokenCounter' || elementId === 'todayRequestCounter';
+            return isFullCounter ? formatNumberFull : formatNumber;
+        }
+
+        function updateCountersFrame() {
+            let active = false;
+            const now = performance.now();
+            Object.entries(counterState).forEach(([elementId, state]) => {
+                const el = document.getElementById(elementId);
+                if (!el) return;
+                const deltaSeconds = Math.min((now - state.lastUpdate) / 1000, 0.08);
+                state.lastUpdate = now;
+                const diff = state.target - state.display;
+                const absDiff = Math.abs(diff);
+                if (absDiff <= 0.75) {
+                    state.display = state.target;
+                } else {
+                    const smoothing = 1 - Math.exp(-2.0 * deltaSeconds);
+                    state.display += diff * smoothing;
+                    active = true;
+                }
+                el.textContent = counterFormatter(elementId)(Math.round(state.display));
+            });
+            counterAnimationFrame = active ? requestAnimationFrame(updateCountersFrame) : null;
+        }
+
         function animateCounter(elementId, targetValue) {
             const el = document.getElementById(elementId);
             if (!el) return;
-
-            const currentValue = counterState[elementId] || 0;
-            counterState[elementId] = targetValue;
-            const tokenKey = elementId + ':token';
-            const animationToken = (counterState[tokenKey] || 0) + 1;
-            counterState[tokenKey] = animationToken;
-
-            // Check if this is a header token counter
-            const isTodayCounter = elementId === 'todayTokenCounter' || elementId === 'todayRequestCounter';
-            const formatter = isTodayCounter ? formatNumberFull : formatNumber;
-
-            if (currentValue === targetValue) {
-                el.textContent = formatter(targetValue);
+            const target = Number(targetValue || 0);
+            const existing = counterState[elementId];
+            if (!existing) {
+                counterState[elementId] = {
+                    display: target,
+                    target,
+                    lastUpdate: performance.now()
+                };
+                el.textContent = counterFormatter(elementId)(Math.round(target));
                 return;
             }
-
-            const duration = 800; // ms - fast animation for real-time feel
-            const startTime = performance.now();
-            const diff = targetValue - currentValue;
-
-            function update(currentTime) {
-                if (counterState[tokenKey] !== animationToken) return;
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-                // Easing function
-                const easeOut = 1 - Math.pow(1 - progress, 3);
-                const value = Math.floor(currentValue + diff * easeOut);
-                el.textContent = formatter(value);
-
-                if (progress < 1) {
-                    requestAnimationFrame(update);
-                } else {
-                    if (counterState[tokenKey] !== animationToken) return;
-                    el.textContent = formatter(targetValue);
-                }
+            existing.target = target;
+            existing.lastUpdate = performance.now();
+            if (!counterAnimationFrame) {
+                counterAnimationFrame = requestAnimationFrame(updateCountersFrame);
             }
-            requestAnimationFrame(update);
         }
 
         // Chart state
