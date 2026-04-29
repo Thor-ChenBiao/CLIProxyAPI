@@ -1652,6 +1652,67 @@ def get_usage_history_aggregated():
     return db.get_usage_aggregated()
 
 
+def apply_live_today_usage(data, usage):
+    today = datetime.now().strftime("%Y-%m-%d")
+    tokens_by_day = usage.get("tokens_by_day", {}) or {}
+    requests_by_day = usage.get("requests_by_day", {}) or {}
+
+    if today not in tokens_by_day and today not in requests_by_day:
+        return data
+
+    live_tokens = int(tokens_by_day.get(today, 0) or 0)
+    live_requests = int(requests_by_day.get(today, 0) or 0)
+    history = data.setdefault("history", [])
+    row = next((item for item in history if item.get("date") == today), None)
+    if row is None:
+        row = {
+            "date": today,
+            "total_requests": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+        history.append(row)
+        history.sort(key=lambda item: item.get("date", ""))
+
+    old_tokens = int(row.get("total_tokens", 0) or 0)
+    old_requests = int(row.get("total_requests", 0) or 0)
+    old_success = int(row.get("success_count", 0) or 0)
+    old_failure = int(row.get("failure_count", 0) or 0)
+
+    row["total_tokens"] = live_tokens
+    row["total_requests"] = live_requests
+
+    success_by_hour = usage.get("success_by_hour", {}) or {}
+    failure_by_hour = usage.get("failure_by_hour", {}) or {}
+    live_success = sum(int(value or 0) for value in success_by_hour.values())
+    live_failure = sum(int(value or 0) for value in failure_by_hour.values())
+    if live_success + live_failure == live_requests:
+        row["success_count"] = live_success
+        row["failure_count"] = live_failure
+
+    token_delta = live_tokens - old_tokens
+    request_delta = live_requests - old_requests
+    success_delta = int(row.get("success_count", 0) or 0) - old_success
+    failure_delta = int(row.get("failure_count", 0) or 0) - old_failure
+
+    for bucket_name, bucket_key in (("by_month", today[:7]), ("by_year", today[:4])):
+        bucket = data.setdefault(bucket_name, {}).setdefault(bucket_key, {
+            "total_tokens": 0,
+            "total_requests": 0,
+            "success_count": 0,
+            "failure_count": 0,
+        })
+        bucket["total_tokens"] = int(bucket.get("total_tokens", 0) or 0) + token_delta
+        bucket["total_requests"] = int(bucket.get("total_requests", 0) or 0) + request_delta
+        bucket["success_count"] = int(bucket.get("success_count", 0) or 0) + success_delta
+        bucket["failure_count"] = int(bucket.get("failure_count", 0) or 0) + failure_delta
+
+    return data
+
+
 # ============================================================================
 # Snapshot Management (delegated to snapshot module)
 # ============================================================================
@@ -2020,9 +2081,10 @@ def get_usage_history():
     """Get historical usage data with aggregations."""
     data = get_usage_history_aggregated()
 
-    # Also get hourly data from the lightweight live summary.
+    # Also get current-day and hourly data from the lightweight live summary.
     api_data = get_cluster_usage_summary()
     usage = api_data.get("usage", {})
+    apply_live_today_usage(data, usage)
     data["tokens_by_hour"] = usage.get("tokens_by_hour", {})
     data["requests_by_hour"] = usage.get("requests_by_hour", {})
     data["success_by_hour"] = usage.get("success_by_hour", {})
@@ -2790,11 +2852,11 @@ if __name__ == "__main__":
         id="expiry_check"
     )
 
-    # Sync usage every hour
+    # Sync usage every 5 minutes
     scheduler.add_job(
         scheduled_usage_sync,
         "interval",
-        hours=1,
+        minutes=5,
         id="usage_sync"
     )
 
@@ -2829,7 +2891,7 @@ if __name__ == "__main__":
     scheduler.start()
     print(f"[Scheduler] Started:")
     print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
-    print(f"  - Usage sync:   every 1 hour")
+    print(f"  - Usage sync:   every 5 min")
     print(f"  - Git sync:     daily at 00:05")
     print(f"  - Snapshot:     every 5 min")
     print(f"  - Broadcast:    every 15 sec")
