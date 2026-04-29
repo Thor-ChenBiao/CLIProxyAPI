@@ -546,12 +546,20 @@
             `;
 
             tbody.innerHTML = '';
-            const maxTokens = Number(summary.total_tokens || 0);
+            const totalTokens = Number(summary.total_tokens || 0);
+            const periodTotals = new Map();
+            if (isAggregated) {
+                allUsersData.forEach(user => {
+                    const period = user.period || '';
+                    periodTotals.set(period, (periodTotals.get(period) || 0) + Number(user.total_tokens || 0));
+                });
+            }
 
             allUsersData.forEach((user, index) => {
                 const key = rowStateKey(user);
                 const expanded = expandedUsers.has(key);
-                const percentage = maxTokens > 0 ? (Number(user.total_tokens || 0) / maxTokens * 100).toFixed(1) : '0.0';
+                const percentageBase = isAggregated ? (periodTotals.get(user.period || '') || 0) : totalTokens;
+                const percentage = percentageBase > 0 ? (Number(user.total_tokens || 0) / percentageBase * 100).toFixed(1) : '0.0';
                 const row = tbody.insertRow();
                 row.className = `user-row${expanded ? ' expanded' : ''}`;
 

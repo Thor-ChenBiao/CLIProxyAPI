@@ -407,21 +407,34 @@ def get_all_users_stats_by_period(period="month"):
     user_keys_data = load_user_keys()
     users = user_keys_data.get("users", {})
 
+    today = beijing_today()
+    live_apis = {}
+    if period == "day":
+        stats_data, _ = get_usage_stats_cached()
+        live_apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
+
     # Enrich with user names and format output
     all_stats = []
     for stat in stats:
         email = stat['user_email']
         user_info = users.get(email, {})
         name = user_info.get("name", email)
-        matched_keys = find_user_key_entries(user_keys_data, email)
+        period_keys = [key for key in stat.get('api_keys', []) if key]
+        total_requests = stat['total_requests']
+        total_tokens = stat['total_tokens']
+        if period == "day" and stat['period'] == today:
+            live_totals = [key_usage_for_date(live_apis.get(key, {}), today) for key in period_keys]
+            total_requests = sum(item.get("total_requests", 0) for item in live_totals)
+            total_tokens = sum(item.get("total_tokens", 0) for item in live_totals)
 
         all_stats.append({
             "email": email,
             "name": name,
             "period": stat['period'],
-            "total_requests": stat['total_requests'],
-            "total_tokens": stat['total_tokens'],
-            "key_count": len(matched_keys) or len(stat['api_keys'])
+            "total_requests": total_requests,
+            "total_tokens": total_tokens,
+            "key_count": len(set(period_keys)),
+            "_api_keys": period_keys,
         })
 
     return all_stats
@@ -1177,6 +1190,36 @@ def beijing_date_hour(value):
 
 def beijing_today():
     return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+
+def key_usage_for_date(api_stats, date):
+    totals = {
+        "total_requests": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "total_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+    }
+    for model_stats in (api_stats.get("models", {}) or {}).values():
+        for detail in model_stats.get("details", []) or []:
+            if not isinstance(detail, dict):
+                continue
+            detail_date, _ = beijing_date_hour(str(detail.get("timestamp") or ""))
+            if detail_date != date:
+                continue
+            tokens_info = detail.get("tokens", {}) or {}
+            failed_value = detail.get("failed", False)
+            failed = failed_value.lower() == "true" if isinstance(failed_value, str) else bool(failed_value)
+            totals["total_requests"] += 1
+            if failed:
+                totals["failure_count"] += 1
+            else:
+                totals["success_count"] += 1
+            totals["total_tokens"] += int(tokens_info.get("total_tokens", 0) or 0)
+            totals["input_tokens"] += int(tokens_info.get("input_tokens", 0) or 0)
+            totals["output_tokens"] += int(tokens_info.get("output_tokens", 0) or 0)
+    return totals
 
 
 def build_auth_stats():
@@ -2188,7 +2231,24 @@ def api_get_all_users_stats():
     total_users = len(set(s.get("email", "") for s in stats))
     total_requests = sum(s.get("total_requests", 0) for s in stats)
     total_tokens = sum(s.get("total_tokens", 0) for s in stats)
-    total_keys = sum(s.get("key_count", 0) for s in stats)
+    if aggregation in ("day", "month", "year"):
+        unique_keys = {
+            api_key
+            for stat in stats
+            for api_key in stat.get("_api_keys", [])
+            if api_key
+        }
+        total_keys = len(unique_keys)
+        for stat in stats:
+            stat.pop("_api_keys", None)
+    else:
+        unique_keys = {
+            key.get("key")
+            for stat in stats
+            for key in stat.get("keys", [])
+            if key.get("key")
+        }
+        total_keys = len(unique_keys)
 
     return jsonify({
         "users": stats,
@@ -2242,39 +2302,58 @@ def query_by_key():
     stats_data, _ = get_usage_stats_cached()
     apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
 
+    today = beijing_today()
     user_total_requests = 0
     user_total_tokens = 0
+    user_today_requests = 0
+    user_today_tokens = 0
     queried_key_requests = 0
     queried_key_tokens = 0
+    queried_key_today_requests = 0
+    queried_key_today_tokens = 0
     all_keys = []
 
     for key in user.get("api_keys", []):
         key_meta = user_data["keys"].get(key, {})
         key_stats = apis.get(key, {})
+        today_stats = key_usage_for_date(key_stats, today)
 
         requests = key_stats.get("total_requests", 0)
         tokens = key_stats.get("total_tokens", 0)
+        today_requests = today_stats.get("total_requests", 0)
+        today_tokens = today_stats.get("total_tokens", 0)
 
         user_total_requests += requests
         user_total_tokens += tokens
+        user_today_requests += today_requests
+        user_today_tokens += today_tokens
         if key == api_key:
             queried_key_requests = requests
             queried_key_tokens = tokens
+            queried_key_today_requests = today_requests
+            queried_key_today_tokens = today_tokens
 
         all_keys.append({
             "key": key,
             "label": key_meta.get("label", ""),
             "created_at": key_meta.get("created_at", ""),
             "total_requests": requests,
-            "total_tokens": tokens
+            "total_tokens": tokens,
+            "today_requests": today_requests,
+            "today_tokens": today_tokens,
         })
 
     return jsonify({
         "identifier": identifier,
+        "date": today,
         "total_requests": queried_key_requests,
         "total_tokens": queried_key_tokens,
+        "today_requests": queried_key_today_requests,
+        "today_tokens": queried_key_today_tokens,
         "user_total_requests": user_total_requests,
         "user_total_tokens": user_total_tokens,
+        "user_today_requests": user_today_requests,
+        "user_today_tokens": user_today_tokens,
         "all_keys": all_keys
     })
 

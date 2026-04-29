@@ -226,11 +226,8 @@
         <!-- login and status tabs removed -->
 
         <div id="report" class="tab-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div style="margin-bottom: 20px;">
                 <h2 style="margin: 0; color: #667eea;">📊 用量报表</h2>
-                <a href="/admin/users" target="_blank" style="display: inline-block; padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 8px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 15px rgba(102,126,234,0.5)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(102,126,234,0.3)'">
-                    👥 用户用量
-                </a>
             </div>
             <button class="refresh-btn" onclick="loadUsageHistory()">🔄 刷新数据</button>
             <div class="stats">
@@ -966,8 +963,8 @@
 
             listDiv.innerHTML = keysWithStats.map((item, index) => {
                 const stats = item.stats;
-                const requests = stats ? stats.total_requests : 0;
-                const tokens = stats ? stats.total_tokens : 0;
+                const requests = stats ? (stats.today_requests || 0) : 0;
+                const tokens = stats ? (stats.today_tokens || 0) : 0;
                 const inferredEmail = item.email || (stats && isValidEmail(stats.identifier) ? stats.identifier : '');
                 const emailText = inferredEmail || '未填写邮箱';
                 const emailColor = inferredEmail ? '#666' : '#ad6800';
@@ -998,11 +995,11 @@
                                 </div>
                             </div>
                             <div style="text-align: center; margin: 0 10px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
-                                <div style="font-size: 11px; color: #667eea; font-weight: 600; margin-bottom: 3px;">请求数</div>
+                                <div style="font-size: 11px; color: #667eea; font-weight: 600; margin-bottom: 3px;">今日请求数</div>
                                 <div style="font-size: 20px; font-weight: 700; color: #667eea;">${requests.toLocaleString()}</div>
                             </div>
                             <div style="text-align: center; margin-right: 10px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
-                                <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">Tokens</div>
+                                <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">今日 Tokens</div>
                                 <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
                             </div>
                             <div style="display: flex; gap: 8px;">

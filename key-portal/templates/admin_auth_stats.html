@@ -95,11 +95,29 @@
             padding: 18px;
             box-shadow: var(--shadow);
         }
-        .node-card h3 { margin: 0 0 15px 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .node-card h3 { margin: 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
         .node-pill { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; color: var(--blue); background: var(--blue-soft); padding: 5px 10px; border-radius: 999px; white-space: nowrap; font-weight: 800; }
-	        .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin: 8px 0; color: var(--muted); }
-	        .line.emphasis { padding: 8px 10px; border-radius: 12px; background: #f3f6fb; }
-	        .line strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+        .node-overview { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12px; margin-top: 15px; }
+        .node-health, .node-risk { border: 1px solid rgba(223,230,240,0.9); border-radius: 16px; background: #f8fbff; padding: 13px; }
+        .node-health span, .node-risk span, .node-window span, .node-mini span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; margin-bottom: 5px; }
+        .node-health strong { color: var(--green); font-size: 34px; line-height: 1; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
+        .node-health small { display: block; color: var(--muted); margin-top: 6px; font-size: 11px; }
+        .node-risk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+        .node-risk-item { padding: 8px 6px; border-radius: 12px; background: #fff; border: 1px solid rgba(223,230,240,0.86); text-align: center; }
+        .node-risk-item strong { display: block; color: var(--ink); font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
+        .node-risk-item.watch strong { color: var(--orange); }
+        .node-risk-item.error strong { color: var(--red); }
+        .node-window-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+        .node-window { border: 1px solid rgba(223,230,240,0.9); border-radius: 16px; background: #fff; padding: 13px; }
+        .node-window h4 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 10px; color: #172846; font-size: 13px; }
+        .node-window h4 b { color: var(--muted); font-size: 11px; font-weight: 800; }
+        .node-window-main { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .node-window strong, .node-mini strong { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+        .node-failure { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #f3f6fb; color: var(--muted); font-size: 12px; font-weight: 850; display: flex; justify-content: space-between; }
+        .node-failure.warn { background: var(--orange-soft); color: var(--orange); }
+        .node-failure.danger { background: var(--red-soft); color: var(--red); }
+        .node-mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+        .node-mini { border: 1px solid rgba(223,230,240,0.9); border-radius: 14px; background: #f8fafc; padding: 10px 12px; }
         .table-card { background: rgba(255,255,255,0.94); padding: 22px; border-radius: 24px; border: 1px solid var(--line); box-shadow: var(--shadow); }
         .table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
         .table-title h2 { color: #10192b; margin: 0; font-size: 24px; letter-spacing: -0.03em; }
@@ -138,24 +156,31 @@
 	        .signal-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #172846; font-size: 13px; font-weight: 900; margin-bottom: 11px; }
 	        .signal-title span:last-child { color: var(--muted); font-size: 11px; font-weight: 800; }
 	        .quota-panel, .health-panel, .traffic-panel { border: 1px solid var(--line); border-radius: 18px; background: var(--panel-soft); padding: 15px; }
-	        .quota-panel { background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); border-color: #cfdcff; }
-	        .quota-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-	        .quota-window { min-width: 0; padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.78); border: 1px solid rgba(223,230,240,0.88); }
-	        .quota-window.ok { border-color: #bfe8d1; background: #f2fbf6; }
-	        .quota-window.warn { border-color: #ffd88b; background: #fff8e8; }
-	        .quota-window.danger { border-color: #ffc1c1; background: #fff4f4; }
+	        .quota-panel { display: flex; flex-direction: column; background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); border-color: #cfdcff; }
+	        .quota-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; flex: 1; align-items: stretch; }
+	        .quota-window { min-width: 0; min-height: 178px; display: flex; flex-direction: column; padding: 12px 10px; border-radius: 14px; background: rgba(255,255,255,0.78); border: 1px solid rgba(223,230,240,0.88); }
+	        .quota-window.ok { border-color: #bfe8d1; background: #f2fbf6; color: var(--green); }
+	        .quota-window.warn { border-color: #ffd88b; background: #fff8e8; color: var(--orange); }
+	        .quota-window.danger { border-color: #ffc1c1; background: #fff4f4; color: var(--red); }
 	        .quota-window.unknown { color: var(--muted); }
-	        .quota-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+	        .quota-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 	        .quota-top span { color: var(--muted); font-size: 12px; font-weight: 800; }
-	        .quota-top strong { color: #10192b; font-size: clamp(24px, 2.4vw, 36px); line-height: 1; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
-	        .quota-window.warn .quota-top strong { color: var(--orange); }
-	        .quota-window.danger .quota-top strong { color: var(--red); }
-	        .quota-bar { height: 8px; border-radius: 999px; background: #d9e1ee; overflow: hidden; }
-	        .quota-bar span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--green); }
-	        .quota-window.warn .quota-bar span { background: #d99012; }
-	        .quota-window.danger .quota-bar span { background: var(--red); }
-	        .quota-foot { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; line-height: 1.35; }
-	        .quota-foot span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	        .quota-top strong { color: currentColor; font-size: 23px; line-height: 1; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+	        .quota-usage, .quota-countdown { padding: 9px; border-radius: 12px; background: rgba(255,255,255,0.62); border: 1px solid rgba(223,230,240,0.76); }
+	        .quota-usage { margin-top: 6px; }
+	        .quota-row-label { display: flex; justify-content: space-between; gap: 8px; color: #526070; font-size: 11px; font-weight: 850; margin-bottom: 7px; }
+	        .quota-bar { position: relative; height: 14px; border-radius: 999px; background: rgba(82,96,112,0.14); overflow: hidden; }
+	        .quota-bar-fill { position: absolute; top: 0; right: 0; bottom: 0; width: var(--fill); border-radius: inherit; background: currentColor; transition: width 0.25s ease; }
+	        .quota-countdown { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; margin-top: 10px; }
+	        .quota-countdown-track { display: grid; grid-template-columns: repeat(var(--segments), minmax(0, 1fr)); gap: 5px; height: 34px; }
+	        .quota-countdown-segment { position: relative; border-radius: 999px; overflow: hidden; background: rgba(82,96,112,0.14); }
+	        .quota-countdown-fill { position: absolute; left: 0; right: 0; bottom: 0; height: var(--fill); border-radius: inherit; background: #526070; opacity: 0.55; transition: height 0.25s ease; }
+	        .quota-reset-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; color: #526070; font-weight: 850; }
+	        .quota-clock { position: relative; flex: 0 0 auto; width: 13px; height: 13px; border: 2px solid currentColor; border-radius: 50%; opacity: 0.82; }
+	        .quota-clock::before, .quota-clock::after { content: ""; position: absolute; left: 50%; top: 50%; width: 2px; border-radius: 2px; background: currentColor; transform-origin: 50% 0; }
+	        .quota-clock::before { height: 4px; transform: translate(-50%, -1px) rotate(0deg); }
+	        .quota-clock::after { height: 5px; transform: translate(-50%, -1px) rotate(120deg); }
+	        .quota-reset { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	        .quota-message { color: var(--muted); font-size: 12px; line-height: 1.45; }
 	        .health-panel { display: flex; flex-direction: column; gap: 10px; }
 	        .failure-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -199,6 +224,7 @@
 	        @media (max-width: 1180px) {
 	            .auth-main { grid-template-columns: 1fr 1fr; }
 	            .traffic-panel { grid-column: span 2; }
+	            .node-overview { grid-template-columns: 1fr; }
 	            .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	        }
 	        @media (max-width: 760px) {
@@ -210,7 +236,7 @@
 	            .detail-grid { grid-template-columns: 1fr; }
 	            .time-grid { grid-column: auto; }
 	            .quota-placeholder { grid-template-columns: 1fr; }
-	            .quota-grid, .failure-grid, .traffic-grid { grid-template-columns: 1fr; }
+	            .quota-grid, .failure-grid, .traffic-grid, .node-window-grid, .node-mini-grid { grid-template-columns: 1fr; }
 	        }
     </style>
 </head>
@@ -224,7 +250,7 @@
             </div>
             <div class="actions">
                 <a class="btn secondary" href="/">返回首页</a>
-                <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
+                <a class="btn secondary" href="/admin/users" target="_blank">👥 用户用量</a>
                 <a class="btn green" href="/management.html#/" target="_blank">old 管理后台</a>
                 <a class="btn orange" href="/b/management.html#/" target="_blank">node-b 管理后台</a>
             </div>
@@ -240,7 +266,7 @@
             <div class="table-head">
                 <div class="table-title">
                     <h2>认证文件明细</h2>
-	                    <p>主视图按关注优先排序，先看可用性、额度剩余和失败率；展开后查看原始窗口与时间信息。</p>
+	                    <p>首次加载按关注优先排序；自动刷新保持列表顺序稳定，避免实时数据变化时卡片跳动。</p>
                 </div>
                 <button class="btn primary" onclick="loadAuthStats(true)">刷新认证统计</button>
             </div>
@@ -252,6 +278,7 @@
     <script>
         let authStatsLoading = false;
         const AUTH_STATS_REFRESH_MS = 5000;
+        const authRowOrder = new Map();
 
         function formatNumberFull(num) {
             return Number(num || 0).toLocaleString('zh-CN');
@@ -276,6 +303,14 @@
             const bj = new Date(utcMs + 8 * 60 * 60 * 1000);
             const pad = (n) => String(n).padStart(2, '0');
             return `${bj.getUTCFullYear()}-${pad(bj.getUTCMonth() + 1)}-${pad(bj.getUTCDate())} ${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function formatQuotaResetTime(value) {
+            const formatted = formatDateTime(value);
+            if (formatted === '-') return '未知';
+            const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+            if (formatted.startsWith(today)) return formatted.slice(11, 16);
+            return formatted.slice(5, 16);
         }
 
         function formatPercent(value) {
@@ -378,12 +413,23 @@
             return score;
         }
 
+        function authRowKey(row) {
+            return [row.node || '', row.path || '', row.account || '', row.auth_index || ''].join('|');
+        }
+
+        function compareConcern(a, b) {
+            const diff = concernScore(b) - concernScore(a);
+            if (diff !== 0) return diff;
+            return `${a.node || ''}${a.account || ''}${a.auth_index || ''}`.localeCompare(`${b.node || ''}${b.account || ''}${b.auth_index || ''}`);
+        }
+
         function sortAuthRows(rows) {
-            return [...rows].sort((a, b) => {
-                const diff = concernScore(b) - concernScore(a);
-                if (diff !== 0) return diff;
-                return `${a.node || ''}${a.account || ''}`.localeCompare(`${b.node || ''}${b.account || ''}`);
+            const prioritized = [...rows].sort(compareConcern);
+            prioritized.forEach(row => {
+                const key = authRowKey(row);
+                if (!authRowOrder.has(key)) authRowOrder.set(key, authRowOrder.size);
             });
+            return prioritized.sort((a, b) => (authRowOrder.get(authRowKey(a)) ?? 0) - (authRowOrder.get(authRowKey(b)) ?? 0));
         }
 
         function computeNodeSignals(rows) {
@@ -417,6 +463,49 @@
             return { cls: 'other', cardCls: 'status-other', text: row.status || '-' };
         }
 
+        function quotaUsedPercent(bucket) {
+            const used = Number(bucket?.used_percent);
+            if (Number.isFinite(used)) return clampPercent(used);
+            return clampPercent(100 - Number(bucket?.remaining_percent || 0));
+        }
+
+        function secondsUntilReset(resetAt) {
+            const resetMs = Date.parse(resetAt || '');
+            if (!Number.isFinite(resetMs)) return null;
+            return Math.max(0, Math.round((resetMs - Date.now()) / 1000));
+        }
+
+        function formatCountdown(seconds) {
+            if (seconds === null) return '未知';
+            if (seconds <= 0) return '即将重置';
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            if (days > 0) return `${days}天${hours}小时`;
+            if (hours > 0) return `${hours}小时${minutes}分`;
+            return `${Math.max(1, minutes)}分`;
+        }
+
+        function countdownPercent(bucket) {
+            const seconds = secondsUntilReset(bucket?.reset_at);
+            const windowSeconds = Number(bucket?.limit_window_seconds || 0);
+            if (seconds === null || !windowSeconds) return 0;
+            return clampPercent(seconds / windowSeconds * 100);
+        }
+
+        function segmentFillPercent(value, index, count) {
+            const segmentSize = 100 / count;
+            return Math.max(0, Math.min(100, ((value - index * segmentSize) / segmentSize) * 100));
+        }
+
+        function renderCountdownSegments(value, count) {
+            const segments = Array.from({ length: count }, (_, index) => {
+                const fill = segmentFillPercent(value, index, count);
+                return `<span class="quota-countdown-segment"><span class="quota-countdown-fill" style="--fill:${fill}%"></span></span>`;
+            }).join('');
+            return `<div class="quota-countdown-track" style="--segments:${count}" aria-hidden="true">${segments}</div>`;
+        }
+
         function renderMetricBlock(title, rangeLabel, bucket, quota, windowName, primary = false) {
             return `<div class="metric-block ${primary ? 'primary' : ''}">
                 <h4><span>${title}</span><span class="range">${rangeLabel}</span></h4>
@@ -446,13 +535,19 @@
             }
             const remaining = clampPercent(bucket.remaining_percent);
             const level = quotaLevel(remaining);
-            const reset = bucket.reset_at ? formatDateTime(bucket.reset_at) : '重置时间未知';
-            const resetTitle = bucket.reset_at ? `重置 ${reset}` : reset;
+            const resetFull = bucket.reset_at ? formatDateTime(bucket.reset_at) : '重置时间未知';
+            const resetTitle = bucket.reset_at ? `重置 ${resetFull}` : resetFull;
+            const segmentCount = windowName === 'last_5h' ? 5 : 7;
+            const countdownValue = countdownPercent(bucket);
+            const countdownText = formatCountdown(secondsUntilReset(bucket.reset_at));
             return `<div class="quota-window ${level}">
-                <div class="quota-top"><span>${label}</span><strong>${formatQuotaPercent(remaining)}</strong></div>
-                <div class="quota-bar" title="剩余 ${formatQuotaPercent(remaining)}"><span style="width:${remaining}%"></span></div>
-                <div class="quota-foot">
-                    <span title="${escapeHtml(`${bucket.limit_label || '原生窗口'} · ${resetTitle}`)}">${escapeHtml(reset)}</span>
+                <div class="quota-top"><span>${label.replace(' 剩余', '')}</span><strong>${formatQuotaPercent(remaining)}</strong></div>
+                <div class="quota-usage" title="剩余 ${formatQuotaPercent(remaining)}">
+                    <div class="quota-bar"><span class="quota-bar-fill" style="--fill:${remaining}%"></span></div>
+                </div>
+                <div class="quota-countdown" title="${escapeHtml(`${bucket.limit_label || '原生窗口'} · ${resetTitle}`)}">
+                    <div class="quota-row-label"><span class="quota-reset-pill"><span class="quota-clock" aria-hidden="true"></span><span>重置倒计时</span></span><strong>${escapeHtml(countdownText)}</strong></div>
+                    ${renderCountdownSegments(countdownValue, segmentCount)}
                 </div>
             </div>`;
         }
@@ -529,6 +624,54 @@
             </div>`;
         }
 
+        function nodeFailureClass(rate) {
+            const num = Number(rate || 0);
+            if (num >= 10) return 'danger';
+            if (num >= 5) return 'warn';
+            return '';
+        }
+
+        function renderNodeWindow(title, bucket) {
+            const failClass = nodeFailureClass(bucket?.failure_rate);
+            return `<div class="node-window">
+                <h4>${title}<b>${formatNumberFull(bucket?.requests || 0)} 请求</b></h4>
+                <div class="node-window-main">
+                    <div><span>Tokens</span><strong>${formatCompactNumber(bucket?.tokens || 0)}</strong></div>
+                    <div><span>均值/请求</span><strong>${formatNumberFull(bucket?.avg_tokens_per_request || 0)}</strong></div>
+                </div>
+                <div class="node-failure ${failClass}"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
+            </div>`;
+        }
+
+        function renderNodeSummaryCard(node, n, signals) {
+            return `<div class="node-card">
+                <h3>${escapeHtml(node)} <span class="node-pill">${formatNumberFull(n.auth_files || 0)} files</span></h3>
+                <div class="node-overview">
+                    <div class="node-health">
+                        <span>可用认证</span>
+                        <strong>${formatNumberFull(n.active || 0)}</strong>
+                        <small>异常 ${formatNumberFull(n.warning || 0)} · 不可用 ${formatNumberFull(n.unavailable || 0)}</small>
+                    </div>
+                    <div class="node-risk">
+                        <span>风险信号</span>
+                        <div class="node-risk-grid">
+                            <div class="node-risk-item watch"><strong>${formatNumberFull(signals.watch)}</strong><span>关注</span></div>
+                            <div class="node-risk-item"><strong>${formatNumberFull(signals.lowQuota)}</strong><span>低额度</span></div>
+                            <div class="node-risk-item error"><strong>${formatNumberFull(signals.quotaError)}</strong><span>限额异常</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="node-window-grid">
+                    ${renderNodeWindow('近 5 小时', n.last_5h || {})}
+                    ${renderNodeWindow('近 7 天', n.last_7d || {})}
+                </div>
+                <div class="node-mini-grid">
+                    <div class="node-mini"><span>近 1 小时请求</span><strong>${formatNumberFull(n.last_1h?.requests || 0)}</strong></div>
+                    <div class="node-mini"><span>近 24 小时请求</span><strong>${formatNumberFull(n.last_24h?.requests || 0)}</strong></div>
+                </div>
+            </div>`;
+        }
+
         function renderAuthCard(row) {
             const info = statusInfo(row);
             const statusMsg = row.status_explanation || row.status_message || '';
@@ -602,14 +745,7 @@
                 summaryEl.innerHTML = nodeNames.length ? nodeNames.map(node => {
                     const n = nodes[node];
                     const signals = nodeSignals[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
-                    return `<div class="node-card">
-                        <h3>${escapeHtml(node)} <span class="node-pill">${formatNumberFull(n.auth_files || 0)} files</span></h3>
-                        <div class="line emphasis"><span>重点关注 / 低额度 / 限额异常</span><strong>${formatNumberFull(signals.watch)} / ${formatNumberFull(signals.lowQuota)} / ${formatNumberFull(signals.quotaError)}</strong></div>
-                        <div class="line"><span>可用 / 最近异常 / 不可用</span><strong>${formatNumberFull(n.active || 0)} / ${formatNumberFull(n.warning || 0)} / ${formatNumberFull(n.unavailable || 0)}</strong></div>
-                        <div class="line"><span>5h 请求 / Tokens / 失败率</span><strong>${formatNumberFull(n.last_5h?.requests || 0)} / ${formatNumberFull(n.last_5h?.tokens || 0)} / ${formatPercent(n.last_5h?.failure_rate)}</strong></div>
-                        <div class="line"><span>7d 请求 / Tokens / 失败率</span><strong>${formatNumberFull(n.last_7d?.requests || 0)} / ${formatNumberFull(n.last_7d?.tokens || 0)} / ${formatPercent(n.last_7d?.failure_rate)}</strong></div>
-                        <div class="line"><span>1h 请求 / 24h 请求</span><strong>${formatNumberFull(n.last_1h?.requests || 0)} / ${formatNumberFull(n.last_24h?.requests || 0)}</strong></div>
-                    </div>`;
+                    return renderNodeSummaryCard(node, n, signals);
                 }).join('') : '<div class="empty-state">暂无节点数据</div>';
 
                 cardsEl.innerHTML = rows.length ? rows.map(renderAuthCard).join('') : '<div class="empty-state">暂无认证文件数据</div>';
