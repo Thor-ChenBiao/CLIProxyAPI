@@ -395,7 +395,7 @@ def get_all_users_stats(include_models=True):
     return all_stats
 
 
-def get_all_users_stats_by_period(period="month"):
+def get_all_users_stats_by_period(period="month", live_today=False):
     """
     Get statistics for all users aggregated by period (month or year).
     Returns a list with each user's stats broken down by the selected period.
@@ -409,7 +409,7 @@ def get_all_users_stats_by_period(period="month"):
 
     today = beijing_today()
     live_apis = {}
-    if period == "day":
+    if live_today and period == "day":
         stats_data, _ = get_usage_stats_cached()
         live_apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
 
@@ -422,7 +422,7 @@ def get_all_users_stats_by_period(period="month"):
         period_keys = [key for key in stat.get('api_keys', []) if key]
         total_requests = stat['total_requests']
         total_tokens = stat['total_tokens']
-        if period == "day" and stat['period'] == today:
+        if live_today and period == "day" and stat['period'] == today:
             live_totals = [key_usage_for_date(live_apis.get(key, {}), today) for key in period_keys]
             total_requests = sum(item.get("total_requests", 0) for item in live_totals)
             total_tokens = sum(item.get("total_tokens", 0) for item in live_totals)
@@ -2274,22 +2274,17 @@ def api_get_user_stats(email):
     return jsonify(stats)
 
 
-@app.route("/api/all-users-stats")
-def api_get_all_users_stats():
-    """Get statistics for all users with aggregation options."""
-    # Get aggregation parameter: 'total', 'day', 'month', 'year'
-    aggregation = request.args.get("aggregation", "month").strip()
-
+def build_all_users_stats_response(aggregation, live_today=False):
     if aggregation == "day":
-        stats = get_all_users_stats_by_period("day")
+        stats = get_all_users_stats_by_period("day", live_today=live_today)
     elif aggregation == "month":
         stats = get_all_users_stats_by_period("month")
     elif aggregation == "year":
         stats = get_all_users_stats_by_period("year")
-    else:  # total
+    else:
+        aggregation = "total"
         stats = get_all_users_stats(include_models=False)
 
-    # Calculate totals
     total_users = len(set(s.get("email", "") for s in stats))
     total_requests = sum(s.get("total_requests", 0) for s in stats)
     total_tokens = sum(s.get("total_tokens", 0) for s in stats)
@@ -2312,16 +2307,26 @@ def api_get_all_users_stats():
         }
         total_keys = len(unique_keys)
 
-    return jsonify({
+    return {
         "users": stats,
         "summary": {
             "total_users": total_users,
             "total_requests": total_requests,
             "total_tokens": total_tokens,
-            "total_keys": total_keys
+            "total_keys": total_keys,
         },
-        "aggregation": aggregation
-    })
+        "aggregation": aggregation,
+    }
+
+
+@app.route("/api/all-users-stats")
+def api_get_all_users_stats():
+    """Get statistics for all users with aggregation options."""
+    aggregation = request.args.get("aggregation", "month").strip()
+    live_today = request.args.get("live_today", "").strip() == "1"
+    if aggregation not in ("total", "day", "month", "year"):
+        aggregation = "total"
+    return jsonify(build_all_users_stats_response(aggregation, live_today=live_today))
 
 
 @app.route("/api/key-pool-status")

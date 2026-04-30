@@ -515,8 +515,28 @@
                 renderTable(data.summary || {});
                 loading.style.display = 'none';
                 table.style.display = 'table';
+                if (currentAggregation === 'day') {
+                    refreshLiveTodayStats();
+                }
             } catch (error) {
                 loading.textContent = '加载失败：' + error.message;
+            }
+        }
+
+        async function refreshLiveTodayStats() {
+            const aggregationAtStart = currentAggregation;
+            try {
+                const response = await fetch('/api/all-users-stats?aggregation=day&live_today=1');
+                const data = await response.json();
+                if (!response.ok || data.error || aggregationAtStart !== currentAggregation) return;
+                allUsersData = data.users || [];
+                document.getElementById('totalUsers').textContent = formatNumber(data.summary?.total_users);
+                document.getElementById('totalKeys').textContent = formatNumber(data.summary?.total_keys);
+                document.getElementById('totalRequests').textContent = formatNumber(data.summary?.total_requests);
+                document.getElementById('totalTokens').textContent = formatNumber(data.summary?.total_tokens);
+                renderTable(data.summary || {});
+            } catch (error) {
+                console.error('Refresh live day stats error:', error);
             }
         }
 
