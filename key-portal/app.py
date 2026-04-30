@@ -6,6 +6,7 @@ A web service for managing OAuth key contributions and monitoring key status.
 
 import csv
 import json
+import math
 import os
 import re
 import requests
@@ -839,6 +840,72 @@ def get_auth_quota_cached(node, auth_file):
     return dict(quota, cache_age_seconds=0)
 
 
+def _median(values):
+    ordered = sorted(values)
+    count = len(ordered)
+    if not count:
+        return 0
+    middle = count // 2
+    if count % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def apply_quota_window_usage(stats):
+    for stat in stats.values():
+        bucket = (((stat.get("quota") or {}).get("windows") or {}).get("last_7d") or {})
+        reset_at = parse_detail_time_utc(bucket.get("reset_at"))
+        window_seconds = int(bucket.get("limit_window_seconds") or 0)
+        details = stat.get("_quota_usage_details") or []
+        if not reset_at or not window_seconds or not details:
+            stat["quota_window"] = {"tokens": 0, "requests": 0}
+            continue
+        start = reset_at - timedelta(seconds=window_seconds)
+        window_details = [(when, tokens) for when, tokens in details if start <= when <= reset_at]
+        stat["quota_window"] = {
+            "tokens": sum(tokens for _, tokens in window_details),
+            "requests": len(window_details),
+            "start_at": start.isoformat() + "Z",
+            "reset_at": reset_at.isoformat() + "Z",
+        }
+
+
+def build_today_quota_usage(stats, today, today_used_tokens=None):
+    account_count = len(stats)
+    if today_used_tokens is None:
+        today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in stats.values())
+    else:
+        today_used_tokens = int(today_used_tokens or 0)
+    candidates = []
+    for stat in stats.values():
+        quota_window_tokens = int((stat.get("quota_window") or {}).get("tokens", 0) or 0)
+        bucket = (((stat.get("quota") or {}).get("windows") or {}).get("last_7d") or {})
+        used_percent = _number_or_none(bucket.get("used_percent"))
+        if quota_window_tokens <= 0 or used_percent is None or used_percent < 1:
+            continue
+        daily_limit = quota_window_tokens / (used_percent / 100) / 7
+        if math.isfinite(daily_limit) and daily_limit > 0:
+            candidates.append(daily_limit)
+    single_account_daily_limit = int(round(_median(candidates))) if candidates else 0
+    total_daily_limit = account_count * single_account_daily_limit if single_account_daily_limit else 0
+    usage_ratio = round(today_used_tokens / total_daily_limit, 6) if total_daily_limit else 0
+    return {
+        "date": today,
+        "today_used_tokens": today_used_tokens,
+        "account_count": account_count,
+        "account_count_source": "auth_files",
+        "single_account_daily_token_limit": single_account_daily_limit,
+        "single_account_daily_token_limit_source": "inferred_from_provider_7d_window" if single_account_daily_limit else "unavailable",
+        "total_daily_token_limit": total_daily_limit,
+        "usage_ratio": usage_ratio,
+        "usage_percent": round(usage_ratio * 100, 2) if total_daily_limit else 0,
+        "inferred_account_count": len(candidates),
+        "inferred_daily_token_limit_min": int(round(min(candidates))) if candidates else 0,
+        "inferred_daily_token_limit_max": int(round(max(candidates))) if candidates else 0,
+        "configured": bool(total_daily_limit),
+    }
+
+
 def merge_usage_payloads(results):
     """Merge /v0/management/usage results from all nodes."""
     merged_usage = {
@@ -960,10 +1027,34 @@ def strip_usage_details(payload):
     return payload
 
 
+def _refresh_today_quota_usage_from_summary(result):
+    quota_usage = result.get("today_quota_usage")
+    if not isinstance(quota_usage, dict):
+        return
+    try:
+        summary, err = get_usage_summary_cached()
+    except Exception:
+        return
+    if err or not summary:
+        return
+    today = summary.get("today") or quota_usage.get("date")
+    today_used_tokens = int(summary.get("today_tokens", 0) or 0)
+    total_daily_limit = int(quota_usage.get("total_daily_token_limit", 0) or 0)
+    usage_ratio = round(today_used_tokens / total_daily_limit, 6) if total_daily_limit else 0
+    updated = dict(quota_usage)
+    updated["date"] = today
+    updated["today_used_tokens"] = today_used_tokens
+    updated["usage_ratio"] = usage_ratio
+    updated["usage_percent"] = round(usage_ratio * 100, 2) if total_daily_limit else 0
+    updated["today_used_tokens_source"] = "usage_summary_live"
+    result["today_quota_usage"] = updated
+
+
 def _with_auth_stats_cache_metadata(data, now=None, refreshing=None):
     import time
     now = now or time.time()
     result = dict(data)
+    _refresh_today_quota_usage_from_summary(result)
     result["cache_ttl_seconds"] = _auth_stats_cache["ttl"]
     result["cache_age_seconds"] = round(now - _auth_stats_cache["last_update"], 3)
     result["refreshing"] = _auth_stats_cache["refreshing"] if refreshing is None else refreshing
@@ -1226,6 +1317,7 @@ def build_auth_stats():
     usage_payload = get_cluster_usage()
     files, auth_errors = get_cluster_auth_files()
     now = datetime.utcnow()
+    today = datetime.now().strftime("%Y-%m-%d")
     node_by_name = {node["name"]: node for node in CLIPROXY_NODES}
     windows = {
         "last_1h": now - timedelta(hours=1),
@@ -1316,6 +1408,17 @@ def build_auth_stats():
             "last_error_at": "",
             "last_error_message": "",
             "last_error_status": "",
+            "today": {
+                "requests": 0,
+                "success": 0,
+                "failure": 0,
+                "tokens": 0,
+            },
+            "quota_window": {
+                "tokens": 0,
+                "requests": 0,
+            },
+            "_quota_usage_details": [],
             "quota": {
                 "status": "unsupported",
                 "provider": f.get("provider") or f.get("type", ""),
@@ -1355,8 +1458,20 @@ def build_auth_stats():
                 if not stat:
                     continue
                 when = parse_detail_time(detail.get("timestamp"))
+                when_utc = parse_detail_time_utc(detail.get("timestamp"))
                 tokens = int((detail.get("tokens") or {}).get("total_tokens", 0) or 0)
                 failed = bool(detail.get("failed", False))
+                if when_utc:
+                    stat["_quota_usage_details"].append((when_utc, tokens))
+                detail_timestamp = str(detail.get("timestamp") or "")
+                detail_date = detail_timestamp[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", detail_timestamp) else None
+                if detail_date == today:
+                    stat["today"]["requests"] += 1
+                    stat["today"]["tokens"] += tokens
+                    if failed:
+                        stat["today"]["failure"] += 1
+                    else:
+                        stat["today"]["success"] += 1
                 for window_name, start_time in windows.items():
                     if start_time is not None and (when is None or when < start_time):
                         continue
@@ -1419,9 +1534,16 @@ def build_auth_stats():
                 except Exception as e:
                     stats[stats_key]["quota"] = _build_error_quota(stats[stats_key].get("provider", ""), str(e))
 
+    apply_quota_window_usage(stats)
+    today_used_tokens = int(((usage_payload.get("usage") or {}).get("tokens_by_day") or {}).get(today, 0) or 0)
+    today_quota_usage = build_today_quota_usage(stats, today, today_used_tokens)
+    for stat in stats.values():
+        stat.pop("_quota_usage_details", None)
+
     return {
         "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),
         "nodes": node_summary,
+        "today_quota_usage": today_quota_usage,
         "errors": usage_payload.get("node_errors", []) + auth_errors,
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

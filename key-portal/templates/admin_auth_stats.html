@@ -643,6 +643,44 @@
             </div>`;
         }
 
+        function renderTodayQuotaCard(q) {
+            const configured = Boolean(q?.configured);
+            const used = Number(q?.today_used_tokens || 0);
+            const total = Number(q?.total_daily_token_limit || 0);
+            const percent = Number(q?.usage_percent || 0);
+            const accountCount = Number(q?.account_count || 0);
+            const dailyLimit = Number(q?.single_account_daily_token_limit || 0);
+            const inferredCount = Number(q?.inferred_account_count || 0);
+            const minLimit = Number(q?.inferred_daily_token_limit_min || 0);
+            const maxLimit = Number(q?.inferred_daily_token_limit_max || 0);
+            const percentClass = configured && percent >= 90 ? 'danger' : (configured && percent >= 70 ? 'warn' : '');
+            const sourceText = configured
+                ? `${formatNumberFull(accountCount)} 个认证文件 · 单号日额度 ${formatCompactNumber(dailyLimit)}`
+                : `${formatNumberFull(accountCount)} 个认证文件 · 等待 7d 额度数据`;
+            const inferredText = configured
+                ? `基于 ${formatNumberFull(inferredCount)} 个账号服务端 7d 窗口推算${minLimit && maxLimit ? ` · 范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
+                : '暂无可用 7d used_percent，先只展示今日已用 Tokens';
+            return `<div class="node-card">
+                <h3>今日预估额度消耗 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
+                <div class="node-overview">
+                    <div class="node-health">
+                        <span>今日已用 Tokens</span>
+                        <strong>${formatCompactNumber(used)}</strong>
+                        <small title="${formatNumberFull(used)}">${escapeHtml(sourceText)}</small>
+                    </div>
+                    <div class="node-risk">
+                        <span>总额度占用</span>
+                        <div class="node-failure ${percentClass}"><strong>${configured ? formatPercent(percent) : '-'}</strong></div>
+                        <small>${configured ? `${formatCompactNumber(used)} / ${formatCompactNumber(total)}` : '无法推算总额度'}</small>
+                    </div>
+                </div>
+                <div class="node-mini-grid">
+                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)}</strong></div>
+                    <div class="node-mini"><span>推算说明</span><strong title="${escapeHtml(inferredText)}">${escapeHtml(inferredText)}</strong></div>
+                </div>
+            </div>`;
+        }
+
         function renderNodeSummaryCard(node, n, signals) {
             return `<div class="node-card">
                 <h3>${escapeHtml(node)} <span class="node-pill">${formatNumberFull(n.auth_files || 0)} files</span></h3>
@@ -742,11 +780,13 @@
                 const nodeSignals = computeNodeSignals(rows);
                 const nodes = data.nodes || {};
                 const nodeNames = Object.keys(nodes).sort();
-                summaryEl.innerHTML = nodeNames.length ? nodeNames.map(node => {
+                const quotaCard = renderTodayQuotaCard(data.today_quota_usage || {});
+                const nodeCards = nodeNames.length ? nodeNames.map(node => {
                     const n = nodes[node];
                     const signals = nodeSignals[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
                     return renderNodeSummaryCard(node, n, signals);
                 }).join('') : '<div class="empty-state">暂无节点数据</div>';
+                summaryEl.innerHTML = quotaCard + nodeCards;
 
                 cardsEl.innerHTML = rows.length ? rows.map(renderAuthCard).join('') : '<div class="empty-state">暂无认证文件数据</div>';
                 loading.style.display = 'none';
