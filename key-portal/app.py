@@ -70,6 +70,32 @@ _auth_quota_cache = {
 }
 _auth_quota_cache_lock = threading.Lock()
 
+_persistent_floor_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 5,
+}
+_persistent_floor_cache_lock = threading.Lock()
+
+_usage_floor_delta_baseline = {
+    "data": {},
+}
+_usage_floor_delta_baseline_lock = threading.Lock()
+
+_user_key_timeseries_cache = {
+    "data": {},
+    "ttl": 5,
+}
+_user_key_timeseries_cache_lock = threading.Lock()
+
+_recent_hours_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 60,
+    "refreshing": False,
+}
+_recent_hours_cache_lock = threading.Lock()
+
 # User keys cache and file path
 USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
 KEY_POOL_FILE = os.path.join(os.path.dirname(__file__), "data", "key_pool.json")
@@ -396,6 +422,36 @@ def get_all_users_stats(include_models=True):
     return all_stats
 
 
+def get_all_users_total_stats_from_db():
+    user_keys_data = load_user_keys()
+    users = user_keys_data.get("users", {})
+    rows = db.get_all_users_total_usage()
+    stats = []
+    for row in rows:
+        email = row.get("user_email", "")
+        user_info = users.get(email, {})
+        registered_keys = [
+            entry.get("key", "")
+            for entry in find_user_key_entries(user_keys_data, email)
+            if entry.get("key", "")
+        ]
+        db_keys = row.get("api_keys", []) or []
+        display_keys = registered_keys or db_keys
+        stats.append({
+            "email": email,
+            "name": user_info.get("name", email),
+            "total_requests": row.get("total_requests", 0),
+            "success_count": row.get("success_count", 0),
+            "failure_count": row.get("failure_count", 0),
+            "total_tokens": row.get("total_tokens", 0),
+            "input_tokens": row.get("input_tokens", 0),
+            "output_tokens": row.get("output_tokens", 0),
+            "key_count": len(set(display_keys)) or row.get("num_keys", 0),
+            "keys": [{"key": key} for key in display_keys],
+        })
+    return stats
+
+
 def get_all_users_stats_by_period(period="month", live_today=False):
     """
     Get statistics for all users aggregated by period (month or year).
@@ -421,12 +477,18 @@ def get_all_users_stats_by_period(period="month", live_today=False):
         user_info = users.get(email, {})
         name = user_info.get("name", email)
         period_keys = [key for key in stat.get('api_keys', []) if key]
+        registered_keys = [
+            entry.get("key", "")
+            for entry in find_user_key_entries(user_keys_data, email)
+            if entry.get("key", "")
+        ]
+        display_keys = registered_keys or period_keys
         total_requests = stat['total_requests']
         total_tokens = stat['total_tokens']
         if live_today and period == "day" and stat['period'] == today:
             live_totals = [key_usage_for_date(live_apis.get(key, {}), today) for key in period_keys]
-            total_requests = sum(item.get("total_requests", 0) for item in live_totals)
-            total_tokens = sum(item.get("total_tokens", 0) for item in live_totals)
+            total_requests = max(total_requests, sum(item.get("total_requests", 0) for item in live_totals))
+            total_tokens = max(total_tokens, sum(item.get("total_tokens", 0) for item in live_totals))
 
         all_stats.append({
             "email": email,
@@ -434,8 +496,8 @@ def get_all_users_stats_by_period(period="month", live_today=False):
             "period": stat['period'],
             "total_requests": total_requests,
             "total_tokens": total_tokens,
-            "key_count": len(set(period_keys)),
-            "_api_keys": period_keys,
+            "key_count": len(set(display_keys)),
+            "_api_keys": display_keys,
         })
 
     return all_stats
@@ -561,6 +623,8 @@ def call_management_api(method, endpoint, data=None):
             resp = requests.get(url, headers=headers, timeout=30)
         elif method == "POST":
             resp = requests.post(url, headers=headers, json=data, timeout=30)
+        elif method == "PATCH":
+            resp = requests.patch(url, headers=headers, json=data, timeout=30)
         else:
             return None, f"Unsupported method: {method}"
 
@@ -573,10 +637,34 @@ def call_management_api(method, endpoint, data=None):
 
 
 
-CLIPROXY_NODES = [
+DEFAULT_CLIPROXY_NODES = [
     {"name": "old", "url": "http://127.0.0.1:8317"},
     {"name": "node-b", "url": "http://172.31.26.28:8317"},
 ]
+
+
+def load_cliproxy_nodes():
+    raw = os.environ.get("CLIPROXY_NODES_JSON", "").strip()
+    if raw:
+        try:
+            nodes = json.loads(raw)
+            if isinstance(nodes, list):
+                parsed = []
+                for item in nodes:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "").strip()
+                    url = str(item.get("url") or "").strip().rstrip("/")
+                    if name and url:
+                        parsed.append({"name": name, "url": url})
+                if parsed:
+                    return parsed
+        except Exception as e:
+            print(f"[Cluster] Invalid CLIPROXY_NODES_JSON, using defaults: {e}")
+    return [dict(node) for node in DEFAULT_CLIPROXY_NODES]
+
+
+CLIPROXY_NODES = load_cliproxy_nodes()
 
 
 def call_management_api_node(node, method, endpoint, data=None, timeout=30):
@@ -588,6 +676,8 @@ def call_management_api_node(node, method, endpoint, data=None, timeout=30):
             resp = requests.get(url, headers=headers, timeout=timeout)
         elif method == "POST":
             resp = requests.post(url, headers=headers, json=data, timeout=timeout)
+        elif method == "PATCH":
+            resp = requests.patch(url, headers=headers, json=data, timeout=timeout)
         else:
             return None, f"Unsupported method: {method}"
         if resp.status_code == 200:
@@ -1074,6 +1164,13 @@ def refresh_auth_stats_cache():
             _auth_stats_cache["refreshing"] = False
 
 
+def clear_auth_stats_cache():
+    with _auth_stats_cache_lock:
+        _auth_stats_cache["data"] = None
+        _auth_stats_cache["last_update"] = 0
+        _auth_stats_cache["refreshing"] = False
+
+
 def start_auth_stats_refresh():
     with _auth_stats_cache_lock:
         if _auth_stats_cache["refreshing"]:
@@ -1105,11 +1202,28 @@ def get_auth_stats_cached():
     return _with_auth_stats_cache_metadata(data, now, False)
 
 def call_management_api_all(method, endpoint, data=None, timeout=30):
-    results = []
-    for node in CLIPROXY_NODES:
+    def fetch(node):
         payload, err = call_management_api_node(node, method, endpoint, data=data, timeout=timeout)
-        results.append((node["name"], payload, err))
-    return results
+        if err:
+            print(f"[Cluster] {node['name']} {endpoint} failed: {err}")
+        return node["name"], payload, err
+
+    workers = min(max(len(CLIPROXY_NODES), 1), 8)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_by_index = {
+            executor.submit(fetch, node): index
+            for index, node in enumerate(CLIPROXY_NODES)
+        }
+        results = [None] * len(CLIPROXY_NODES)
+        for future in as_completed(future_by_index):
+            index = future_by_index[future]
+            node = CLIPROXY_NODES[index]
+            try:
+                results[index] = future.result()
+            except Exception as e:
+                results[index] = (node["name"], None, str(e))
+                print(f"[Cluster] {node['name']} {endpoint} failed: {e}")
+    return [result for result in results if result is not None]
 
 
 def get_cluster_usage():
@@ -1174,18 +1288,35 @@ def merge_usage_summary_payloads(results):
 
 
 def get_cluster_usage_summary():
-    results = []
-    for node in CLIPROXY_NODES:
+    def fetch(node):
         payload, err = call_management_api_node(node, "GET", "/v0/management/usage/summary", timeout=10)
         if err:
             payload, err = call_management_api_node(node, "GET", "/v0/management/usage", timeout=30)
-        results.append((node["name"], payload, err))
-    return merge_usage_summary_payloads(results)
+        if err:
+            print(f"[Cluster] {node['name']} usage summary failed: {err}")
+        return node["name"], payload, err
+
+    workers = min(max(len(CLIPROXY_NODES), 1), 8)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_by_index = {
+            executor.submit(fetch, node): index
+            for index, node in enumerate(CLIPROXY_NODES)
+        }
+        results = [None] * len(CLIPROXY_NODES)
+        for future in as_completed(future_by_index):
+            index = future_by_index[future]
+            node = CLIPROXY_NODES[index]
+            try:
+                results[index] = future.result()
+            except Exception as e:
+                results[index] = (node["name"], None, str(e))
+                print(f"[Cluster] {node['name']} usage summary failed: {e}")
+    return merge_usage_summary_payloads([result for result in results if result is not None])
 
 
 def build_usage_summary_response(payload):
     usage = usage_summary_from_payload(payload)
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = beijing_today()
     today_tokens = int((usage.get("tokens_by_day") or {}).get(today, 0) or 0)
     today_requests = int((usage.get("requests_by_day") or {}).get(today, 0) or 0)
     total_requests = int(usage.get("total_requests", 0) or 0)
@@ -1203,6 +1334,106 @@ def build_usage_summary_response(payload):
     }
 
 
+def clear_persistent_floor_cache():
+    with _persistent_floor_cache_lock:
+        _persistent_floor_cache["data"] = None
+        _persistent_floor_cache["last_update"] = 0
+
+
+def persistent_usage_summary_floor():
+    now = time.time()
+    with _persistent_floor_cache_lock:
+        cached = _persistent_floor_cache["data"]
+        if cached and (now - _persistent_floor_cache["last_update"]) < _persistent_floor_cache["ttl"]:
+            return dict(cached)
+
+    try:
+        today = beijing_today()
+        totals = {
+            "today": today,
+            "today_tokens": 0,
+            "today_requests": 0,
+            "total_tokens": 0,
+            "total_requests": 0,
+            "success_count": 0,
+            "failure_count": 0,
+        }
+        for row in db.get_daily_usage_history():
+            tokens = int(row.get("total_tokens", 0) or 0)
+            requests_count = int(row.get("total_requests", 0) or 0)
+            success_count = int(row.get("success_count", 0) or 0)
+            failure_count = int(row.get("failure_count", 0) or 0)
+            totals["total_tokens"] += tokens
+            totals["total_requests"] += requests_count
+            totals["success_count"] += success_count
+            totals["failure_count"] += failure_count
+            if row.get("date") == today:
+                totals["today_tokens"] = tokens
+                totals["today_requests"] = requests_count
+        user_totals = db.get_all_users_total_usage()
+        user_total_tokens = sum(int(item.get("total_tokens", 0) or 0) for item in user_totals)
+        user_total_requests = sum(int(item.get("total_requests", 0) or 0) for item in user_totals)
+        user_success_count = sum(int(item.get("success_count", 0) or 0) for item in user_totals)
+        user_failure_count = sum(int(item.get("failure_count", 0) or 0) for item in user_totals)
+        if user_total_tokens > totals["total_tokens"]:
+            totals["total_tokens"] = user_total_tokens
+            totals["total_requests"] = user_total_requests
+            totals["success_count"] = user_success_count
+            totals["failure_count"] = user_failure_count
+
+        today_user_rows = [item for item in db.get_user_usage_by_period("day") if item.get("period") == today]
+        today_user_tokens = sum(int(item.get("total_tokens", 0) or 0) for item in today_user_rows)
+        today_user_requests = sum(int(item.get("total_requests", 0) or 0) for item in today_user_rows)
+        totals["today_tokens"] = max(totals["today_tokens"], today_user_tokens)
+        totals["today_requests"] = max(totals["today_requests"], today_user_requests)
+
+        totals["failed_requests"] = totals["failure_count"]
+        with _persistent_floor_cache_lock:
+            _persistent_floor_cache["data"] = dict(totals)
+            _persistent_floor_cache["last_update"] = time.time()
+        return totals
+    except Exception as e:
+        print(f"[UsageSummary] Persistent floor unavailable: {e}")
+        return None
+
+
+def _apply_floor_with_live_delta(summary, persistent, key, baseline_key=None):
+    live_value = int(summary.get(key, 0) or 0)
+    floor_value = int(persistent.get(key, 0) or 0)
+    if live_value >= floor_value:
+        summary[key] = live_value
+        with _usage_floor_delta_baseline_lock:
+            _usage_floor_delta_baseline["data"].pop(baseline_key or key, None)
+        return
+
+    baseline_key = baseline_key or key
+    with _usage_floor_delta_baseline_lock:
+        baseline = _usage_floor_delta_baseline["data"].get(baseline_key)
+        if not baseline or baseline.get("floor") != floor_value:
+            baseline = {"floor": floor_value, "live": live_value}
+            _usage_floor_delta_baseline["data"][baseline_key] = baseline
+    summary[key] = floor_value + max(0, live_value - int(baseline.get("live", 0) or 0))
+
+
+def apply_persistent_usage_floor(summary):
+    persistent = persistent_usage_summary_floor()
+    if not persistent:
+        return summary
+    for key in ("total_tokens", "total_requests", "success_count", "failure_count", "failed_requests"):
+        _apply_floor_with_live_delta(summary, persistent, key)
+    if summary.get("today") == persistent.get("today"):
+        today = summary.get("today") or ""
+        for key in ("today_tokens", "today_requests"):
+            _apply_floor_with_live_delta(summary, persistent, key, f"{today}:{key}")
+    summary["persistent_floor"] = {
+        "total_tokens": persistent.get("total_tokens", 0),
+        "total_requests": persistent.get("total_requests", 0),
+        "today_tokens": persistent.get("today_tokens", 0),
+        "today_requests": persistent.get("today_requests", 0),
+    }
+    return summary
+
+
 def get_usage_summary_cached():
     now = time.time()
     with _usage_summary_cache_lock:
@@ -1215,6 +1446,7 @@ def get_usage_summary_cached():
     else:
         data = get_cluster_usage_summary()
         summary = build_usage_summary_response(data)
+    summary = apply_persistent_usage_floor(summary)
 
     now = time.time()
     with _usage_summary_cache_lock:
@@ -1313,8 +1545,151 @@ def key_usage_for_date(api_stats, date):
     return totals
 
 
+def recent_hour_empty_buckets(hours=48):
+    now_beijing = datetime.utcnow() + timedelta(hours=8)
+    end_hour = now_beijing.replace(minute=0, second=0, microsecond=0)
+    start_hour = end_hour - timedelta(hours=hours - 1)
+    buckets = {}
+    for index in range(hours):
+        hour_value = start_hour + timedelta(hours=index)
+        key = hour_value.strftime("%Y-%m-%d %H")
+        buckets[key] = {
+            "key": key,
+            "label": hour_value.strftime("%m-%d %H:00"),
+            "tokens": 0,
+            "requests": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "latency_sum_ms": 0,
+            "latency_count": 0,
+            "avg_latency_ms": None,
+        }
+    return buckets
+
+
+def finalize_recent_hour_buckets(buckets):
+    recent_hours = []
+    for bucket in buckets.values():
+        if bucket["latency_count"]:
+            bucket["avg_latency_ms"] = round(bucket["latency_sum_ms"] / bucket["latency_count"], 2)
+        bucket.pop("latency_sum_ms", None)
+        bucket.pop("latency_count", None)
+        recent_hours.append(bucket)
+    return recent_hours
+
+
+def recent_hour_fallback_from_summary(usage, hours=48):
+    buckets = recent_hour_empty_buckets(hours)
+    tokens_by_hour = usage.get("tokens_by_hour", {}) or {}
+    requests_by_hour = usage.get("requests_by_hour", {}) or {}
+    success_by_hour = usage.get("success_by_hour", {}) or {}
+    failure_by_hour = usage.get("failure_by_hour", {}) or {}
+    avg_latency_ms_by_hour = usage.get("avg_latency_ms_by_hour", {}) or {}
+    for bucket in list(buckets.values())[-24:]:
+        utc_hour = (int(bucket["key"][-2:]) - 8) % 24
+        hour_key = f"{utc_hour:02d}"
+        bucket["tokens"] = int(tokens_by_hour.get(hour_key, 0) or 0)
+        bucket["requests"] = int(requests_by_hour.get(hour_key, 0) or 0)
+        bucket["success_count"] = int(success_by_hour.get(hour_key, 0) or 0)
+        bucket["failure_count"] = int(failure_by_hour.get(hour_key, 0) or 0)
+        bucket["avg_latency_ms"] = avg_latency_ms_by_hour.get(hour_key)
+    return finalize_recent_hour_buckets(buckets)
+
+
+def build_recent_hour_usage(payload, hours=48):
+    buckets = recent_hour_empty_buckets(hours)
+    start_hour = datetime.strptime(next(iter(buckets)), "%Y-%m-%d %H")
+    end_hour = datetime.strptime(next(reversed(buckets)), "%Y-%m-%d %H")
+    start_utc_key = (start_hour - timedelta(hours=8)).strftime("%Y-%m-%dT%H")
+    end_utc_key = (end_hour - timedelta(hours=8)).strftime("%Y-%m-%dT%H")
+
+    for api_stats in ((payload or {}).get("usage", {}).get("apis", {}) or {}).values():
+        for model_stats in (api_stats.get("models", {}) or {}).values():
+            for detail in model_stats.get("details", []) or []:
+                if not isinstance(detail, dict):
+                    continue
+                timestamp = str(detail.get("timestamp") or "")
+                timestamp_hour = timestamp[:13]
+                if timestamp_hour < start_utc_key or timestamp_hour > end_utc_key:
+                    continue
+                parsed = parse_detail_time_utc(timestamp)
+                if not parsed:
+                    continue
+                beijing_time = parsed + timedelta(hours=8)
+                hour_value = beijing_time.replace(minute=0, second=0, microsecond=0)
+                if hour_value < start_hour or hour_value > end_hour:
+                    continue
+                bucket = buckets.get(hour_value.strftime("%Y-%m-%d %H"))
+                if not bucket:
+                    continue
+                tokens_info = detail.get("tokens", {}) or {}
+                failed_value = detail.get("failed", False)
+                failed = failed_value.lower() == "true" if isinstance(failed_value, str) else bool(failed_value)
+                bucket["requests"] += 1
+                if failed:
+                    bucket["failure_count"] += 1
+                else:
+                    bucket["success_count"] += 1
+                bucket["tokens"] += int(tokens_info.get("total_tokens", 0) or 0)
+                try:
+                    latency_ms = int(detail.get("latency_ms") or 0)
+                except Exception:
+                    latency_ms = 0
+                if latency_ms > 0:
+                    bucket["latency_sum_ms"] += latency_ms
+                    bucket["latency_count"] += 1
+
+    return finalize_recent_hour_buckets(buckets)
+
+
+def refresh_recent_hours_cache():
+    try:
+        full_usage, err = get_usage_stats_cached()
+        if err or not full_usage:
+            return
+        recent_hours = build_recent_hour_usage(full_usage, hours=48)
+        with _recent_hours_cache_lock:
+            _recent_hours_cache["data"] = recent_hours
+            _recent_hours_cache["last_update"] = time.time()
+    finally:
+        with _recent_hours_cache_lock:
+            _recent_hours_cache["refreshing"] = False
+
+
+def start_recent_hours_refresh():
+    with _recent_hours_cache_lock:
+        if _recent_hours_cache["refreshing"]:
+            return False
+        _recent_hours_cache["refreshing"] = True
+    threading.Thread(target=refresh_recent_hours_cache, daemon=True).start()
+    return True
+
+
+def get_recent_hours_cached(summary_usage):
+    now = time.time()
+    with _recent_hours_cache_lock:
+        cached = _recent_hours_cache["data"]
+        last_update = _recent_hours_cache["last_update"]
+        ttl = _recent_hours_cache["ttl"]
+    if cached and (now - last_update) < ttl:
+        return cached, False
+    if cached:
+        start_recent_hours_refresh()
+        return cached, True
+    if _stats_cache["data"] and (now - _stats_cache["last_update"]) < _stats_cache["ttl"]:
+        recent_hours = build_recent_hour_usage(_stats_cache["data"], hours=48)
+        with _recent_hours_cache_lock:
+            _recent_hours_cache["data"] = recent_hours
+            _recent_hours_cache["last_update"] = time.time()
+        return recent_hours, False
+    start_recent_hours_refresh()
+    return finalize_recent_hour_buckets(recent_hour_empty_buckets(48)), True
+
+
 def build_auth_stats():
-    usage_payload = get_cluster_usage()
+    usage_payload, usage_err = get_usage_stats_cached()
+    if usage_err or not usage_payload:
+        usage_payload = {"usage": {}, "node_errors": [{"node": "cluster", "error": usage_err or "usage unavailable"}]}
     files, auth_errors = get_cluster_auth_files()
     now = datetime.utcnow()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1396,6 +1771,8 @@ def build_auth_stats():
         stats[stats_key] = {
             "node": node,
             "account": account,
+            "auth_id": f.get("id", ""),
+            "auth_name": f.get("name", ""),
             "auth_index": f.get("auth_index", ""),
             "provider": f.get("provider") or f.get("type", ""),
             "plan_type": (f.get("id_token") or {}).get("plan_type", ""),
@@ -1432,7 +1809,7 @@ def build_auth_stats():
         if account:
             account_map[account] = stats[stats_key]
         provider = str(stats[stats_key]["provider"] or "").strip().lower()
-        if provider in ("codex", "claude") and not stats[stats_key]["disabled"]:
+        if provider in ("codex", "claude"):
             node_cfg = node_by_name.get(node)
             if node_cfg:
                 quota_sources[stats_key] = (node_cfg, f)
@@ -1716,6 +2093,7 @@ def sync_usage_from_api():
             }
 
         save_usage_history()
+        clear_persistent_floor_cache()
 
         print(f"[UsageSync] Synced successfully: {stats.get('user_records', 0)} user records, "
               f"{stats.get('daily_records', 0)} days, "
@@ -1775,7 +2153,7 @@ def get_usage_history_aggregated():
 
 
 def apply_live_today_usage(data, usage):
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = beijing_today()
     tokens_by_day = usage.get("tokens_by_day", {}) or {}
     requests_by_day = usage.get("requests_by_day", {}) or {}
 
@@ -1804,19 +2182,19 @@ def apply_live_today_usage(data, usage):
     old_success = int(row.get("success_count", 0) or 0)
     old_failure = int(row.get("failure_count", 0) or 0)
 
-    row["total_tokens"] = live_tokens
-    row["total_requests"] = live_requests
+    row["total_tokens"] = max(old_tokens, live_tokens)
+    row["total_requests"] = max(old_requests, live_requests)
 
     success_by_hour = usage.get("success_by_hour", {}) or {}
     failure_by_hour = usage.get("failure_by_hour", {}) or {}
     live_success = sum(int(value or 0) for value in success_by_hour.values())
     live_failure = sum(int(value or 0) for value in failure_by_hour.values())
     if live_success + live_failure == live_requests:
-        row["success_count"] = live_success
-        row["failure_count"] = live_failure
+        row["success_count"] = max(old_success, live_success)
+        row["failure_count"] = max(old_failure, live_failure)
 
-    token_delta = live_tokens - old_tokens
-    request_delta = live_requests - old_requests
+    token_delta = int(row.get("total_tokens", 0) or 0) - old_tokens
+    request_delta = int(row.get("total_requests", 0) or 0) - old_requests
     success_delta = int(row.get("success_count", 0) or 0) - old_success
     failure_delta = int(row.get("failure_count", 0) or 0) - old_failure
 
@@ -1853,8 +2231,20 @@ def snapshot_totals(snapshot_data):
 def load_snapshot_file(path):
     if not path or not os.path.exists(path):
         return None
-    with open(path, "r") as f:
-        return json.load(f)
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[Snapshot] Ignoring invalid snapshot {path}: {e}")
+        return None
+
+
+def write_snapshot_file(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp_path, path)
 
 
 def import_snapshot_to_node(node, snapshot_data, label):
@@ -1902,15 +2292,11 @@ def export_node_snapshot(node):
             else:
                 return False
 
-    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+    write_snapshot_file(path, data)
 
     # Keep the legacy single-node file for compatibility with older tooling.
     if node_name == CLIPROXY_NODES[0]["name"]:
-        os.makedirs(os.path.dirname(SNAPSHOT_FILE), exist_ok=True)
-        with open(SNAPSHOT_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        write_snapshot_file(SNAPSHOT_FILE, data)
 
     print(f"[Snapshot] Exported {node_name}: {current_tokens:,} tokens, {current_requests:,} requests -> {path}")
     return True
@@ -2165,6 +2551,37 @@ def get_auth_stats():
     return jsonify(get_auth_stats_cached())
 
 
+@app.route("/api/auth-stats/toggle-auth", methods=["POST"])
+def toggle_auth_file_status():
+    body = request.get_json(silent=True) or {}
+    node_name = str(body.get("node") or "").strip()
+    auth_name = str(body.get("auth_id") or body.get("auth_name") or body.get("auth_index") or "").strip()
+    disabled = body.get("disabled")
+    if not node_name:
+        return jsonify({"error": "node is required"}), 400
+    if not auth_name:
+        return jsonify({"error": "auth_id or auth_name is required"}), 400
+    if not isinstance(disabled, bool):
+        return jsonify({"error": "disabled must be boolean"}), 400
+    node = next((item for item in CLIPROXY_NODES if item.get("name") == node_name), None)
+    if not node:
+        return jsonify({"error": "node not found"}), 404
+    data, err = call_management_api_node(node, "PATCH", "/v0/management/auth-files/status", {
+        "name": auth_name,
+        "disabled": disabled,
+    }, timeout=30)
+    if err:
+        return jsonify({"error": err}), 502
+    clear_auth_stats_cache()
+    return jsonify({
+        "status": "ok",
+        "node": node_name,
+        "auth_name": auth_name,
+        "disabled": disabled,
+        "upstream": data or {},
+    })
+
+
 @app.route("/api/keys")
 def get_keys():
     """Get all registered keys and their status."""
@@ -2212,6 +2629,10 @@ def get_usage_history():
     data["success_by_hour"] = usage.get("success_by_hour", {})
     data["failure_by_hour"] = usage.get("failure_by_hour", {})
     data["avg_latency_ms_by_hour"] = usage.get("avg_latency_ms_by_hour", {})
+
+    recent_hours, recent_hours_refreshing = get_recent_hours_cached(usage)
+    data["recent_hours"] = recent_hours
+    data["recent_hours_refreshing"] = recent_hours_refreshing
 
     return jsonify(data)
 
@@ -2405,7 +2826,7 @@ def build_all_users_stats_response(aggregation, live_today=False):
         stats = get_all_users_stats_by_period("year")
     else:
         aggregation = "total"
-        stats = get_all_users_stats(include_models=False)
+        stats = get_all_users_total_stats_from_db()
 
     total_users = len(set(s.get("email", "") for s in stats))
     total_requests = sum(s.get("total_requests", 0) for s in stats)
@@ -2614,6 +3035,13 @@ def api_get_user_key_timeseries():
     if email and owner and owner != email and owner.lower() != email.lower():
         return jsonify({"error": "该 Key 不属于该用户"}), 403
 
+    cache_key = f"{owner or email}|{api_key}|{date}"
+    now = time.time()
+    with _user_key_timeseries_cache_lock:
+        cached = _user_key_timeseries_cache["data"].get(cache_key)
+        if cached and (now - cached["last_update"]) < _user_key_timeseries_cache["ttl"]:
+            return jsonify(cached["data"])
+
     stats_data, err = get_usage_stats_cached()
     if err:
         return jsonify({"error": err}), 500
@@ -2666,7 +3094,7 @@ def api_get_user_key_timeseries():
         "output_tokens": sum(bucket["output_tokens"] for bucket in buckets),
     }
 
-    return jsonify({
+    result = {
         "email": owner,
         "key": api_key,
         "label": key_info.get("label", ""),
@@ -2674,7 +3102,13 @@ def api_get_user_key_timeseries():
         "timezone": "Asia/Shanghai",
         "buckets": buckets,
         "totals": totals,
-    })
+    }
+    with _user_key_timeseries_cache_lock:
+        _user_key_timeseries_cache["data"][cache_key] = {
+            "data": result,
+            "last_update": time.time(),
+        }
+    return jsonify(result)
 
 
 # WebSocket event handlers

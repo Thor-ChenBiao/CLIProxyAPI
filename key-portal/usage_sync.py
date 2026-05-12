@@ -4,7 +4,24 @@ Handles syncing usage data from CLIProxyAPI Management API to database.
 """
 
 from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 import database as db
+
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def usage_date_from_timestamp(timestamp):
+    text = str(timestamp or "").strip()
+    if not text:
+        return ""
+    try:
+        iso_text = text.replace("Z", "+00:00") if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(iso_text)
+        if parsed.tzinfo is None:
+            return parsed.strftime("%Y-%m-%d")
+        return parsed.astimezone(BEIJING_TZ).strftime("%Y-%m-%d")
+    except Exception:
+        return text.split("T")[0] if "T" in text else text[:10]
 
 
 def sync_usage_to_database(api_data, key_to_user_mapping):
@@ -66,10 +83,9 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                     if not timestamp:
                         continue
 
-                    # Extract date (YYYY-MM-DD)
-                    try:
-                        date = timestamp.split('T')[0]
-                    except:
+                    # Extract Beijing-local date (YYYY-MM-DD)
+                    date = usage_date_from_timestamp(timestamp)
+                    if not date:
                         continue
 
                     failed = detail.get('failed', False)

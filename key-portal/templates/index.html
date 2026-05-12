@@ -445,7 +445,7 @@
         // Chart state
         let usageChart = null;
         let requestQualityChart = null;
-        let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {} };
+        let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {}, recent_hours: [] };
         let currentView = 'hour';
         let usageSummaryPollTimer = null;
         let usageSummaryLoading = false;
@@ -526,12 +526,19 @@
         }
 
         function getRecentBeijingHourBuckets() {
-            const currentBeijingHour = (new Date().getUTCHours() + 8) % 24;
-            return Array.from({ length: 24 }, (_, i) => {
-                const beijingHour = (currentBeijingHour + i + 1) % 24;
-                const utcHour = (beijingHour + 16) % 24;
+            if (Array.isArray(usageData.recent_hours) && usageData.recent_hours.length > 0) {
+                return usageData.recent_hours;
+            }
+            return Array.from({ length: 48 }, (_, i) => {
+                const offset = 47 - i;
+                const utcDate = new Date(Date.now() - offset * 60 * 60 * 1000);
+                const beijingDate = new Date(utcDate.getTime() + 8 * 60 * 60 * 1000);
+                const beijingMonth = String(beijingDate.getUTCMonth() + 1).padStart(2, '0');
+                const beijingDay = String(beijingDate.getUTCDate()).padStart(2, '0');
+                const beijingHour = beijingDate.getUTCHours();
+                const utcHour = utcDate.getUTCHours();
                 return {
-                    label: String(beijingHour).padStart(2, '0') + ':00',
+                    label: `${beijingMonth}-${beijingDay} ${String(beijingHour).padStart(2, '0')}:00`,
                     utcKey: String(utcHour).padStart(2, '0')
                 };
             });
@@ -557,8 +564,8 @@
             if (currentView === 'hour') {
                 const hourBuckets = getRecentBeijingHourBuckets();
                 labels = hourBuckets.map(h => h.label);
-                tokenData = hourBuckets.map(h => usageData.tokens_by_hour?.[h.utcKey] || 0);
-                requestData = hourBuckets.map(h => usageData.requests_by_hour?.[h.utcKey] || 0);
+                tokenData = hourBuckets.map(h => h.tokens ?? usageData.tokens_by_hour?.[h.utcKey] ?? 0);
+                requestData = hourBuckets.map(h => h.requests ?? usageData.requests_by_hour?.[h.utcKey] ?? 0);
                 hoursForRate = hourBuckets.map(() => 1);
             } else if (currentView === 'day') {
                 // Last 30 days
@@ -711,10 +718,10 @@
             if (currentView === 'hour') {
                 const hourBuckets = getRecentBeijingHourBuckets();
                 labels = hourBuckets.map(h => h.label);
-                requestData = hourBuckets.map(h => usageData.requests_by_hour?.[h.utcKey] || 0);
-                successData = hourBuckets.map(h => usageData.success_by_hour?.[h.utcKey] || 0);
-                failureData = hourBuckets.map(h => usageData.failure_by_hour?.[h.utcKey] || 0);
-                latencyData = hourBuckets.map(h => usageData.avg_latency_ms_by_hour?.[h.utcKey] ?? null);
+                requestData = hourBuckets.map(h => h.requests ?? usageData.requests_by_hour?.[h.utcKey] ?? 0);
+                successData = hourBuckets.map(h => h.success_count ?? usageData.success_by_hour?.[h.utcKey] ?? 0);
+                failureData = hourBuckets.map(h => h.failure_count ?? usageData.failure_by_hour?.[h.utcKey] ?? 0);
+                latencyData = hourBuckets.map(h => h.avg_latency_ms ?? usageData.avg_latency_ms_by_hour?.[h.utcKey] ?? null);
                 requestLabel = '每小时请求数';
             } else if (currentView === 'day') {
                 const sorted = [...(usageData.history || [])].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);

@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS user_usage (
 CREATE INDEX IF NOT EXISTS idx_user_usage_date ON user_usage(date);
 CREATE INDEX IF NOT EXISTS idx_user_usage_email ON user_usage(user_email);
 CREATE INDEX IF NOT EXISTS idx_user_usage_date_email ON user_usage(date, user_email);
+CREATE INDEX IF NOT EXISTS idx_user_usage_api_key ON user_usage(api_key);
+CREATE INDEX IF NOT EXISTS idx_user_usage_email_date ON user_usage(user_email, date);
+CREATE INDEX IF NOT EXISTS idx_user_usage_date_api_key ON user_usage(date, api_key);
 
 
 -- Table 3: Request details (可选：存储详细的请求记录，用于审计)

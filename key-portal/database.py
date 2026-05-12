@@ -28,8 +28,22 @@ def init_database():
         print("[DB] Database not found, please run migrate_to_sqlite.py first")
         return False
 
+    ensure_indexes()
     print(f"[DB] Using database: {DB_FILE}")
     return True
+
+
+def ensure_indexes():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_date ON user_usage(date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_email ON user_usage(user_email)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_date_email ON user_usage(date, user_email)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_api_key ON user_usage(api_key)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_email_date ON user_usage(user_email, date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_date_api_key ON user_usage(date, api_key)")
+        conn.commit()
 
 
 def upsert_daily_usage(date, total_requests, success_count, failure_count,
@@ -287,7 +301,8 @@ def get_all_users_total_usage():
                 SUM(input_tokens) as input_tokens,
                 SUM(output_tokens) as output_tokens,
                 COUNT(DISTINCT api_key) as num_keys,
-                COUNT(DISTINCT date) as num_days
+                COUNT(DISTINCT date) as num_days,
+                GROUP_CONCAT(DISTINCT api_key) as api_keys
             FROM user_usage
             GROUP BY user_email
             ORDER BY total_tokens DESC
@@ -305,6 +320,7 @@ def get_all_users_total_usage():
                 'output_tokens': row['output_tokens'] or 0,
                 'num_keys': row['num_keys'] or 0,
                 'num_days': row['num_days'] or 0,
+                'api_keys': row['api_keys'].split(',') if row['api_keys'] else [],
             })
 
         return results
