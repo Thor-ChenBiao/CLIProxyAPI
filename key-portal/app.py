@@ -1417,10 +1417,11 @@ def _sum_beijing_today(usage, beijing_today_str):
     return tokens, requests
 
 
-def token_cost_usd(input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0):
+def token_cost_usd(input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0, unknown_tokens=0):
     input_tokens = int(input_tokens or 0)
     cached_tokens = int(cached_tokens or 0)
-    billable_input_tokens = max(0, input_tokens - cached_tokens)
+    unknown_tokens = int(unknown_tokens or 0)
+    billable_input_tokens = max(0, input_tokens - cached_tokens) + unknown_tokens
     return (
         billable_input_tokens * TOKEN_PRICING_USD_PER_1M["input"] +
         int(output_tokens or 0) * TOKEN_PRICING_USD_PER_1M["output"] +
@@ -1437,7 +1438,7 @@ def build_token_breakdown(total_tokens, input_tokens=0, output_tokens=0, cached_
     reasoning_tokens = int(reasoning_tokens or 0)
     known_tokens = input_tokens + output_tokens + reasoning_tokens
     unknown_tokens = max(0, total_tokens - known_tokens)
-    cost_usd = token_cost_usd(input_tokens, output_tokens, cached_tokens, reasoning_tokens)
+    cost_usd = token_cost_usd(input_tokens, output_tokens, cached_tokens, reasoning_tokens, unknown_tokens)
     return {
         "total_tokens": total_tokens,
         "input_tokens": input_tokens,
@@ -1496,6 +1497,38 @@ def token_breakdown_totals_from_db(today):
     return totals
 
 
+def estimate_beijing_today_breakdown_from_utc_day(today_tokens):
+    from datetime import datetime, timedelta
+    utc_now = datetime.utcnow()
+    beijing_now = utc_now + timedelta(hours=8)
+    beijing_today_str = beijing_now.strftime("%Y-%m-%d")
+    utc_now_date = utc_now.strftime("%Y-%m-%d")
+    if utc_now_date == beijing_today_str:
+        return None
+
+    utc_day = None
+    for row in db.get_daily_usage_history():
+        if row.get("date") == utc_now_date:
+            utc_day = row
+            break
+    if not utc_day:
+        return None
+
+    utc_total_tokens = int(utc_day.get("total_tokens", 0) or 0)
+    today_tokens = int(today_tokens or 0)
+    if utc_total_tokens <= 0 or today_tokens <= 0:
+        return None
+
+    fraction = min(today_tokens / utc_total_tokens, 1.0)
+    return {
+        "total_tokens": today_tokens,
+        "input_tokens": int(int(utc_day.get("input_tokens", 0) or 0) * fraction),
+        "output_tokens": int(int(utc_day.get("output_tokens", 0) or 0) * fraction),
+        "cached_tokens": int(int(utc_day.get("cached_tokens", 0) or 0) * fraction),
+        "reasoning_tokens": int(int(utc_day.get("reasoning_tokens", 0) or 0) * fraction),
+    }
+
+
 def attach_token_breakdown(summary):
     today = summary.get("today") or beijing_today()
     try:
@@ -1507,14 +1540,21 @@ def attach_token_breakdown(summary):
             "total": {"total_tokens": summary.get("total_tokens", 0)},
         }
 
-    totals["today"]["total_tokens"] = max(int(summary.get("today_tokens", 0) or 0), int(totals["today"].get("total_tokens", 0) or 0))
+    summary_today_tokens = int(summary.get("today_tokens", 0) or 0)
+    totals["today"]["total_tokens"] = max(summary_today_tokens, int(totals["today"].get("total_tokens", 0) or 0))
+    today_known_tokens = int(totals["today"].get("input_tokens", 0) or 0) + int(totals["today"].get("output_tokens", 0) or 0) + int(totals["today"].get("reasoning_tokens", 0) or 0)
+    if summary_today_tokens > 0 and today_known_tokens * 10 < summary_today_tokens:
+        estimated_today = estimate_beijing_today_breakdown_from_utc_day(summary_today_tokens)
+        if estimated_today:
+            totals["today"] = estimated_today
+
     totals["total"]["total_tokens"] = max(int(summary.get("total_tokens", 0) or 0), int(totals["total"].get("total_tokens", 0) or 0))
     summary["token_breakdown"] = {
         "today": build_token_breakdown(**totals["today"]),
         "total": build_token_breakdown(**totals["total"]),
         "pricing": {
             "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
-            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
+            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价；未分类 token 暂按 input 价估算。",
         },
     }
     return summary
