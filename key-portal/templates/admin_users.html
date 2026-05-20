@@ -78,7 +78,9 @@
         #usersTable .col-email { width: 34%; }
         #usersTable .col-keys { width: 96px; white-space: nowrap; }
         #usersTable .col-requests { width: 120px; white-space: nowrap; }
-        #usersTable .col-tokens { width: 150px; white-space: nowrap; }
+        #usersTable .col-tokens { width: 190px; white-space: nowrap; }
+        .token-detail { color: #6b7280; font-size: 11px; margin-top: 4px; line-height: 1.45; white-space: normal; }
+        .token-cost { color: #0f766e; font-size: 11px; font-weight: 700; margin-top: 2px; }
         .user-row {
             cursor: pointer;
             transition: background 0.15s;
@@ -242,6 +244,34 @@
             padding: 7px 9px;
             font-size: 14px;
             background: white;
+        }
+        .chart-range-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .range-btn {
+            padding: 5px 12px;
+            border: 1px solid #cfd5f5;
+            background: white;
+            color: #667eea;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.15s;
+        }
+        .range-btn:hover { background: #f0f2ff; }
+        .range-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        .range-sep {
+            color: #aaa;
+            font-size: 13px;
+            margin: 0 2px;
         }
         .chart-metrics {
             display: grid;
@@ -412,14 +442,18 @@
         function exportToExcel() {
             const isAggregated = currentAggregation === 'day' || currentAggregation === 'month' || currentAggregation === 'year';
             let csv = isAggregated
-                ? 'Period,Identifier,Email,Keys Count,Total Requests,Total Tokens\n'
-                : 'Identifier,Email,Keys Count,Total Requests,Total Tokens\n';
+                ? 'Period,Identifier,Email,Keys Count,Total Requests,Total Tokens,Input Tokens,Output Tokens,Estimated Cost USD\n'
+                : 'Identifier,Email,Keys Count,Total Requests,Total Tokens,Input Tokens,Output Tokens,Estimated Cost USD\n';
 
             allUsersData.forEach(user => {
+                const breakdown = user.token_breakdown || {};
+                const inputTokens = user.input_tokens ?? breakdown.input_tokens ?? 0;
+                const outputTokens = user.output_tokens ?? breakdown.output_tokens ?? 0;
+                const costUsd = user.estimated_cost_usd ?? breakdown.cost_usd ?? 0;
                 if (isAggregated) {
-                    csv += `"${user.period || ''}","${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0}\n`;
+                    csv += `"${user.period || ''}","${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0},${inputTokens},${outputTokens},${costUsd}\n`;
                 } else {
-                    csv += `"${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0}\n`;
+                    csv += `"${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0},${inputTokens},${outputTokens},${costUsd}\n`;
                 }
             });
 
@@ -436,6 +470,34 @@
 
         function formatNumber(num) {
             return Number(num || 0).toLocaleString();
+        }
+
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(item) {
+            if (!item) return 'Input 0 · Output 0 · Cache 0';
+            const parts = [
+                'Input ' + formatNumber(item.input_tokens),
+                'Output ' + formatNumber(item.output_tokens),
+                'Cache ' + formatNumber(item.cached_tokens)
+            ];
+            if (Number(item.reasoning_tokens || 0) > 0) parts.push('Reasoning ' + formatNumber(item.reasoning_tokens));
+            if (Number(item.unknown_tokens || 0) > 0) parts.push('未分类 ' + formatNumber(item.unknown_tokens));
+            return parts.join(' · ');
+        }
+
+        function tokenUsageHtml(item) {
+            const breakdown = item?.token_breakdown || item || {};
+            return `
+                <div>${formatNumber(item?.total_tokens ?? breakdown.total_tokens)}</div>
+                <div class="token-detail">${escapeHtml(tokenBreakdownText(breakdown))}</div>
+                <div class="token-cost">估算 ${formatCost(item?.estimated_cost_usd ?? breakdown.cost_usd, 'usd')}</div>
+            `;
         }
 
         function escapeHtml(value) {
@@ -464,6 +526,17 @@
             if (rank === 2) return '🥈';
             if (rank === 3) return '🥉';
             return rank;
+        }
+
+        const MODEL_GROUP_LABELS = {
+            common: '通用 Key',
+            claude: 'Claude Key',
+            gemini: 'Gemini Key',
+            deepseek: 'DeepSeek Key'
+        };
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
         }
 
         function maskedKey(key) {
@@ -510,7 +583,7 @@
                 document.getElementById('totalUsers').textContent = formatNumber(data.summary?.total_users);
                 document.getElementById('totalKeys').textContent = formatNumber(data.summary?.total_keys);
                 document.getElementById('totalRequests').textContent = formatNumber(data.summary?.total_requests);
-                document.getElementById('totalTokens').textContent = formatNumber(data.summary?.total_tokens);
+                document.getElementById('totalTokens').innerHTML = tokenUsageHtml(data.summary || {});
 
                 renderTable(data.summary || {});
                 loading.style.display = 'none';
@@ -533,7 +606,7 @@
                 document.getElementById('totalUsers').textContent = formatNumber(data.summary?.total_users);
                 document.getElementById('totalKeys').textContent = formatNumber(data.summary?.total_keys);
                 document.getElementById('totalRequests').textContent = formatNumber(data.summary?.total_requests);
-                document.getElementById('totalTokens').textContent = formatNumber(data.summary?.total_tokens);
+                document.getElementById('totalTokens').innerHTML = tokenUsageHtml(data.summary || {});
                 renderTable(data.summary || {});
             } catch (error) {
                 console.error('Refresh live day stats error:', error);
@@ -589,7 +662,7 @@
                         <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
                         <td class="col-keys">${formatNumber(user.key_count)}</td>
                         <td class="col-requests">${formatNumber(user.total_requests)}</td>
-                        <td class="col-tokens">${formatNumber(user.total_tokens)}</td>
+                        <td class="col-tokens">${tokenUsageHtml(user)}</td>
                         <td>
                             ${percentage}%
                             <div class="progress-bar"><div class="progress-fill" style="width: ${percentage}%"></div></div>
@@ -602,7 +675,7 @@
                         <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
                         <td class="col-keys">${formatNumber(user.key_count)}</td>
                         <td class="col-requests">${formatNumber(user.total_requests)}</td>
-                        <td class="col-tokens">${formatNumber(user.total_tokens)}</td>
+                        <td class="col-tokens">${tokenUsageHtml(user)}</td>
                         <td>
                             ${percentage}%
                             <div class="progress-bar"><div class="progress-fill" style="width: ${percentage}%"></div></div>
@@ -700,6 +773,7 @@
                             <tr>
                                 <th>Key</th>
                                 <th>标签</th>
+                                <th>Key 类型</th>
                                 <th>请求数</th>
                                 <th>Token 使用</th>
                                 <th>成功 / 失败</th>
@@ -720,15 +794,16 @@
                 <tr class="key-row${expanded ? ' expanded' : ''}" data-api-key="${escapeAttr(apiKey.key)}">
                     <td><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="key-code" title="${escapeAttr(maskedKey(apiKey.key))}">${escapeHtml(maskedKey(apiKey.key))}</span></td>
                     <td>${escapeHtml(apiKey.label || '')}</td>
+                    <td>${escapeHtml(modelGroupLabel(apiKey.model_group || 'common'))}</td>
                     <td>${formatNumber(apiKey.total_requests)}</td>
-                    <td>${formatNumber(apiKey.total_tokens)}</td>
+                    <td>${tokenUsageHtml(apiKey)}</td>
                     <td>${formatNumber(success)} / ${formatNumber(failure)}</td>
                 </tr>
             `;
             if (!expanded) return keyRow;
             return keyRow + `
                 <tr class="chart-detail-row">
-                    <td colspan="5">${renderChartPanel(rowKey, user, apiKey.key)}</td>
+                    <td colspan="6">${renderChartPanel(rowKey, user, apiKey.key)}</td>
                 </tr>
             `;
         }
@@ -740,11 +815,45 @@
                     toggleKey(rowKey, user, keyRow.dataset.apiKey);
                 });
             });
-            detailRow.querySelectorAll('.chart-date-input').forEach(input => {
+            detailRow.querySelectorAll('.chart-range-btn').forEach(btn => {
+                btn.addEventListener('click', event => {
+                    event.stopPropagation();
+                    const apiKey = btn.dataset.apiKey;
+                    const range = btn.dataset.range;
+                    const key = chartStateKey(rowKey, apiKey);
+                    const state = expandedKeys.get(key);
+                    if (state) state.rangeLabel = range;
+                    let dateFrom, dateTo;
+                    if (range === '1d') {
+                        dateFrom = todayIso();
+                        dateTo = todayIso();
+                    } else if (range === '7d') {
+                        dateFrom = daysAgo(6);
+                        dateTo = todayIso();
+                    } else if (range === '30d') {
+                        dateFrom = daysAgo(29);
+                        dateTo = todayIso();
+                    }
+                    if (dateFrom) loadKeyTimeseries(rowKey, user, apiKey, dateFrom, dateTo);
+                });
+            });
+            detailRow.querySelectorAll('.chart-date-from, .chart-date-to').forEach(input => {
                 input.addEventListener('click', event => event.stopPropagation());
                 input.addEventListener('change', event => {
                     event.stopPropagation();
-                    loadKeyTimeseries(rowKey, user, input.dataset.apiKey, input.value);
+                    const apiKey = input.dataset.apiKey;
+                    const key = chartStateKey(rowKey, apiKey);
+                    const state = expandedKeys.get(key);
+                    if (!state) return;
+                    const panel = input.closest('.chart-panel');
+                    const fromInput = panel.querySelector('.chart-date-from');
+                    const toInput = panel.querySelector('.chart-date-to');
+                    const dateFrom = fromInput.value;
+                    const dateTo = toInput.value;
+                    if (dateFrom && dateTo) {
+                        state.rangeLabel = 'custom';
+                        loadKeyTimeseries(rowKey, user, apiKey, dateFrom, dateTo);
+                    }
                 });
             });
             bindChartTooltips(detailRow);
@@ -776,6 +885,12 @@
             });
         }
 
+        function daysAgo(n) {
+            const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+            d.setDate(d.getDate() - n);
+            return d.toISOString().slice(0, 10);
+        }
+
         function toggleKey(rowKey, user, apiKey) {
             const key = chartStateKey(rowKey, apiKey);
             if (expandedKeys.has(key)) {
@@ -784,25 +899,28 @@
                 return;
             }
 
-            const date = currentAggregation === 'day' ? (user.period || todayIso()) : todayIso();
-            expandedKeys.set(key, { loading: true, error: '', data: null, date });
+            const dateFrom = currentAggregation === 'day' ? (user.period || todayIso()) : todayIso();
+            const dateTo = dateFrom;
+            expandedKeys.set(key, { loading: true, error: '', data: null, dateFrom, dateTo, rangeLabel: '1d' });
             renderTable(currentSummary());
-            loadKeyTimeseries(rowKey, user, apiKey, date);
+            loadKeyTimeseries(rowKey, user, apiKey, dateFrom, dateTo);
         }
 
-        async function loadKeyTimeseries(rowKey, user, apiKey, date) {
+        async function loadKeyTimeseries(rowKey, user, apiKey, dateFrom, dateTo) {
             const key = chartStateKey(rowKey, apiKey);
             const state = expandedKeys.get(key) || {};
             state.loading = true;
             state.error = '';
-            state.date = date;
+            state.dateFrom = dateFrom;
+            state.dateTo = dateTo;
             expandedKeys.set(key, state);
             renderTable(currentSummary());
 
             const params = new URLSearchParams({
                 email: user.email || '',
                 api_key: apiKey,
-                date
+                date_from: dateFrom,
+                date_to: dateTo
             });
 
             try {
@@ -815,7 +933,8 @@
                 if (!latest) return;
                 latest.loading = false;
                 latest.data = data;
-                latest.date = data.date || date;
+                latest.dateFrom = data.date_from || dateFrom;
+                latest.dateTo = data.date_to || dateTo;
                 renderTable(currentSummary());
             } catch (error) {
                 const latest = expandedKeys.get(key);
@@ -828,30 +947,37 @@
 
         function renderChartPanel(rowKey, user, apiKey) {
             const key = chartStateKey(rowKey, apiKey);
-            const state = expandedKeys.get(key) || { date: todayIso() };
-            const date = state.date || todayIso();
+            const state = expandedKeys.get(key) || { dateFrom: todayIso(), dateTo: todayIso(), rangeLabel: '1d' };
+            const dateFrom = state.dateFrom || todayIso();
+            const dateTo = state.dateTo || todayIso();
+            const rangeLabel = state.rangeLabel || '1d';
+
+            function rangeBtn(label, range) {
+                const active = rangeLabel === range ? ' active' : '';
+                return `<button class="chart-range-btn range-btn${active}" data-api-key="${escapeAttr(apiKey)}" data-range="${range}">${label}</button>`;
+            }
+
+            const toolbar = `
+                <div class="chart-toolbar">
+                    <div>
+                        <strong>${escapeHtml(maskedKey(apiKey))} 的用量曲线</strong>
+                        <div class="key-panel-note">北京时间（UTC+8）</div>
+                    </div>
+                    <div class="chart-range-controls">
+                        ${rangeBtn('今天', '1d')}${rangeBtn('7天', '7d')}${rangeBtn('30天', '30d')}
+                        <span class="range-sep">|</span>
+                        <input class="chart-date-from" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(dateFrom)}" title="开始日期">
+                        <span class="range-sep">~</span>
+                        <input class="chart-date-to" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(dateTo)}" title="结束日期">
+                    </div>
+                </div>
+            `;
 
             if (state.loading) {
-                return `
-                    <div class="chart-panel">
-                        <div class="chart-toolbar">
-                            <strong>${escapeHtml(maskedKey(apiKey))} 的日内曲线</strong>
-                            <label>日期 <input class="chart-date-input" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(date)}"></label>
-                        </div>
-                        <div class="inline-loading">正在加载曲线...</div>
-                    </div>
-                `;
+                return `<div class="chart-panel">${toolbar}<div class="inline-loading">正在加载曲线...</div></div>`;
             }
             if (state.error) {
-                return `
-                    <div class="chart-panel">
-                        <div class="chart-toolbar">
-                            <strong>${escapeHtml(maskedKey(apiKey))} 的日内曲线</strong>
-                            <label>日期 <input class="chart-date-input" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(date)}"></label>
-                        </div>
-                        <div class="error-state">${escapeHtml(state.error)}</div>
-                    </div>
-                `;
+                return `<div class="chart-panel">${toolbar}<div class="error-state">${escapeHtml(state.error)}</div></div>`;
             }
 
             const data = state.data;
@@ -860,31 +986,27 @@
             }
 
             const totals = data.totals || {};
+            const mode = data.mode || 'hourly';
+            const periodLabel = mode === 'hourly' ? '当日' : `${data.date_from} ~ ${data.date_to}`;
             return `
                 <div class="chart-panel">
-                    <div class="chart-toolbar">
-                        <div>
-                            <strong>${escapeHtml(maskedKey(apiKey))} 的日内曲线</strong>
-                            <div class="key-panel-note">按北京时间（UTC+8）聚合为 24 个小时桶</div>
-                        </div>
-                        <div class="legend">
-                            <span class="legend-item"><span class="legend-dot" style="background:#667eea"></span>Token</span>
-                            <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>请求数</span>
-                            <label>日期 <input class="chart-date-input" data-api-key="${escapeAttr(apiKey)}" type="date" value="${escapeAttr(data.date || date)}"></label>
-                        </div>
-                    </div>
+                    ${toolbar}
                     <div class="chart-metrics">
-                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.total_tokens)}</div><div class="chart-metric-label">当日 Tokens</div></div>
-                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.requests)}</div><div class="chart-metric-label">当日请求数</div></div>
+                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.total_tokens)}</div><div class="chart-metric-label">${escapeHtml(periodLabel)} Tokens</div><div class="token-detail">${escapeHtml(tokenBreakdownText(totals.token_breakdown || totals))}</div><div class="token-cost">估算 ${formatCost(totals.estimated_cost_usd ?? totals.token_breakdown?.cost_usd, 'usd')}</div></div>
+                        <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.requests)}</div><div class="chart-metric-label">${escapeHtml(periodLabel)} 请求数</div></div>
                         <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.success_count)}</div><div class="chart-metric-label">成功请求</div></div>
                         <div class="chart-metric"><div class="chart-metric-value">${formatNumber(totals.failure_count)}</div><div class="chart-metric-label">失败请求</div></div>
                     </div>
-                    ${renderSvgChart(data.buckets || [])}
+                    <div class="legend" style="margin-bottom:8px;">
+                        <span class="legend-item"><span class="legend-dot" style="background:#667eea"></span>Token</span>
+                        <span class="legend-item"><span class="legend-dot" style="background:#16a34a"></span>请求数</span>
+                    </div>
+                    ${renderSvgChart(data.buckets || [], mode)}
                 </div>
             `;
         }
 
-        function renderSvgChart(buckets) {
+        function renderSvgChart(buckets, mode) {
             const width = 980;
             const height = 280;
             const left = 62;
@@ -906,16 +1028,40 @@
                 const y = top + plotHeight * ratio;
                 return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" stroke="#edf0fb" stroke-width="1"/>`;
             }).join('');
-            const labels = buckets.filter((_, index) => index % 3 === 0 || index === 23).map((bucket, index, arr) => {
-                const originalIndex = Number(bucket.hour || 0);
-                const x = xFor(originalIndex);
-                return `<text x="${x}" y="${height - 12}" text-anchor="middle" fill="#6b7280" font-size="11">${escapeHtml(bucket.hour)}:00</text>`;
-            }).join('');
+
+            let labels;
+            if (mode === 'daily') {
+                const step = Math.max(1, Math.floor(buckets.length / 10));
+                labels = buckets.map((bucket, index) => {
+                    if (index % step !== 0 && index !== buckets.length - 1) return '';
+                    const x = xFor(index);
+                    const label = (bucket.date || '').slice(5);
+                    return `<text x="${x}" y="${height - 12}" text-anchor="middle" fill="#6b7280" font-size="11">${escapeHtml(label)}</text>`;
+                }).join('');
+            } else {
+                const multiDay = buckets.length > 24;
+                const step = multiDay ? Math.max(1, Math.floor(buckets.length / 12)) : 3;
+                labels = buckets.map((bucket, index) => {
+                    if (index % step !== 0 && index !== buckets.length - 1) return '';
+                    const x = xFor(index);
+                    let label;
+                    if (multiDay) {
+                        label = `${(bucket.date || '').slice(5)} ${bucket.hour}:00`;
+                    } else {
+                        label = `${bucket.hour}:00`;
+                    }
+                    return `<text x="${x}" y="${height - 12}" text-anchor="middle" fill="#6b7280" font-size="11">${escapeHtml(label)}</text>`;
+                }).join('');
+            }
+
             const dots = buckets.map((bucket, index) => {
                 const x = xFor(index);
                 const ty = tokenY(tokens[index]);
                 const ry = requestY(requests[index]);
-                const tooltip = escapeAttr(`北京时间 ${bucket.hour}:00<br>Token：${formatNumber(tokens[index])}<br>请求数：${formatNumber(requests[index])}<br>成功：${formatNumber(bucket.success_count || 0)} / 失败：${formatNumber(bucket.failure_count || 0)}`);
+                const timeLabel = mode === 'daily' ? (bucket.date || '') : (bucket.date ? `${bucket.date} ${bucket.hour}:00` : `北京时间 ${bucket.hour}:00`);
+                const breakdown = bucket.token_breakdown || bucket;
+                const cost = `估算：${formatCost(bucket.estimated_cost_usd ?? breakdown.cost_usd, 'usd')}`;
+                const tooltip = escapeAttr(`${timeLabel}<br>Token：${formatNumber(tokens[index])}<br>${tokenBreakdownText(breakdown)}<br>${cost}<br>请求数：${formatNumber(requests[index])}<br>成功：${formatNumber(bucket.success_count || 0)} / 失败：${formatNumber(bucket.failure_count || 0)}`);
                 return `
                     <circle cx="${x.toFixed(1)}" cy="${ty.toFixed(1)}" r="2.5" fill="#667eea"></circle>
                     <circle cx="${x.toFixed(1)}" cy="${ry.toFixed(1)}" r="2.5" fill="#16a34a"></circle>
@@ -926,7 +1072,7 @@
 
             return `
                 <div class="chart-svg-wrap">
-                    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Key 日内用量曲线">
+                    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Key 用量曲线">
                         <rect x="0" y="0" width="${width}" height="${height}" fill="white"/>
                         ${grid}
                         <line x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}" stroke="#d1d5db"/>

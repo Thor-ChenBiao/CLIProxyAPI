@@ -49,6 +49,8 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
             'total_tokens': 0,
             'input_tokens': 0,
             'output_tokens': 0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
         })
         usage_map = defaultdict(lambda: {
             'total_requests': 0,
@@ -57,6 +59,8 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
             'total_tokens': 0,
             'input_tokens': 0,
             'output_tokens': 0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
         })
 
         # Track unknown keys for logging
@@ -93,6 +97,8 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                     total_tokens = tokens_info.get('total_tokens', 0)
                     input_tokens = tokens_info.get('input_tokens', 0)
                     output_tokens = tokens_info.get('output_tokens', 0)
+                    cached_tokens = tokens_info.get('cached_tokens', 0)
+                    reasoning_tokens = tokens_info.get('reasoning_tokens', 0)
 
                     daily_detail_map[date]['total_requests'] += 1
                     if failed:
@@ -102,6 +108,8 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                     daily_detail_map[date]['total_tokens'] += total_tokens
                     daily_detail_map[date]['input_tokens'] += input_tokens
                     daily_detail_map[date]['output_tokens'] += output_tokens
+                    daily_detail_map[date]['cached_tokens'] += cached_tokens
+                    daily_detail_map[date]['reasoning_tokens'] += reasoning_tokens
 
                     key = (date, user_email, api_key)
 
@@ -114,6 +122,8 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                     usage_map[key]['total_tokens'] += total_tokens
                     usage_map[key]['input_tokens'] += input_tokens
                     usage_map[key]['output_tokens'] += output_tokens
+                    usage_map[key]['cached_tokens'] += cached_tokens
+                    usage_map[key]['reasoning_tokens'] += reasoning_tokens
 
         # 2. Sync daily totals to database.
         for date in set(list(tokens_by_day.keys()) + list(requests_by_day.keys()) + list(daily_detail_map.keys())):
@@ -123,11 +133,15 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                 failure_count = detail_stats['failure_count']
                 input_tokens = detail_stats['input_tokens']
                 output_tokens = detail_stats['output_tokens']
+                cached_tokens = detail_stats['cached_tokens']
+                reasoning_tokens = detail_stats['reasoning_tokens']
             else:
                 success_count = requests_by_day.get(date, 0)
                 failure_count = 0
                 input_tokens = 0
                 output_tokens = 0
+                cached_tokens = 0
+                reasoning_tokens = 0
 
             db.upsert_daily_usage(
                 date=date,
@@ -136,7 +150,9 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                 failure_count=failure_count,
                 total_tokens=max(tokens_by_day.get(date, 0), detail_stats.get('total_tokens', 0)),
                 input_tokens=input_tokens,
-                output_tokens=output_tokens
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                reasoning_tokens=reasoning_tokens
             )
 
         # 3. Insert user usage into database.
@@ -150,7 +166,9 @@ def sync_usage_to_database(api_data, key_to_user_mapping):
                 failure_count=stats['failure_count'],
                 total_tokens=stats['total_tokens'],
                 input_tokens=stats['input_tokens'],
-                output_tokens=stats['output_tokens']
+                output_tokens=stats['output_tokens'],
+                cached_tokens=stats['cached_tokens'],
+                reasoning_tokens=stats['reasoning_tokens']
             )
 
         # 4. Log unknown keys

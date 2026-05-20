@@ -152,6 +152,9 @@
         .auth-status.warning { background: var(--orange-soft); color: var(--orange); }
         .auth-status.error { background: var(--red-soft); color: var(--red); }
         .auth-status.other { background: #edf1f5; color: #526070; }
+        .auth-toggle-btn { align-self: flex-start; border: 1px solid rgba(223,230,240,0.95); border-radius: 999px; background: #fff; color: var(--red); padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; }
+        .auth-toggle-btn.enable { color: var(--green); }
+        .auth-toggle-btn:disabled { opacity: 0.55; cursor: wait; }
 	        .auth-msg { max-width: 100%; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 	        .signal-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #172846; font-size: 13px; font-weight: 900; margin-bottom: 11px; }
 	        .signal-title span:last-child { color: var(--muted); font-size: 11px; font-weight: 800; }
@@ -279,6 +282,7 @@
         let authStatsLoading = false;
         const AUTH_STATS_REFRESH_MS = 5000;
         const authRowOrder = new Map();
+        const authRowsByKey = new Map();
 
         function formatNumberFull(num) {
             return Number(num || 0).toLocaleString('zh-CN');
@@ -356,6 +360,30 @@
             if (num >= 100000000) return `${(num / 100000000).toFixed(num >= 1000000000 ? 1 : 2).replace(/\.?0+$/, '')}亿`;
             if (num >= 10000) return `${(num / 10000).toFixed(num >= 100000 ? 1 : 2).replace(/\.?0+$/, '')}万`;
             return formatNumberFull(num);
+        }
+
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(bucket) {
+            const breakdown = bucket?.token_breakdown || bucket || {};
+            const parts = [
+                `Input ${formatCompactNumber(breakdown.input_tokens || 0)}`,
+                `Output ${formatCompactNumber(breakdown.output_tokens || 0)}`,
+                `Cache ${formatCompactNumber(breakdown.cached_tokens || 0)}`
+            ];
+            if (Number(breakdown.reasoning_tokens || 0) > 0) parts.push(`Reasoning ${formatCompactNumber(breakdown.reasoning_tokens)}`);
+            if (Number(breakdown.unknown_tokens || 0) > 0) parts.push(`未分类 ${formatCompactNumber(breakdown.unknown_tokens)}`);
+            return parts.join(' · ');
+        }
+
+        function tokenCostText(bucket) {
+            const breakdown = bucket?.token_breakdown || bucket || {};
+            return `估算 ${formatCost(bucket?.estimated_cost_usd ?? breakdown.cost_usd, 'usd')}`;
         }
 
         function quotaBucket(row, windowName) {
@@ -510,7 +538,8 @@
             return `<div class="metric-block ${primary ? 'primary' : ''}">
                 <h4><span>${title}</span><span class="range">${rangeLabel}</span></h4>
                 <div class="used">${formatNumberFull(bucket?.tokens || 0)}</div>
-                <div class="unit">Tokens 已用</div>
+                <div class="unit">Tokens 已用 · ${escapeHtml(tokenBreakdownText(bucket))}</div>
+                <div class="unit">${escapeHtml(tokenCostText(bucket))}</div>
                 <div class="metric-grid">
                     <div class="mini"><span>请求</span><strong>${formatNumberFull(bucket?.requests || 0)}</strong></div>
                     <div class="mini"><span>成功 / 失败</span><strong>${formatNumberFull(bucket?.success || 0)} / ${formatNumberFull(bucket?.failure || 0)}</strong></div>
@@ -605,9 +634,9 @@
                 <div class="signal-title"><strong>请求负载</strong><span>次级指标</span></div>
                 <div class="traffic-grid">
                     ${renderTrafficItem('5h 请求', formatNumberFull(five.requests || 0))}
-                    ${renderTrafficItem('5h Tokens', formatCompactNumber(five.tokens || 0), formatNumberFull(five.tokens || 0))}
+                    ${renderTrafficItem('5h Tokens', formatCompactNumber(five.tokens || 0), `${formatNumberFull(five.tokens || 0)} · ${tokenBreakdownText(five)} · ${tokenCostText(five)}`)}
                     ${renderTrafficItem('7d 请求', formatNumberFull(seven.requests || 0))}
-                    ${renderTrafficItem('7d Tokens', formatCompactNumber(seven.tokens || 0), formatNumberFull(seven.tokens || 0))}
+                    ${renderTrafficItem('7d Tokens', formatCompactNumber(seven.tokens || 0), `${formatNumberFull(seven.tokens || 0)} · ${tokenBreakdownText(seven)} · ${tokenCostText(seven)}`)}
                     ${renderTrafficItem('5h 均值 Tokens/请求', formatNumberFull(five.avg_tokens_per_request || 0))}
                     ${renderTrafficItem('7d 均值 Tokens/请求', formatNumberFull(seven.avg_tokens_per_request || 0))}
                 </div>
@@ -619,6 +648,8 @@
                 <h5>${title}</h5>
                 <div class="detail-value"><span>请求</span><strong>${formatNumberFull(bucket?.requests || 0)}</strong></div>
                 <div class="detail-value"><span>Tokens</span><strong>${formatNumberFull(bucket?.tokens || 0)}</strong></div>
+                <div class="detail-value"><span>分类</span><strong>${escapeHtml(tokenBreakdownText(bucket))}</strong></div>
+                <div class="detail-value"><span>费用</span><strong>${escapeHtml(tokenCostText(bucket))}</strong></div>
                 <div class="detail-value"><span>成功 / 失败</span><strong>${formatNumberFull(bucket?.success || 0)} / ${formatNumberFull(bucket?.failure || 0)}</strong></div>
                 <div class="detail-value"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
             </div>`;
@@ -636,7 +667,7 @@
             return `<div class="node-window">
                 <h4>${title}<b>${formatNumberFull(bucket?.requests || 0)} 请求</b></h4>
                 <div class="node-window-main">
-                    <div><span>Tokens</span><strong>${formatCompactNumber(bucket?.tokens || 0)}</strong></div>
+                    <div><span>Tokens · ${escapeHtml(tokenCostText(bucket))}</span><strong title="${escapeHtml(tokenBreakdownText(bucket))}">${formatCompactNumber(bucket?.tokens || 0)}</strong></div>
                     <div><span>均值/请求</span><strong>${formatNumberFull(bucket?.avg_tokens_per_request || 0)}</strong></div>
                 </div>
                 <div class="node-failure ${failClass}"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
@@ -716,6 +747,10 @@
             const lastError = row.last_error_at ? `${formatDateTime(row.last_error_at)}${row.last_error_status ? ' / ' + escapeHtml(row.last_error_status) : ''}` : '-';
             const errorMsg = row.last_error_message ? `<div class="error-note" title="${escapeHtml(row.last_error_message)}">${escapeHtml(row.last_error_message)}</div>` : '';
             const plan = row.plan_type || row.provider || '未标记计划';
+            const rowKey = authRowKey(row);
+            const toggleDisabled = !row.disabled;
+            const toggleText = row.disabled ? '启用认证' : '停用认证';
+            const toggleClass = row.disabled ? ' enable' : '';
             return `<article class="auth-card ${info.cardCls}">
                 <div class="auth-main">
                     <section class="identity">
@@ -727,6 +762,7 @@
 	                            <div class="account">${escapeHtml(row.account || '-')}</div>
 	                            <div class="sub">${escapeHtml(plan)}${row.auth_index ? ' · ' + escapeHtml(row.auth_index) : ''}</div>
 	                        </div>
+                            <button class="auth-toggle-btn${toggleClass}" data-auth-key="${escapeHtml(rowKey)}" data-disabled="${toggleDisabled ? '1' : '0'}">${toggleText}</button>
 	                    </section>
 	                    ${renderQuotaPanel(row)}
 	                    ${renderHealthPanel(row, lastError, statusMsg, errorMsg)}
@@ -760,6 +796,46 @@
             warningEl.style.display = 'block';
         }
 
+        async function toggleAuthStatus(row, disabled, button) {
+            const label = row.account || row.auth_name || row.auth_id || row.auth_index || '该认证文件';
+            const action = disabled ? '停用' : '启用';
+            if (!confirm(`确认${action} ${label} 吗？${disabled ? '停用后新流量不会再调度到这个认证文件。' : '启用后该认证文件会重新参与调度。'}`)) return;
+            if (button) button.disabled = true;
+            try {
+                const resp = await fetch('/api/auth-stats/toggle-auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        node: row.node,
+                        auth_id: row.auth_id,
+                        auth_name: row.auth_name,
+                        auth_index: row.auth_index,
+                        disabled,
+                    }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                authStatsLoading = false;
+                await loadAuthStats(true);
+            } catch (e) {
+                alert(`${action}失败：${e.message}`);
+                if (button) button.disabled = false;
+            }
+        }
+
+        function bindAuthToggleButtons() {
+            document.querySelectorAll('.auth-toggle-btn').forEach(button => {
+                button.addEventListener('click', () => {
+                    const row = authRowsByKey.get(button.dataset.authKey);
+                    if (!row) {
+                        alert('找不到认证文件数据，请刷新页面后重试');
+                        return;
+                    }
+                    toggleAuthStatus(row, button.dataset.disabled === '1', button);
+                });
+            });
+        }
+
         async function loadAuthStats(force = false) {
             if (authStatsLoading) return;
             authStatsLoading = true;
@@ -777,6 +853,8 @@
                 renderWarnings(data.errors || []);
 
                 const rows = sortAuthRows(data.auth_files || []);
+                authRowsByKey.clear();
+                rows.forEach(row => authRowsByKey.set(authRowKey(row), row));
                 const nodeSignals = computeNodeSignals(rows);
                 const nodes = data.nodes || {};
                 const nodeNames = Object.keys(nodes).sort();
@@ -789,6 +867,7 @@
                 summaryEl.innerHTML = quotaCard + nodeCards;
 
                 cardsEl.innerHTML = rows.length ? rows.map(renderAuthCard).join('') : '<div class="empty-state">暂无认证文件数据</div>';
+                bindAuthToggleButtons();
                 loading.style.display = 'none';
                 cardsEl.style.display = 'grid';
             } catch (e) {

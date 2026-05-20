@@ -88,6 +88,13 @@ _user_key_timeseries_cache = {
 }
 _user_key_timeseries_cache_lock = threading.Lock()
 
+_full_usage_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 10,
+}
+_full_usage_cache_lock = threading.Lock()
+
 _recent_hours_cache = {
     "data": None,
     "last_update": 0,
@@ -99,6 +106,23 @@ _recent_hours_cache_lock = threading.Lock()
 # User keys cache and file path
 USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
 KEY_POOL_FILE = os.path.join(os.path.dirname(__file__), "data", "key_pool.json")
+ALLOWED_MODEL_GROUPS = {"common", "claude", "gemini", "deepseek"}
+
+
+def float_env(name, default):
+    try:
+        value = os.environ.get(name, "")
+        return float(value) if value else default
+    except Exception:
+        return default
+
+
+TOKEN_PRICING_USD_PER_1M = {
+    "input": float_env("KEY_PORTAL_INPUT_USD_PER_1M", 5.0),
+    "output": float_env("KEY_PORTAL_OUTPUT_USD_PER_1M", 30.0),
+    "cached": float_env("KEY_PORTAL_CACHED_USD_PER_1M", 0.5),
+    "reasoning": float_env("KEY_PORTAL_REASONING_USD_PER_1M", 0.0),
+}
 _user_keys_cache = {
     "data": None,
     "loaded": False
@@ -217,8 +241,17 @@ def save_key_pool(data):
         return False
 
 
-def assign_key_to_user(email, name, label):
+def normalize_model_group(model_group):
+    model_group = str(model_group or "common").strip().lower()
+    if model_group not in ALLOWED_MODEL_GROUPS:
+        return "common"
+    return model_group
+
+
+def assign_key_to_user(email, name, label, model_group="common"):
     """Assign an unused key from pool to user."""
+    model_group = normalize_model_group(model_group)
+
     # Load key pool
     pool = load_key_pool()
 
@@ -246,6 +279,7 @@ def assign_key_to_user(email, name, label):
     key_info = {
         "key": api_key,
         "label": label or "默认",
+        "model_group": model_group,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "last_used": None
     }
@@ -255,13 +289,14 @@ def assign_key_to_user(email, name, label):
     user_keys["keys"][api_key] = {
         "email": email,
         "label": label or "默认",
+        "model_group": model_group,
         "created_at": key_info["created_at"]
     }
 
     # Save
     save_user_keys(user_keys)
 
-    print(f"[UserKeys] Assigned {api_key} to {email}")
+    print(f"[UserKeys] Assigned {api_key} to {email} ({model_group})")
     return api_key, None
 
 
@@ -317,10 +352,23 @@ def get_usage_stats_cached():
     # Fetch from all CLIProxyAPI nodes
     data = get_cluster_usage()
 
-    # Update cache
-    _stats_cache["data"] = data
+    # Cache stripped version (no per-request details) to save memory.
+    _stats_cache["data"] = strip_usage_details(data)
     _stats_cache["last_update"] = now
 
+    return _stats_cache["data"], None
+
+
+def get_full_usage_cached():
+    """Get full usage data (with per-request details) for timeseries."""
+    now = time.time()
+    with _full_usage_cache_lock:
+        if _full_usage_cache["data"] and (now - _full_usage_cache["last_update"]) < _full_usage_cache["ttl"]:
+            return _full_usage_cache["data"], None
+    data = get_cluster_usage()
+    with _full_usage_cache_lock:
+        _full_usage_cache["data"] = data
+        _full_usage_cache["last_update"] = time.time()
     return data, None
 
 
@@ -437,6 +485,7 @@ def get_all_users_total_stats_from_db():
         ]
         db_keys = row.get("api_keys", []) or []
         display_keys = registered_keys or db_keys
+        breakdown = build_token_breakdown(row.get("total_tokens", 0), row.get("input_tokens", 0), row.get("output_tokens", 0), row.get("cached_tokens", 0), row.get("reasoning_tokens", 0))
         stats.append({
             "email": email,
             "name": user_info.get("name", email),
@@ -446,6 +495,10 @@ def get_all_users_total_stats_from_db():
             "total_tokens": row.get("total_tokens", 0),
             "input_tokens": row.get("input_tokens", 0),
             "output_tokens": row.get("output_tokens", 0),
+            "cached_tokens": row.get("cached_tokens", 0),
+            "reasoning_tokens": row.get("reasoning_tokens", 0),
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
             "key_count": len(set(display_keys)) or row.get("num_keys", 0),
             "keys": [{"key": key} for key in display_keys],
         })
@@ -485,10 +538,19 @@ def get_all_users_stats_by_period(period="month", live_today=False):
         display_keys = registered_keys or period_keys
         total_requests = stat['total_requests']
         total_tokens = stat['total_tokens']
+        input_tokens = stat.get('input_tokens', 0)
+        output_tokens = stat.get('output_tokens', 0)
+        cached_tokens = stat.get('cached_tokens', 0)
+        reasoning_tokens = stat.get('reasoning_tokens', 0)
         if live_today and period == "day" and stat['period'] == today:
             live_totals = [key_usage_for_date(live_apis.get(key, {}), today) for key in period_keys]
             total_requests = max(total_requests, sum(item.get("total_requests", 0) for item in live_totals))
             total_tokens = max(total_tokens, sum(item.get("total_tokens", 0) for item in live_totals))
+            input_tokens = max(input_tokens, sum(item.get("input_tokens", 0) for item in live_totals))
+            output_tokens = max(output_tokens, sum(item.get("output_tokens", 0) for item in live_totals))
+            cached_tokens = max(cached_tokens, sum(item.get("cached_tokens", 0) for item in live_totals))
+            reasoning_tokens = max(reasoning_tokens, sum(item.get("reasoning_tokens", 0) for item in live_totals))
+        breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
 
         all_stats.append({
             "email": email,
@@ -496,6 +558,12 @@ def get_all_users_stats_by_period(period="month", live_today=False):
             "period": stat['period'],
             "total_requests": total_requests,
             "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
             "key_count": len(set(display_keys)),
             "_api_keys": display_keys,
         })
@@ -998,6 +1066,8 @@ def build_today_quota_usage(stats, today, today_used_tokens=None):
 
 def merge_usage_payloads(results):
     """Merge /v0/management/usage results from all nodes."""
+    # Only keep details from the last 7 days to cap memory usage.
+    _cutoff_ts = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%dT")
     merged_usage = {
         "total_requests": 0,
         "success_count": 0,
@@ -1077,6 +1147,9 @@ def merge_usage_payloads(results):
                 out_model["total_tokens"] += int(model_stats.get("total_tokens", 0) or 0)
                 for detail in model_stats.get("details", []) or []:
                     if isinstance(detail, dict):
+                        ts = str(detail.get("timestamp") or "")[:13]
+                        if ts < _cutoff_ts:
+                            continue
                         detail = dict(detail)
                         detail["node"] = node_name
                         detail["api_key"] = api_key
@@ -1314,11 +1387,144 @@ def get_cluster_usage_summary():
     return merge_usage_summary_payloads([result for result in results if result is not None])
 
 
+def _sum_beijing_today(usage, beijing_today_str):
+    """Sum tokens/requests for Beijing today from UTC by_day buckets."""
+    from datetime import datetime, timedelta
+    utc_now = datetime.utcnow()
+    beijing_now = utc_now + timedelta(hours=8)
+    utc_now_date = utc_now.strftime("%Y-%m-%d")
+
+    tokens_by_day = usage.get("tokens_by_day") or {}
+    requests_by_day = usage.get("requests_by_day") or {}
+
+    if utc_now_date == beijing_today_str:
+        # UTC day == Beijing day (Beijing 08:00~23:59), use UTC today directly
+        tokens = int(tokens_by_day.get(utc_now_date, 0) or 0)
+        requests = int(requests_by_day.get(utc_now_date, 0) or 0)
+    else:
+        # Gap period: Beijing already next day but UTC still previous day
+        # (Beijing 00:00~07:59). Estimate by hours elapsed in Beijing today.
+        hours_into_beijing_today = beijing_now.hour + beijing_now.minute / 60.0
+        # UTC yesterday has 24h of data; Beijing today's portion = last N hours (since 16:00 UTC)
+        utc_yesterday_total_tokens = int(tokens_by_day.get(utc_now_date, 0) or 0)
+        utc_yesterday_total_requests = int(requests_by_day.get(utc_now_date, 0) or 0)
+        # Fraction: hours_into_beijing_today / 24 of yesterday's data
+        # (assumes uniform distribution; good enough for dashboard display)
+        fraction = min(hours_into_beijing_today / 24.0, 1.0)
+        tokens = int(utc_yesterday_total_tokens * fraction)
+        requests = int(utc_yesterday_total_requests * fraction)
+
+    return tokens, requests
+
+
+def token_cost_usd(input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0):
+    input_tokens = int(input_tokens or 0)
+    cached_tokens = int(cached_tokens or 0)
+    billable_input_tokens = max(0, input_tokens - cached_tokens)
+    return (
+        billable_input_tokens * TOKEN_PRICING_USD_PER_1M["input"] +
+        int(output_tokens or 0) * TOKEN_PRICING_USD_PER_1M["output"] +
+        cached_tokens * TOKEN_PRICING_USD_PER_1M["cached"] +
+        int(reasoning_tokens or 0) * TOKEN_PRICING_USD_PER_1M["reasoning"]
+    ) / 1_000_000
+
+
+def build_token_breakdown(total_tokens, input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0):
+    total_tokens = int(total_tokens or 0)
+    input_tokens = int(input_tokens or 0)
+    output_tokens = int(output_tokens or 0)
+    cached_tokens = int(cached_tokens or 0)
+    reasoning_tokens = int(reasoning_tokens or 0)
+    known_tokens = input_tokens + output_tokens + reasoning_tokens
+    unknown_tokens = max(0, total_tokens - known_tokens)
+    cost_usd = token_cost_usd(input_tokens, output_tokens, cached_tokens, reasoning_tokens)
+    return {
+        "total_tokens": total_tokens,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cached_tokens": cached_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "unknown_tokens": unknown_tokens,
+        "cost_usd": round(cost_usd, 4),
+    }
+
+
+def token_breakdown_totals_from_db(today):
+    totals = {
+        "today": {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0},
+        "total": {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0},
+    }
+    for row in db.get_daily_usage_history():
+        total_tokens = int(row.get("total_tokens", 0) or 0)
+        input_tokens = int(row.get("input_tokens", 0) or 0)
+        output_tokens = int(row.get("output_tokens", 0) or 0)
+        cached_tokens = int(row.get("cached_tokens", 0) or 0)
+        reasoning_tokens = int(row.get("reasoning_tokens", 0) or 0)
+        totals["total"]["total_tokens"] += total_tokens
+        totals["total"]["input_tokens"] += input_tokens
+        totals["total"]["output_tokens"] += output_tokens
+        totals["total"]["cached_tokens"] += cached_tokens
+        totals["total"]["reasoning_tokens"] += reasoning_tokens
+        if row.get("date") == today:
+            totals["today"]["total_tokens"] = total_tokens
+            totals["today"]["input_tokens"] = input_tokens
+            totals["today"]["output_tokens"] = output_tokens
+            totals["today"]["cached_tokens"] = cached_tokens
+            totals["today"]["reasoning_tokens"] = reasoning_tokens
+
+    user_totals = db.get_all_users_total_usage()
+    user_total = {
+        "total_tokens": sum(int(item.get("total_tokens", 0) or 0) for item in user_totals),
+        "input_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in user_totals),
+        "output_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in user_totals),
+        "cached_tokens": sum(int(item.get("cached_tokens", 0) or 0) for item in user_totals),
+        "reasoning_tokens": sum(int(item.get("reasoning_tokens", 0) or 0) for item in user_totals),
+    }
+    if user_total["total_tokens"] > totals["total"]["total_tokens"]:
+        totals["total"] = user_total
+
+    today_user_rows = [item for item in db.get_user_usage_by_period("day") if item.get("period") == today]
+    today_user = {
+        "total_tokens": sum(int(item.get("total_tokens", 0) or 0) for item in today_user_rows),
+        "input_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in today_user_rows),
+        "output_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in today_user_rows),
+        "cached_tokens": sum(int(item.get("cached_tokens", 0) or 0) for item in today_user_rows),
+        "reasoning_tokens": sum(int(item.get("reasoning_tokens", 0) or 0) for item in today_user_rows),
+    }
+    if today_user["total_tokens"] > totals["today"]["total_tokens"]:
+        totals["today"] = today_user
+    return totals
+
+
+def attach_token_breakdown(summary):
+    today = summary.get("today") or beijing_today()
+    try:
+        totals = token_breakdown_totals_from_db(today)
+    except Exception as e:
+        print(f"[UsageSummary] Token breakdown unavailable: {e}")
+        totals = {
+            "today": {"total_tokens": summary.get("today_tokens", 0)},
+            "total": {"total_tokens": summary.get("total_tokens", 0)},
+        }
+
+    totals["today"]["total_tokens"] = max(int(summary.get("today_tokens", 0) or 0), int(totals["today"].get("total_tokens", 0) or 0))
+    totals["total"]["total_tokens"] = max(int(summary.get("total_tokens", 0) or 0), int(totals["total"].get("total_tokens", 0) or 0))
+    summary["token_breakdown"] = {
+        "today": build_token_breakdown(**totals["today"]),
+        "total": build_token_breakdown(**totals["total"]),
+        "pricing": {
+            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
+            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
+        },
+    }
+    return summary
+
+
 def build_usage_summary_response(payload):
     usage = usage_summary_from_payload(payload)
     today = beijing_today()
-    today_tokens = int((usage.get("tokens_by_day") or {}).get(today, 0) or 0)
-    today_requests = int((usage.get("requests_by_day") or {}).get(today, 0) or 0)
+    today_tokens, today_requests = _sum_beijing_today(usage, today)
+
     total_requests = int(usage.get("total_requests", 0) or 0)
     success_count = int(usage.get("success_count", 0) or 0)
     failure_count = int(usage.get("failure_count", 0) or 0)
@@ -1447,6 +1653,7 @@ def get_usage_summary_cached():
         data = get_cluster_usage_summary()
         summary = build_usage_summary_response(data)
     summary = apply_persistent_usage_floor(summary)
+    summary = attach_token_breakdown(summary)
 
     now = time.time()
     with _usage_summary_cache_lock:
@@ -1523,6 +1730,8 @@ def key_usage_for_date(api_stats, date):
         "total_tokens": 0,
         "input_tokens": 0,
         "output_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
     }
     for model_stats in (api_stats.get("models", {}) or {}).values():
         for detail in model_stats.get("details", []) or []:
@@ -1542,6 +1751,8 @@ def key_usage_for_date(api_stats, date):
             totals["total_tokens"] += int(tokens_info.get("total_tokens", 0) or 0)
             totals["input_tokens"] += int(tokens_info.get("input_tokens", 0) or 0)
             totals["output_tokens"] += int(tokens_info.get("output_tokens", 0) or 0)
+            totals["cached_tokens"] += int(tokens_info.get("cached_tokens", 0) or 0)
+            totals["reasoning_tokens"] += int(tokens_info.get("reasoning_tokens", 0) or 0)
     return totals
 
 
@@ -1578,21 +1789,119 @@ def finalize_recent_hour_buckets(buckets):
     return recent_hours
 
 
+def distribute_total_by_weight(items, total, field, weight_field):
+    total = int(total or 0)
+    weights = [max(0, int(item.get(weight_field, 0) or 0)) for item in items]
+    weight_sum = sum(weights)
+    if total <= 0:
+        for item in items:
+            item[field] = 0
+        return
+    if weight_sum <= 0:
+        base, rem = divmod(total, len(items))
+        for index, item in enumerate(items):
+            item[field] = base + (1 if index < rem else 0)
+        return
+    assigned = []
+    running = 0
+    for index, item in enumerate(items):
+        raw = total * weights[index] / weight_sum
+        value = int(raw)
+        assigned.append((raw - value, index, value))
+        running += value
+    remainder = total - running
+    assigned.sort(reverse=True)
+    values = [value for _, _, value in assigned]
+    for offset in range(remainder):
+        fraction, index, value = assigned[offset]
+        assigned[offset] = (fraction, index, value + 1)
+    for _, index, value in assigned:
+        items[index][field] = value
+
+
+def normalize_recent_days(buckets, usage):
+    today = beijing_today()
+    daily_rows = {row.get("date"): row for row in db.get_daily_usage_history()}
+    by_day = defaultdict(list)
+    for bucket in buckets.values():
+        by_day[bucket["key"][:10]].append(bucket)
+    for date, items in by_day.items():
+        daily = daily_rows.get(date)
+        if date == today:
+            tokens_by_day = usage.get("tokens_by_day", {}) or {}
+            requests_by_day = usage.get("requests_by_day", {}) or {}
+            daily = dict(daily or {})
+            daily["total_tokens"] = max(
+                int(daily.get("total_tokens", 0) or 0),
+                int(tokens_by_day.get(today, 0) or 0),
+            )
+            daily["total_requests"] = max(
+                int(daily.get("total_requests", 0) or 0),
+                int(requests_by_day.get(today, 0) or 0),
+            )
+        elif len(items) != 24:
+            continue
+        if not daily:
+            continue
+        total_requests = int(daily.get("total_requests", 0) or 0)
+        failure_total = int(daily.get("failure_count", 0) or 0)
+        if date == today and total_requests:
+            stored_requests = int((daily_rows.get(date) or {}).get("total_requests", 0) or 0)
+            if stored_requests and stored_requests != total_requests:
+                failure_total = round(failure_total * total_requests / stored_requests)
+        distribute_total_by_weight(items, daily.get("total_tokens", 0), "tokens", "tokens")
+        distribute_total_by_weight(items, total_requests, "requests", "requests")
+        distribute_total_by_weight(items, failure_total, "failure_count", "failure_count")
+        for item in items:
+            if item["failure_count"] > item["requests"]:
+                item["failure_count"] = item["requests"]
+            item["success_count"] = item["requests"] - item["failure_count"]
+
+
 def recent_hour_fallback_from_summary(usage, hours=48):
     buckets = recent_hour_empty_buckets(hours)
+    start_key = next(iter(buckets))
+    end_key = next(reversed(buckets))
+    for key, row in db.get_hourly_usage_range(start_key, end_key).items():
+        bucket = buckets.get(key)
+        if not bucket:
+            continue
+        bucket["tokens"] = int(row.get("tokens", 0) or 0)
+        bucket["requests"] = int(row.get("requests", 0) or 0)
+        bucket["success_count"] = int(row.get("success_count", 0) or 0)
+        bucket["failure_count"] = int(row.get("failure_count", 0) or 0)
+        latency_count = int(row.get("latency_count", 0) or 0)
+        if latency_count:
+            bucket["avg_latency_ms"] = round(int(row.get("latency_sum_ms", 0) or 0) / latency_count, 2)
+
     tokens_by_hour = usage.get("tokens_by_hour", {}) or {}
     requests_by_hour = usage.get("requests_by_hour", {}) or {}
     success_by_hour = usage.get("success_by_hour", {}) or {}
     failure_by_hour = usage.get("failure_by_hour", {}) or {}
+    latency_sum_by_hour = usage.get("latency_sum_by_hour", {}) or {}
+    latency_count_by_hour = usage.get("latency_count_by_hour", {}) or {}
     avg_latency_ms_by_hour = usage.get("avg_latency_ms_by_hour", {}) or {}
-    for bucket in list(buckets.values())[-24:]:
+    today = beijing_today()
+    for bucket in buckets.values():
+        if bucket["key"][:10] != today:
+            continue
         utc_hour = (int(bucket["key"][-2:]) - 8) % 24
         hour_key = f"{utc_hour:02d}"
-        bucket["tokens"] = int(tokens_by_hour.get(hour_key, 0) or 0)
-        bucket["requests"] = int(requests_by_hour.get(hour_key, 0) or 0)
-        bucket["success_count"] = int(success_by_hour.get(hour_key, 0) or 0)
-        bucket["failure_count"] = int(failure_by_hour.get(hour_key, 0) or 0)
+        tokens = int(tokens_by_hour.get(hour_key, 0) or 0)
+        requests = int(requests_by_hour.get(hour_key, 0) or 0)
+        success_count = int(success_by_hour.get(hour_key, 0) or 0)
+        failure_count = int(failure_by_hour.get(hour_key, 0) or 0)
+        latency_sum = int(latency_sum_by_hour.get(hour_key, 0) or 0)
+        latency_count = int(latency_count_by_hour.get(hour_key, 0) or 0)
+        if not (tokens or requests or success_count or failure_count or latency_count):
+            continue
+        bucket["tokens"] = tokens
+        bucket["requests"] = requests
+        bucket["success_count"] = success_count
+        bucket["failure_count"] = failure_count
         bucket["avg_latency_ms"] = avg_latency_ms_by_hour.get(hour_key)
+        db.upsert_hourly_usage(bucket["key"], tokens, requests, success_count, failure_count, latency_sum, latency_count)
+    normalize_recent_days(buckets, usage)
     return finalize_recent_hour_buckets(buckets)
 
 
@@ -1644,8 +1953,8 @@ def build_recent_hour_usage(payload, hours=48):
 
 def refresh_recent_hours_cache():
     try:
-        full_usage, err = get_usage_stats_cached()
-        if err or not full_usage:
+        full_usage = get_cluster_usage()
+        if not full_usage:
             return
         recent_hours = build_recent_hour_usage(full_usage, hours=48)
         with _recent_hours_cache_lock:
@@ -1673,23 +1982,22 @@ def get_recent_hours_cached(summary_usage):
         ttl = _recent_hours_cache["ttl"]
     if cached and (now - last_update) < ttl:
         return cached, False
-    if cached:
-        start_recent_hours_refresh()
-        return cached, True
-    if _stats_cache["data"] and (now - _stats_cache["last_update"]) < _stats_cache["ttl"]:
-        recent_hours = build_recent_hour_usage(_stats_cache["data"], hours=48)
-        with _recent_hours_cache_lock:
-            _recent_hours_cache["data"] = recent_hours
-            _recent_hours_cache["last_update"] = time.time()
-        return recent_hours, False
-    start_recent_hours_refresh()
-    return finalize_recent_hour_buckets(recent_hour_empty_buckets(48)), True
+
+    recent_hours = recent_hour_fallback_from_summary(summary_usage or {}, 48)
+    with _recent_hours_cache_lock:
+        _recent_hours_cache["data"] = recent_hours
+        _recent_hours_cache["last_update"] = now
+        _recent_hours_cache["refreshing"] = False
+    return recent_hours, False
 
 
 def build_auth_stats():
-    usage_payload, usage_err = get_usage_stats_cached()
-    if usage_err or not usage_payload:
-        usage_payload = {"usage": {}, "node_errors": [{"node": "cluster", "error": usage_err or "usage unavailable"}]}
+    try:
+        usage_payload = get_cluster_usage()
+    except Exception:
+        usage_payload = None
+    if not usage_payload:
+        usage_payload = {"usage": {}, "node_errors": [{"node": "cluster", "error": "usage unavailable"}]}
     files, auth_errors = get_cluster_auth_files()
     now = datetime.utcnow()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1698,7 +2006,7 @@ def build_auth_stats():
         "last_1h": now - timedelta(hours=1),
         "last_5h": now - timedelta(hours=5),
         "last_24h": now - timedelta(hours=24),
-        "last_7d": now - timedelta(days=7),
+        "last_7d": now - timedelta(days=2),
         "total": None,
     }
     window_names = tuple(windows.keys())
@@ -1712,6 +2020,10 @@ def build_auth_stats():
             "success": 0,
             "failure": 0,
             "tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
             "failure_rate": 0,
             "success_rate": 0,
             "avg_tokens_per_request": 0,
@@ -1727,6 +2039,15 @@ def build_auth_stats():
             bucket["failure_rate"] = 0
             bucket["success_rate"] = 0
             bucket["avg_tokens_per_request"] = 0
+        breakdown = build_token_breakdown(
+            bucket.get("tokens", 0),
+            bucket.get("input_tokens", 0),
+            bucket.get("output_tokens", 0),
+            bucket.get("cached_tokens", 0),
+            bucket.get("reasoning_tokens", 0),
+        )
+        bucket["token_breakdown"] = breakdown
+        bucket["estimated_cost_usd"] = breakdown["cost_usd"]
         return bucket
 
     def detail_error_message(detail):
@@ -1790,6 +2111,10 @@ def build_auth_stats():
                 "success": 0,
                 "failure": 0,
                 "tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
             },
             "quota_window": {
                 "tokens": 0,
@@ -1836,7 +2161,12 @@ def build_auth_stats():
                     continue
                 when = parse_detail_time(detail.get("timestamp"))
                 when_utc = parse_detail_time_utc(detail.get("timestamp"))
-                tokens = int((detail.get("tokens") or {}).get("total_tokens", 0) or 0)
+                tokens_info = detail.get("tokens") or {}
+                tokens = int(tokens_info.get("total_tokens", 0) or 0)
+                input_tokens = int(tokens_info.get("input_tokens", 0) or 0)
+                output_tokens = int(tokens_info.get("output_tokens", 0) or 0)
+                cached_tokens = int(tokens_info.get("cached_tokens", 0) or 0)
+                reasoning_tokens = int(tokens_info.get("reasoning_tokens", 0) or 0)
                 failed = bool(detail.get("failed", False))
                 if when_utc:
                     stat["_quota_usage_details"].append((when_utc, tokens))
@@ -1845,6 +2175,10 @@ def build_auth_stats():
                 if detail_date == today:
                     stat["today"]["requests"] += 1
                     stat["today"]["tokens"] += tokens
+                    stat["today"]["input_tokens"] += input_tokens
+                    stat["today"]["output_tokens"] += output_tokens
+                    stat["today"]["cached_tokens"] += cached_tokens
+                    stat["today"]["reasoning_tokens"] += reasoning_tokens
                     if failed:
                         stat["today"]["failure"] += 1
                     else:
@@ -1855,6 +2189,10 @@ def build_auth_stats():
                     bucket = stat[window_name]
                     bucket["requests"] += 1
                     bucket["tokens"] += tokens
+                    bucket["input_tokens"] += input_tokens
+                    bucket["output_tokens"] += output_tokens
+                    bucket["cached_tokens"] += cached_tokens
+                    bucket["reasoning_tokens"] += reasoning_tokens
                     if failed:
                         bucket["failure"] += 1
                     else:
@@ -1870,6 +2208,7 @@ def build_auth_stats():
     for stat in stats.values():
         for window_name in window_names:
             enrich_window(stat[window_name])
+        enrich_window(stat["today"])
         stat["status_explanation"] = status_explanation(stat)
 
         node = stat["node"] or "unknown"
@@ -1889,7 +2228,7 @@ def build_auth_stats():
         if stat.get("status") == "error" and not (stat.get("disabled") or stat.get("unavailable")):
             summary["warning"] += 1
         for window_name in window_names:
-            for metric in ("requests", "success", "failure", "tokens"):
+            for metric in ("requests", "success", "failure", "tokens", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"):
                 summary[window_name][metric] += stat[window_name][metric]
 
     for summary in node_summary.values():
@@ -2152,6 +2491,23 @@ def get_usage_history_aggregated():
     return db.get_usage_aggregated()
 
 
+def enrich_usage_breakdowns(data):
+    for row in data.get("history", []) or []:
+        breakdown = build_token_breakdown(row.get("total_tokens", 0), row.get("input_tokens", 0), row.get("output_tokens", 0), row.get("cached_tokens", 0), row.get("reasoning_tokens", 0))
+        row["token_breakdown"] = breakdown
+        row["estimated_cost_usd"] = breakdown["cost_usd"]
+    for bucket_name in ("by_month", "by_year"):
+        for bucket in (data.get(bucket_name, {}) or {}).values():
+            breakdown = build_token_breakdown(bucket.get("total_tokens", 0), bucket.get("input_tokens", 0), bucket.get("output_tokens", 0), bucket.get("cached_tokens", 0), bucket.get("reasoning_tokens", 0))
+            bucket["token_breakdown"] = breakdown
+            bucket["estimated_cost_usd"] = breakdown["cost_usd"]
+    data["token_pricing"] = {
+        "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
+        "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
+    }
+    return data
+
+
 def apply_live_today_usage(data, usage):
     today = beijing_today()
     tokens_by_day = usage.get("tokens_by_day", {}) or {}
@@ -2223,6 +2579,10 @@ def snapshot_file_for_node(node_name):
     return os.path.join(SNAPSHOT_DIR, f"{safe_name}.json")
 
 
+def snapshot_meta_file_for_node(node_name):
+    return f"{snapshot_file_for_node(node_name)}.meta.json"
+
+
 def snapshot_totals(snapshot_data):
     usage = (snapshot_data or {}).get("usage", {}) or {}
     return int(usage.get("total_tokens", 0) or 0), int(usage.get("total_requests", 0) or 0)
@@ -2237,6 +2597,26 @@ def load_snapshot_file(path):
     except json.JSONDecodeError as e:
         print(f"[Snapshot] Ignoring invalid snapshot {path}: {e}")
         return None
+
+
+def load_snapshot_meta(path):
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return int(data.get("total_tokens", 0) or 0), int(data.get("total_requests", 0) or 0)
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        print(f"[Snapshot] Ignoring invalid snapshot metadata {path}: {e}")
+        return None
+
+
+def write_snapshot_meta(path, total_tokens, total_requests):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w") as f:
+        json.dump({"total_tokens": int(total_tokens or 0), "total_requests": int(total_requests or 0)}, f)
+    os.replace(tmp_path, path)
 
 
 def write_snapshot_file(path, data):
@@ -2274,16 +2654,18 @@ def export_node_snapshot(node):
         return False
 
     current_tokens, current_requests = snapshot_totals(data)
-    previous = load_snapshot_file(path)
-    if previous:
-        previous_tokens, previous_requests = snapshot_totals(previous)
+    meta_path = snapshot_meta_file_for_node(node_name)
+    previous_totals = load_snapshot_meta(meta_path)
+    if previous_totals:
+        previous_tokens, previous_requests = previous_totals
         if current_tokens < previous_tokens or current_requests < previous_requests:
             print(
                 f"[Snapshot] Restart detected on {node_name}: "
                 f"current={current_tokens:,}/{current_requests:,}, "
                 f"snapshot={previous_tokens:,}/{previous_requests:,}. Restoring before export."
             )
-            if import_snapshot_to_node(node, previous, path):
+            previous = load_snapshot_file(path)
+            if previous and import_snapshot_to_node(node, previous, path):
                 data, err = call_management_api_node(node, "GET", "/v0/management/usage/export", timeout=60)
                 if err:
                     print(f"[Snapshot] Export after restore failed for {node_name}: {err}")
@@ -2293,10 +2675,12 @@ def export_node_snapshot(node):
                 return False
 
     write_snapshot_file(path, data)
+    write_snapshot_meta(meta_path, current_tokens, current_requests)
 
     # Keep the legacy single-node file for compatibility with older tooling.
     if node_name == CLIPROXY_NODES[0]["name"]:
         write_snapshot_file(SNAPSHOT_FILE, data)
+        write_snapshot_meta(f"{SNAPSHOT_FILE}.meta.json", current_tokens, current_requests)
 
     print(f"[Snapshot] Exported {node_name}: {current_tokens:,} tokens, {current_requests:,} requests -> {path}")
     return True
@@ -2624,6 +3008,7 @@ def get_usage_history():
     api_data = get_cluster_usage_summary()
     usage = api_data.get("usage", {})
     apply_live_today_usage(data, usage)
+    enrich_usage_breakdowns(data)
     data["tokens_by_hour"] = usage.get("tokens_by_hour", {})
     data["requests_by_hour"] = usage.get("requests_by_hour", {})
     data["success_by_hour"] = usage.get("success_by_hour", {})
@@ -2697,6 +3082,7 @@ def register_key():
     email = data.get("email", "").strip().lower()
     name = data.get("name", "").strip()
     label = data.get("label", "").strip()
+    model_group = normalize_model_group(data.get("model_group", "common"))
 
     if not email:
         return jsonify({"error": "请输入邮箱"}), 400
@@ -2711,7 +3097,7 @@ def register_key():
         label = name or email
 
     # Assign key
-    api_key, error = assign_key_to_user(email, name, label)
+    api_key, error = assign_key_to_user(email, name, label, model_group)
 
     if error:
         return jsonify({"error": error}), 500
@@ -2721,6 +3107,7 @@ def register_key():
         "api_key": api_key,
         "identifier": name,
         "email": email,
+        "model_group": model_group,
         "message": "API Key 申请成功！"
     })
 
@@ -2831,6 +3218,11 @@ def build_all_users_stats_response(aggregation, live_today=False):
     total_users = len(set(s.get("email", "") for s in stats))
     total_requests = sum(s.get("total_requests", 0) for s in stats)
     total_tokens = sum(s.get("total_tokens", 0) for s in stats)
+    input_tokens = sum(s.get("input_tokens", 0) for s in stats)
+    output_tokens = sum(s.get("output_tokens", 0) for s in stats)
+    cached_tokens = sum(s.get("cached_tokens", 0) for s in stats)
+    reasoning_tokens = sum(s.get("reasoning_tokens", 0) for s in stats)
+    token_breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
     if aggregation in ("day", "month", "year"):
         unique_keys = {
             api_key
@@ -2856,9 +3248,19 @@ def build_all_users_stats_response(aggregation, live_today=False):
             "total_users": total_users,
             "total_requests": total_requests,
             "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "token_breakdown": token_breakdown,
+            "estimated_cost_usd": token_breakdown["cost_usd"],
             "total_keys": total_keys,
         },
         "aggregation": aggregation,
+        "token_pricing": {
+            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
+            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
+        },
     }
 
 
@@ -2915,56 +3317,147 @@ def query_by_key():
     today = beijing_today()
     user_total_requests = 0
     user_total_tokens = 0
+    user_total_input_tokens = 0
+    user_total_output_tokens = 0
+    user_total_cached_tokens = 0
+    user_total_reasoning_tokens = 0
     user_today_requests = 0
     user_today_tokens = 0
+    user_today_input_tokens = 0
+    user_today_output_tokens = 0
+    user_today_cached_tokens = 0
+    user_today_reasoning_tokens = 0
     queried_key_requests = 0
     queried_key_tokens = 0
+    queried_key_input_tokens = 0
+    queried_key_output_tokens = 0
+    queried_key_cached_tokens = 0
+    queried_key_reasoning_tokens = 0
     queried_key_today_requests = 0
     queried_key_today_tokens = 0
+    queried_key_today_input_tokens = 0
+    queried_key_today_output_tokens = 0
+    queried_key_today_cached_tokens = 0
+    queried_key_today_reasoning_tokens = 0
     all_keys = []
+    today_key_db_stats = db.get_user_key_usage_for_date(identifier, today)
 
     for key in user.get("api_keys", []):
         key_meta = user_data["keys"].get(key, {})
         key_stats = apis.get(key, {})
         today_stats = key_usage_for_date(key_stats, today)
 
-        requests = key_stats.get("total_requests", 0)
-        tokens = key_stats.get("total_tokens", 0)
-        today_requests = today_stats.get("total_requests", 0)
-        today_tokens = today_stats.get("total_tokens", 0)
+        key_db_rows = db.get_user_key_usage_range(identifier, key, "1970-01-01", today)
+        db_total_requests = sum(int(row.get("requests", 0) or 0) for row in key_db_rows)
+        db_total_tokens = sum(int(row.get("total_tokens", 0) or 0) for row in key_db_rows)
+        db_input_tokens = sum(int(row.get("input_tokens", 0) or 0) for row in key_db_rows)
+        db_output_tokens = sum(int(row.get("output_tokens", 0) or 0) for row in key_db_rows)
+        db_cached_tokens = sum(int(row.get("cached_tokens", 0) or 0) for row in key_db_rows)
+        db_reasoning_tokens = sum(int(row.get("reasoning_tokens", 0) or 0) for row in key_db_rows)
+        today_db_stats = today_key_db_stats.get(key, {})
+
+        requests = max(int(key_stats.get("total_requests", 0) or 0), db_total_requests)
+        tokens = max(int(key_stats.get("total_tokens", 0) or 0), db_total_tokens)
+        input_tokens = db_input_tokens
+        output_tokens = db_output_tokens
+        cached_tokens = db_cached_tokens
+        reasoning_tokens = db_reasoning_tokens
+        today_requests = max(int(today_stats.get("total_requests", 0) or 0), int(today_db_stats.get("total_requests", 0) or 0))
+        today_tokens = max(int(today_stats.get("total_tokens", 0) or 0), int(today_db_stats.get("total_tokens", 0) or 0))
+        today_input_tokens = max(int(today_stats.get("input_tokens", 0) or 0), int(today_db_stats.get("input_tokens", 0) or 0))
+        today_output_tokens = max(int(today_stats.get("output_tokens", 0) or 0), int(today_db_stats.get("output_tokens", 0) or 0))
+        today_cached_tokens = max(int(today_stats.get("cached_tokens", 0) or 0), int(today_db_stats.get("cached_tokens", 0) or 0))
+        today_reasoning_tokens = max(int(today_stats.get("reasoning_tokens", 0) or 0), int(today_db_stats.get("reasoning_tokens", 0) or 0))
+        breakdown = build_token_breakdown(tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
 
         user_total_requests += requests
         user_total_tokens += tokens
+        user_total_input_tokens += input_tokens
+        user_total_output_tokens += output_tokens
+        user_total_cached_tokens += cached_tokens
+        user_total_reasoning_tokens += reasoning_tokens
         user_today_requests += today_requests
         user_today_tokens += today_tokens
+        user_today_input_tokens += today_input_tokens
+        user_today_output_tokens += today_output_tokens
+        user_today_cached_tokens += today_cached_tokens
+        user_today_reasoning_tokens += today_reasoning_tokens
         if key == api_key:
             queried_key_requests = requests
             queried_key_tokens = tokens
+            queried_key_input_tokens = input_tokens
+            queried_key_output_tokens = output_tokens
+            queried_key_cached_tokens = cached_tokens
+            queried_key_reasoning_tokens = reasoning_tokens
             queried_key_today_requests = today_requests
             queried_key_today_tokens = today_tokens
+            queried_key_today_input_tokens = today_input_tokens
+            queried_key_today_output_tokens = today_output_tokens
+            queried_key_today_cached_tokens = today_cached_tokens
+            queried_key_today_reasoning_tokens = today_reasoning_tokens
 
         all_keys.append({
             "key": key,
             "label": key_meta.get("label", ""),
+            "model_group": key_meta.get("model_group", "common"),
             "created_at": key_meta.get("created_at", ""),
             "total_requests": requests,
             "total_tokens": tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
             "today_requests": today_requests,
             "today_tokens": today_tokens,
+            "today_input_tokens": today_input_tokens,
+            "today_output_tokens": today_output_tokens,
+            "today_cached_tokens": today_cached_tokens,
+            "today_reasoning_tokens": today_reasoning_tokens,
+            "today_token_breakdown": build_token_breakdown(today_tokens, today_input_tokens, today_output_tokens, today_cached_tokens, today_reasoning_tokens),
         })
 
+    queried_breakdown = build_token_breakdown(queried_key_tokens, queried_key_input_tokens, queried_key_output_tokens, queried_key_cached_tokens, queried_key_reasoning_tokens)
+    user_breakdown = build_token_breakdown(user_total_tokens, user_total_input_tokens, user_total_output_tokens, user_total_cached_tokens, user_total_reasoning_tokens)
     return jsonify({
         "identifier": identifier,
         "date": today,
         "total_requests": queried_key_requests,
         "total_tokens": queried_key_tokens,
+        "input_tokens": queried_key_input_tokens,
+        "output_tokens": queried_key_output_tokens,
+        "cached_tokens": queried_key_cached_tokens,
+        "reasoning_tokens": queried_key_reasoning_tokens,
+        "token_breakdown": queried_breakdown,
+        "estimated_cost_usd": queried_breakdown["cost_usd"],
         "today_requests": queried_key_today_requests,
         "today_tokens": queried_key_today_tokens,
+        "today_input_tokens": queried_key_today_input_tokens,
+        "today_output_tokens": queried_key_today_output_tokens,
+        "today_cached_tokens": queried_key_today_cached_tokens,
+        "today_reasoning_tokens": queried_key_today_reasoning_tokens,
+        "today_token_breakdown": build_token_breakdown(queried_key_today_tokens, queried_key_today_input_tokens, queried_key_today_output_tokens, queried_key_today_cached_tokens, queried_key_today_reasoning_tokens),
         "user_total_requests": user_total_requests,
         "user_total_tokens": user_total_tokens,
+        "user_input_tokens": user_total_input_tokens,
+        "user_output_tokens": user_total_output_tokens,
+        "user_cached_tokens": user_total_cached_tokens,
+        "user_reasoning_tokens": user_total_reasoning_tokens,
+        "user_token_breakdown": user_breakdown,
+        "user_estimated_cost_usd": user_breakdown["cost_usd"],
         "user_today_requests": user_today_requests,
         "user_today_tokens": user_today_tokens,
-        "all_keys": all_keys
+        "user_today_input_tokens": user_today_input_tokens,
+        "user_today_output_tokens": user_today_output_tokens,
+        "user_today_cached_tokens": user_today_cached_tokens,
+        "user_today_reasoning_tokens": user_today_reasoning_tokens,
+        "user_today_token_breakdown": build_token_breakdown(user_today_tokens, user_today_input_tokens, user_today_output_tokens, user_today_cached_tokens, user_today_reasoning_tokens),
+        "all_keys": all_keys,
+        "token_pricing": {
+            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
+            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
+        },
     })
 
 
@@ -2997,9 +3490,11 @@ def api_get_user_keys():
     for api_key in api_keys:
         key_meta = user_data.get("keys", {}).get(api_key, {})
         key_stats = stats_by_key.get(api_key, {})
+        breakdown = build_token_breakdown(key_stats.get("total_tokens", 0), key_stats.get("input_tokens", 0), key_stats.get("output_tokens", 0), key_stats.get("cached_tokens", 0), key_stats.get("reasoning_tokens", 0))
         keys_info.append({
             "key": api_key,
             "label": key_meta.get("label", ""),
+            "model_group": key_meta.get("model_group", "common"),
             "created_at": key_meta.get("created_at", ""),
             "total_requests": key_stats.get("total_requests", 0),
             "success_count": key_stats.get("success_count", 0),
@@ -3007,6 +3502,10 @@ def api_get_user_keys():
             "total_tokens": key_stats.get("total_tokens", 0),
             "input_tokens": key_stats.get("input_tokens", 0),
             "output_tokens": key_stats.get("output_tokens", 0),
+            "cached_tokens": key_stats.get("cached_tokens", 0),
+            "reasoning_tokens": key_stats.get("reasoning_tokens", 0),
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
         })
 
     keys_info.sort(key=lambda item: item.get("total_tokens", 0), reverse=True)
@@ -3022,12 +3521,33 @@ def api_get_user_keys():
 def api_get_user_key_timeseries():
     email = request.args.get("email", "").strip()
     api_key = request.args.get("api_key", "").strip()
-    date = request.args.get("date", "").strip() or beijing_today()
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    date = request.args.get("date", "").strip()
 
     if not api_key:
         return jsonify({"error": "请提供 API Key"}), 400
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-        return jsonify({"error": "日期格式应为 YYYY-MM-DD"}), 400
+
+    if date_from and date_to:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_from) or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_to):
+            return jsonify({"error": "日期格式应为 YYYY-MM-DD"}), 400
+    elif date:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            return jsonify({"error": "日期格式应为 YYYY-MM-DD"}), 400
+        date_from = date
+        date_to = date
+    else:
+        date_from = beijing_today()
+        date_to = beijing_today()
+
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+    dt_to = datetime.strptime(date_to, "%Y-%m-%d")
+    num_days = (dt_to - dt_from).days + 1
+    if num_days > 90:
+        return jsonify({"error": "时间范围不能超过 90 天"}), 400
 
     user_data = load_user_keys()
     key_info = user_data.get("keys", {}).get(api_key, {})
@@ -3035,73 +3555,76 @@ def api_get_user_key_timeseries():
     if email and owner and owner != email and owner.lower() != email.lower():
         return jsonify({"error": "该 Key 不属于该用户"}), 403
 
-    cache_key = f"{owner or email}|{api_key}|{date}"
+    cache_key = f"{owner or email}|{api_key}|{date_from}|{date_to}"
     now = time.time()
     with _user_key_timeseries_cache_lock:
         cached = _user_key_timeseries_cache["data"].get(cache_key)
         if cached and (now - cached["last_update"]) < _user_key_timeseries_cache["ttl"]:
             return jsonify(cached["data"])
 
-    stats_data, err = get_usage_stats_cached()
-    if err:
-        return jsonify({"error": err}), 500
-
-    api_stats = (stats_data.get("usage", {}).get("apis", {}) if stats_data else {}).get(api_key, {})
-    if not api_stats and not key_info:
+    if not key_info:
         return jsonify({"error": "Key 不存在"}), 404
 
+    rows_by_date = {
+        row["date"]: row
+        for row in db.get_user_key_usage_range(owner, api_key, date_from, date_to)
+    }
     buckets = []
-    for hour in range(24):
+    d = dt_from
+    while d <= dt_to:
+        ds = d.strftime("%Y-%m-%d")
+        row = rows_by_date.get(ds, {})
+        total_tokens = int(row.get("total_tokens", 0) or 0)
+        input_tokens = int(row.get("input_tokens", 0) or 0)
+        output_tokens = int(row.get("output_tokens", 0) or 0)
+        cached_tokens = int(row.get("cached_tokens", 0) or 0)
+        reasoning_tokens = int(row.get("reasoning_tokens", 0) or 0)
+        breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
         buckets.append({
-            "hour": f"{hour:02d}",
-            "requests": 0,
-            "success_count": 0,
-            "failure_count": 0,
-            "total_tokens": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
+            "date": ds,
+            "requests": int(row.get("requests", 0) or 0),
+            "success_count": int(row.get("success_count", 0) or 0),
+            "failure_count": int(row.get("failure_count", 0) or 0),
+            "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
         })
-
-    for model_name, model_stats in (api_stats.get("models", {}) or {}).items():
-        for detail in model_stats.get("details", []) or []:
-            if not isinstance(detail, dict):
-                continue
-            timestamp = str(detail.get("timestamp") or "")
-            detail_date, hour = beijing_date_hour(timestamp)
-            if detail_date != date or hour is None:
-                continue
-
-            tokens_info = detail.get("tokens", {}) or {}
-            failed_value = detail.get("failed", False)
-            failed = failed_value.lower() == "true" if isinstance(failed_value, str) else bool(failed_value)
-
-            bucket = buckets[hour]
-            bucket["requests"] += 1
-            if failed:
-                bucket["failure_count"] += 1
-            else:
-                bucket["success_count"] += 1
-            bucket["total_tokens"] += int(tokens_info.get("total_tokens", 0) or 0)
-            bucket["input_tokens"] += int(tokens_info.get("input_tokens", 0) or 0)
-            bucket["output_tokens"] += int(tokens_info.get("output_tokens", 0) or 0)
+        d += timedelta(days=1)
+    mode = "daily"
 
     totals = {
-        "requests": sum(bucket["requests"] for bucket in buckets),
-        "success_count": sum(bucket["success_count"] for bucket in buckets),
-        "failure_count": sum(bucket["failure_count"] for bucket in buckets),
-        "total_tokens": sum(bucket["total_tokens"] for bucket in buckets),
-        "input_tokens": sum(bucket["input_tokens"] for bucket in buckets),
-        "output_tokens": sum(bucket["output_tokens"] for bucket in buckets),
+        "requests": sum(b["requests"] for b in buckets),
+        "success_count": sum(b["success_count"] for b in buckets),
+        "failure_count": sum(b["failure_count"] for b in buckets),
+        "total_tokens": sum(b["total_tokens"] for b in buckets),
+        "input_tokens": sum(b["input_tokens"] for b in buckets),
+        "output_tokens": sum(b["output_tokens"] for b in buckets),
+        "cached_tokens": sum(b["cached_tokens"] for b in buckets),
+        "reasoning_tokens": sum(b["reasoning_tokens"] for b in buckets),
     }
+    totals_breakdown = build_token_breakdown(totals["total_tokens"], totals["input_tokens"], totals["output_tokens"], totals["cached_tokens"], totals["reasoning_tokens"])
+    totals["token_breakdown"] = totals_breakdown
+    totals["estimated_cost_usd"] = totals_breakdown["cost_usd"]
 
     result = {
         "email": owner,
         "key": api_key,
         "label": key_info.get("label", ""),
-        "date": date,
+        "date_from": date_from,
+        "date_to": date_to,
+        "date": date_from if num_days == 1 else None,
+        "mode": mode,
         "timezone": "Asia/Shanghai",
         "buckets": buckets,
         "totals": totals,
+        "token_pricing": {
+            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
+            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
+        },
     }
     with _user_key_timeseries_cache_lock:
         _user_key_timeseries_cache["data"][cache_key] = {
@@ -3403,7 +3926,7 @@ if __name__ == "__main__":
     load_usage_history()
 
     print("[Startup] Restoring CLIProxyAPI usage snapshots...")
-    import_cliproxy_snapshot()
+    # import_cliproxy_snapshot()  # disabled: NLB architecture, nodes are independent
 
     # Start scheduler
     scheduler.add_job(
@@ -3430,11 +3953,11 @@ if __name__ == "__main__":
         id="git_sync"
     )
 
-    # Export CLIProxyAPI snapshot every 5 minutes (for restart recovery)
+    # Export full CLIProxyAPI snapshots infrequently; the payloads are large.
     scheduler.add_job(
         scheduled_snapshot_export,
         "interval",
-        minutes=5,
+        minutes=60,
         id="snapshot_export"
     )
 
@@ -3454,12 +3977,11 @@ if __name__ == "__main__":
     print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
     print(f"  - Usage sync:   every 5 min")
     print(f"  - Git sync:     daily at 00:05")
-    print(f"  - Snapshot:     every 5 min")
+    print(f"  - Snapshot:     every 60 min")
     print(f"  - Broadcast:    every 15 sec")
 
-    # Initial sync and snapshot export
+    # Initial sync
     sync_usage_from_api()
-    export_cliproxy_snapshot()
 
     # Run Flask app with SocketIO
     print(f"Starting Key Portal on {config.HOST}:{config.PORT} (WebSocket enabled)")

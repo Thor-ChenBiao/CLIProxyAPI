@@ -86,6 +86,8 @@
             font-size: 14px;
             opacity: 0.9;
         }
+        .token-detail { font-size: 11px; color: #666; margin-top: 4px; line-height: 1.45; }
+        .token-cost { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 2px; }
         .keys-list {
             background: white;
             padding: 30px;
@@ -203,6 +205,7 @@
                     <tr>
                         <th>Key</th>
                         <th>标签</th>
+                        <th>Key 类型</th>
                         <th>创建时间</th>
                         <th>请求数</th>
                         <th>Tokens</th>
@@ -217,6 +220,16 @@
 
     <script>
         const STORAGE_KEY = 'my_api_keys';
+        const MODEL_GROUP_LABELS = {
+            common: '通用 Key',
+            claude: 'Claude Key',
+            gemini: 'Gemini Key',
+            deepseek: 'DeepSeek Key'
+        };
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
 
         function getMyKeys() {
             try {
@@ -297,7 +310,9 @@
                             </div>
                             <div style="text-align: center; margin-right: 20px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
                                 <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">Tokens</div>
-                                <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #28a745;">${formatNumber(tokens)}</div>
+                                <div class="token-detail">${tokenBreakdownText(keyStats?.token_breakdown || {})}</div>
+                                <div class="token-cost">估算 ${formatCost(keyStats?.estimated_cost_usd, 'usd')}</div>
                             </div>
                             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                                 <button onclick="copySetupCmd('${item.key}', this)" style="padding: 9px 14px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(16,185,129,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
@@ -329,7 +344,35 @@
         }
 
         function formatNumber(num) {
-            return num.toLocaleString();
+            return Number(num || 0).toLocaleString();
+        }
+
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(item) {
+            if (!item) return 'Input 0 · Output 0 · Cache 0';
+            const parts = [
+                'Input ' + formatNumber(item.input_tokens),
+                'Output ' + formatNumber(item.output_tokens),
+                'Cache ' + formatNumber(item.cached_tokens)
+            ];
+            if (Number(item.reasoning_tokens || 0) > 0) parts.push('Reasoning ' + formatNumber(item.reasoning_tokens));
+            if (Number(item.unknown_tokens || 0) > 0) parts.push('未分类 ' + formatNumber(item.unknown_tokens));
+            return parts.join(' · ');
+        }
+
+        function tokenUsageHtml(item) {
+            const breakdown = item?.token_breakdown || item || {};
+            return `
+                <div>${formatNumber(item?.total_tokens ?? breakdown.total_tokens)}</div>
+                <div class="token-detail">${tokenBreakdownText(breakdown)}</div>
+                <div class="token-cost">估算 ${formatCost(item?.estimated_cost_usd ?? breakdown.cost_usd, 'usd')}</div>
+            `;
         }
 
         function formatDate(dateStr) {
@@ -370,7 +413,11 @@
                     document.getElementById('userName').textContent = data.identifier;
                     document.getElementById('userEmail').textContent = `Key: ${apiKey}`;
                     document.getElementById('totalRequests').textContent = formatNumber(userTotalRequests);
-                    document.getElementById('totalTokens').textContent = formatNumber(userTotalTokens);
+                    document.getElementById('totalTokens').innerHTML = tokenUsageHtml({
+                        total_tokens: userTotalTokens,
+                        token_breakdown: data.user_token_breakdown,
+                        estimated_cost_usd: data.user_estimated_cost_usd
+                    });
                     document.getElementById('keyCount').textContent = data.all_keys.length;
                     userInfo.style.display = 'block';
 
@@ -383,9 +430,10 @@
                         row.innerHTML = `
                             <td><span class="key-value">${key.key}</span></td>
                             <td>${key.label}</td>
+                            <td>${modelGroupLabel(key.model_group || 'common')}</td>
                             <td>${formatDate(key.created_at)}</td>
                             <td>${formatNumber(key.total_requests)}</td>
-                            <td>${formatNumber(key.total_tokens)}</td>
+                            <td>${tokenUsageHtml(key)}</td>
                             <td>
                                 <button class="btn btn-danger" onclick="revokeKey('${key.key}')">撤销</button>
                             </td>

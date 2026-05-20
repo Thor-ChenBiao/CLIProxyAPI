@@ -1,6 +1,7 @@
 package synthesizer
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeGeminiKeys(ctx)...)
 	// Claude API Keys
 	out = append(out, s.synthesizeClaudeKeys(ctx)...)
+	// Bedrock Claude
+	out = append(out, s.synthesizeBedrockClaude(ctx)...)
 	// Codex API Keys
 	out = append(out, s.synthesizeCodexKeys(ctx)...)
 	// OpenAI-compat
@@ -130,6 +133,61 @@ func (s *ConfigSynthesizer) synthesizeClaudeKeys(ctx *SynthesisContext) []*corea
 			UpdatedAt:  now,
 		}
 		ApplyAuthExcludedModelsMeta(a, cfg, ck.ExcludedModels, "apikey")
+		out = append(out, a)
+	}
+	return out
+}
+
+func (s *ConfigSynthesizer) synthesizeBedrockClaude(ctx *SynthesisContext) []*coreauth.Auth {
+	cfg := ctx.Config
+	now := ctx.Now
+	idGen := ctx.IDGenerator
+
+	out := make([]*coreauth.Auth, 0, len(cfg.BedrockClaude))
+	for i := range cfg.BedrockClaude {
+		entry := cfg.BedrockClaude[i]
+		if entry.Enabled != nil && !*entry.Enabled {
+			continue
+		}
+		region := strings.TrimSpace(entry.Region)
+		if region == "" || len(entry.Models) == 0 {
+			continue
+		}
+		modelsJSONBytes, err := json.Marshal(entry.Models)
+		if err != nil {
+			continue
+		}
+		modelsJSON := string(modelsJSONBytes)
+		profile := strings.TrimSpace(entry.Profile)
+		prefix := strings.TrimSpace(entry.Prefix)
+		id, token := idGen.Next("bedrock-claude", region, profile, prefix, modelsJSON)
+		label := strings.TrimSpace(entry.Label)
+		if label == "" {
+			label = "Claude Key"
+		}
+		attrs := map[string]string{
+			"source":         fmt.Sprintf("config:bedrock-claude[%s]", token),
+			"region":         region,
+			"model_group":    "claude",
+			"bedrock_models": modelsJSON,
+		}
+		if profile != "" {
+			attrs["profile"] = profile
+		}
+		if entry.Priority != 0 {
+			attrs["priority"] = strconv.Itoa(entry.Priority)
+		}
+		a := &coreauth.Auth{
+			ID:         id,
+			Provider:   "bedrock-claude",
+			Label:      label,
+			Prefix:     prefix,
+			Status:     coreauth.StatusActive,
+			ProxyURL:   strings.TrimSpace(entry.ProxyURL),
+			Attributes: attrs,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
 		out = append(out, a)
 	}
 	return out

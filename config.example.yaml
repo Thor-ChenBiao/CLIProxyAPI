@@ -41,6 +41,17 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
+# Optional downstream API key permissions. Keys without an entry keep the legacy unrestricted behavior.
+# api-key-permissions:
+#   - key: "your-claude-key"
+#     label: "Claude Key"
+#     allow-model-groups:
+#       - "claude"
+#   - key: "your-common-key"
+#     label: "Common Key"
+#     deny-model-groups:
+#       - "claude"
+
 # Enable debug logging
 debug: false
 
@@ -212,6 +223,17 @@ nonstream-keepalive-interval: 0
 #       cache-user-id: true          # optional: default is false; set true to reuse cached user_id per API key instead of generating a random one each request
 #     experimental-cch-signing: false # optional: default is false; when true, sign the final /v1/messages body using the current Claude Code cch algorithm
 #                                     # keep this disabled unless you explicitly need the behavior, so upstream seed changes fall back to legacy proxy behavior
+
+# AWS Bedrock Claude models. Credentials are loaded by the AWS SDK default chain/profile; do not put AK/SK in this config.
+# bedrock-claude:
+#   - enabled: true
+#     label: "Claude Key"
+#     region: "us-west-2"
+#     profile: "bedrock"
+#     priority: 10
+#     models:
+#       - name: "bedrock-claude-opus-4-6"
+#         bedrock-model-id: "us.anthropic.claude-opus-4-6-v1:1"
 
 # Default headers for Claude API requests. Update when Claude Code releases new versions.
 # In legacy mode, user-agent/package-version/runtime-version/timeout are used as fallbacks

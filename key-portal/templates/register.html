@@ -151,6 +151,17 @@
                 <input type="text" id="label" name="label" placeholder="工作电脑">
             </div>
 
+            <div class="form-group">
+                <label for="modelGroup">Key 类型 *</label>
+                <select id="modelGroup" name="modelGroup" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: white; color: #333;">
+                    <option value="common" selected>通用 Key（common）</option>
+                    <option value="claude">Claude Key</option>
+                    <option value="gemini">Gemini Key</option>
+                    <option value="deepseek">DeepSeek Key</option>
+                </select>
+                <p id="modelGroupHint" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; line-height: 1.5;">通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。</p>
+            </div>
+
             <button type="submit" class="btn" id="submitBtn">申请 API Key</button>
         </form>
 
@@ -164,6 +175,33 @@
     </div>
 
     <script>
+        const MODEL_GROUP_LABELS = {
+            common: '通用 Key',
+            claude: 'Claude Key',
+            gemini: 'Gemini Key',
+            deepseek: 'DeepSeek Key'
+        };
+        const MODEL_GROUP_HINTS = {
+            common: '通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
+            claude: 'Claude Key 面向 Claude 原生和 Bedrock Claude 模型，后续会接入审批和额度限制。',
+            gemini: 'Gemini Key 面向 Google Gemini 模型，后续会接入审批和额度限制。',
+            deepseek: 'DeepSeek Key 面向 DeepSeek 模型，后续会接入审批和额度限制。'
+        };
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
+
+        function updateModelGroupHint() {
+            const selector = document.getElementById('modelGroup');
+            const hint = document.getElementById('modelGroupHint');
+            if (!selector || !hint) return;
+            hint.textContent = MODEL_GROUP_HINTS[selector.value] || MODEL_GROUP_HINTS.common;
+        }
+
+        document.getElementById('modelGroup').addEventListener('change', updateModelGroupHint);
+        updateModelGroupHint();
+
         // Load pool status
         fetch('/api/key-pool-status')
             .then(r => r.json())
@@ -184,6 +222,7 @@
             const email = buildZillizEmail(document.getElementById('emailPrefix').value);
             const name = document.getElementById('name').value.trim();
             const label = document.getElementById('label').value.trim();
+            const modelGroup = document.getElementById('modelGroup').value || 'common';
             const submitBtn = document.getElementById('submitBtn');
             const result = document.getElementById('result');
 
@@ -202,7 +241,7 @@
                 const response = await fetch('/api/register-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, name, label })
+                    body: JSON.stringify({ email, name, label, model_group: modelGroup })
                 });
 
                 const data = await response.json();
@@ -213,6 +252,7 @@
                         <strong>✅ 申请成功！</strong><br><br>
                         您的 API Key：<br>
                         <div class="api-key">${data.api_key}</div>
+                        <p><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
                         <p>请妥善保管此 Key，配置到 Claude Code 中使用。</p>
                     `;
                     result.style.display = 'block';

@@ -13,10 +13,12 @@
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; }
         .header .slogan { font-size: 16px; opacity: 0.95; margin-bottom: 10px; }
         .header .slogan em { font-style: normal; color: #ffd700; }
-        .token-banner { background: rgba(255,255,255,0.15); padding: 15px 0; display: flex; justify-content: center; gap: 60px; }
-        .token-counter { text-align: center; }
-        .token-counter .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; }
+        .token-banner { background: rgba(255,255,255,0.15); padding: 15px 0; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
+        .token-counter { text-align: center; flex: 0 0 250px; width: 250px; }
+        .token-counter .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; min-height: 34px; white-space: nowrap; }
         .token-counter .label { font-size: 12px; opacity: 0.8; margin-top: 3px; }
+        .token-counter .token-detail { font-size: 10px; opacity: 0.82; margin-top: 2px; min-height: 28px; line-height: 1.35; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .token-counter .token-cost { font-size: 11px; color: #ffd700; font-weight: 600; margin-top: 1px; min-height: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
         .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
         .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
@@ -71,6 +73,8 @@
         .report-table th, .report-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
         .report-table th { background: #f8f9fa; color: #667eea; font-weight: 600; }
         .report-table tr:hover { background: #f8f9fa; }
+        .report-token-detail { font-size: 11px; color: #777; margin-top: 3px; line-height: 1.45; }
+        .report-token-cost { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 2px; }
         .token-num { font-weight: 600; color: #667eea; }
         .chart-container { margin: 20px 0; padding: 20px; background: #fafafa; border-radius: 10px; }
         .chart-container canvas { max-height: 300px; }
@@ -133,6 +137,8 @@
             <div class="token-counter">
                 <div class="value" id="todayTokenCounter">0</div>
                 <div class="label">今日 Tokens</div>
+                <div class="token-detail" id="todayTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                <div class="token-cost" id="todayTokenCost">估算 $0.00</div>
             </div>
             <div class="token-counter">
                 <div class="value" id="todayRequestCounter">0</div>
@@ -141,6 +147,8 @@
             <div class="token-counter">
                 <div class="value" id="totalTokenCounter">0</div>
                 <div class="label">累计 Tokens</div>
+                <div class="token-detail" id="totalTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                <div class="token-cost" id="totalTokenCost">估算 $0.00</div>
             </div>
             <div class="token-counter">
                 <div class="value" id="totalRequestCounter">0</div>
@@ -194,6 +202,19 @@
                             <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-left: 1px solid #d4ddff; font-size: 15px; font-weight: 600; white-space: nowrap;">@zilliz.com</span>
                         </div>
                         <p style="font-size: 13px; color: #999; margin-top: 5px;">只需要填写 @zilliz.com 前面的部分，用于把 Key 归属和用量统计到正确用户</p>
+                    </div>
+
+                    <div style="margin-bottom: 24px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">Key 类型 *</label>
+                        <select id="regModelGroup" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: white; color: #333;">
+                            <option value="common" selected>通用 Key（common）</option>
+                            <option value="claude">Claude Key</option>
+                            <option value="gemini">Gemini Key</option>
+                            <option value="deepseek">DeepSeek Key</option>
+                        </select>
+                        <div id="regModelGroupHint" style="margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; color: #555; font-size: 13px; line-height: 1.5;">
+                            通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。
+                        </div>
                     </div>
 
                     <button class="btn btn-primary" onclick="registerUserKey()" id="regBtn">申请 API Key</button>
@@ -349,6 +370,39 @@
             return num.toLocaleString('zh-CN');
         }
 
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(item) {
+            if (!item) return 'Input 0 · Output 0 · Cache 0';
+            const parts = [
+                'Input ' + formatNumber(Number(item.input_tokens || 0)),
+                'Output ' + formatNumber(Number(item.output_tokens || 0)),
+                'Cache ' + formatNumber(Number(item.cached_tokens || 0))
+            ];
+            const reasoning = Number(item.reasoning_tokens || 0);
+            const unknown = Number(item.unknown_tokens || 0);
+            if (reasoning > 0) parts.push('Reasoning ' + formatNumber(reasoning));
+            if (unknown > 0) parts.push('未分类 ' + formatNumber(unknown));
+            return parts.join(' · ');
+        }
+
+        function tokenCostText(item) {
+            if (!item) return '估算 $0.00';
+            return '估算 ' + formatCost(item.cost_usd, 'usd');
+        }
+
+        function tokenUsageCellHtml(item) {
+            const breakdown = item?.token_breakdown || item || {};
+            return '<div class="token-num">' + formatNumber(Number(item?.total_tokens ?? breakdown.total_tokens ?? 0)) + '</div>' +
+                '<div class="report-token-detail">' + escapeHtml(tokenBreakdownText(breakdown)) + '</div>' +
+                '<div class="report-token-cost">' + escapeHtml(tokenCostText(breakdown)) + '</div>';
+        }
+
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
         }
@@ -477,13 +531,13 @@
 
         function applyUsageSummary(data) {
             const today = data.today || lastUsageSummary.today || '';
-            const sameDay = !lastUsageSummary.today || !today || today === lastUsageSummary.today;
-            const totalTokens = Math.max(data.total_tokens || 0, lastUsageSummary.total_tokens || 0);
-            const totalRequests = Math.max(data.total_requests || 0, lastUsageSummary.total_requests || 0);
-            const successCount = Math.max(data.success_count || 0, lastUsageSummary.success_count || 0);
-            const failureCount = Math.max(data.failure_count || 0, lastUsageSummary.failure_count || 0);
-            const todayTokens = sameDay ? Math.max(data.today_tokens || 0, lastUsageSummary.today_tokens || 0) : (data.today_tokens || 0);
-            const todayRequests = sameDay ? Math.max(data.today_requests || 0, lastUsageSummary.today_requests || 0) : (data.today_requests || 0);
+            const totalTokens = Number(data.total_tokens || 0);
+            const totalRequests = Number(data.total_requests || 0);
+            const successCount = Number(data.success_count || 0);
+            const failureCount = Number(data.failure_count || 0);
+            const todayTokens = Number(data.today_tokens || 0);
+            const todayRequests = Number(data.today_requests || 0);
+            const tokenBreakdown = data.token_breakdown || lastUsageSummary.token_breakdown || {};
             lastUsageSummary = {
                 today,
                 today_tokens: todayTokens,
@@ -491,7 +545,8 @@
                 total_tokens: totalTokens,
                 total_requests: totalRequests,
                 success_count: successCount,
-                failure_count: failureCount
+                failure_count: failureCount,
+                token_breakdown: tokenBreakdown
             };
             animateCounter('todayTokenCounter', todayTokens);
             animateCounter('totalTokenCounter', totalTokens);
@@ -499,6 +554,10 @@
             animateCounter('totalRequestCounter', totalRequests);
             document.getElementById('totalTokens').textContent = formatNumber(totalTokens);
             document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
+            document.getElementById('todayTokenBreakdown').textContent = tokenBreakdownText(tokenBreakdown.today);
+            document.getElementById('totalTokenBreakdown').textContent = tokenBreakdownText(tokenBreakdown.total);
+            document.getElementById('todayTokenCost').textContent = tokenCostText(tokenBreakdown.today);
+            document.getElementById('totalTokenCost').textContent = tokenCostText(tokenBreakdown.total);
             const successRate = totalRequests > 0
                 ? Math.round((successCount / totalRequests) * 100) + '%'
                 : '-';
@@ -882,7 +941,7 @@
                 } else {
                     const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
                     tbody.innerHTML = sorted.map(d =>
-                        '<tr><td>' + d.date + '</td><td class="token-num">' + formatNumber(d.total_tokens) + '</td><td>' + d.total_requests + '</td></tr>'
+                        '<tr><td>' + d.date + '</td><td>' + tokenUsageCellHtml(d) + '</td><td>' + d.total_requests + '</td></tr>'
                     ).join('');
                 }
             } catch (e) {
@@ -902,6 +961,29 @@
         // ========================================
 
         const STORAGE_KEY = 'my_api_keys';
+        const MODEL_GROUP_LABELS = {
+            common: '通用 Key',
+            claude: 'Claude Key',
+            gemini: 'Gemini Key',
+            deepseek: 'DeepSeek Key'
+        };
+        const MODEL_GROUP_HINTS = {
+            common: '通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
+            claude: 'Claude Key 面向 Claude 原生和 Bedrock Claude 模型，后续会接入审批和额度限制。',
+            gemini: 'Gemini Key 面向 Google Gemini 模型，后续会接入审批和额度限制。',
+            deepseek: 'DeepSeek Key 面向 DeepSeek 模型，后续会接入审批和额度限制。'
+        };
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
+
+        function updateModelGroupHint() {
+            const selector = document.getElementById('regModelGroup');
+            const hint = document.getElementById('regModelGroupHint');
+            if (!selector || !hint) return;
+            hint.textContent = MODEL_GROUP_HINTS[selector.value] || MODEL_GROUP_HINTS.common;
+        }
 
         function getMyKeys() {
             try {
@@ -983,6 +1065,7 @@
                 const inferredEmail = item.email || (stats && isValidEmail(stats.identifier) ? stats.identifier : '');
                 const emailText = inferredEmail || '未填写邮箱';
                 const emailColor = inferredEmail ? '#666' : '#ad6800';
+                const modelGroup = item.model_group || 'common';
 
                 return `
                     <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
@@ -996,6 +1079,9 @@
                                 </div>
                                 <div style="font-size: 12px; color: #999; margin-top: 8px;">
                                     📅 ${formatDateTime(item.created_at)}
+                                </div>
+                                <div style="margin-top: 8px; font-size: 12px; color: #555;">
+                                    Key 类型：<span style="display: inline-block; padding: 2px 8px; background: #eef2ff; color: #4f46e5; border-radius: 999px; font-weight: 600;">${escapeHtml(modelGroupLabel(modelGroup))}</span>
                                 </div>
                                 <div style="margin-top: 10px; font-size: 12px; color: ${emailColor}; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                                     <span>邮箱：<span id="historyEmailText${index}">${escapeHtml(emailText)}</span></span>
@@ -1105,6 +1191,7 @@
             const identifier = document.getElementById('regIdentifier').value.trim();
             const emailPrefix = document.getElementById('regEmailPrefix').value.trim();
             const email = buildZillizEmail(emailPrefix);
+            const modelGroup = document.getElementById('regModelGroup')?.value || 'common';
             const btn = document.getElementById('regBtn');
             const result = document.getElementById('regResult');
 
@@ -1125,7 +1212,7 @@
                 const resp = await fetch('/api/register-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, name: identifier, label: identifier })
+                    body: JSON.stringify({ email, name: identifier, label: identifier, model_group: modelGroup })
                 });
 
                 const data = await resp.json();
@@ -1202,6 +1289,8 @@ export OPENAI_API_KEY="${apiKey}"`;
                         key: apiKey,
                         identifier: identifier,
                         email: email,
+                        model_group: modelGroup,
+                        model_group_label: modelGroupLabel(modelGroup),
                         created_at: new Date().toISOString()
                     });
 
@@ -1216,6 +1305,13 @@ export OPENAI_API_KEY="${apiKey}"`;
                                 <div style="display: flex; align-items: center; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
                                     <code id="newApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 14px; word-break: break-all; font-weight: 600;">${apiKey}</code>
                                     <button class="copy-btn" onclick="copyToClipboard('newApiKey')">复制</button>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">Key 类型：</p>
+                                <div style="background: white; padding: 12px; border-radius: 8px; color: #155724; font-weight: 600;">
+                                    ${modelGroupLabel(modelGroup)}
                                 </div>
                             </div>
 
@@ -1264,6 +1360,8 @@ export OPENAI_API_KEY="${apiKey}"`;
                     // Clear form
                     document.getElementById('regIdentifier').value = '';
                     document.getElementById('regEmailPrefix').value = '';
+                    document.getElementById('regModelGroup').value = 'common';
+                    updateModelGroupHint();
 
                     // Refresh pool status
                     loadPoolStatus();
@@ -1348,6 +1446,8 @@ export OPENAI_API_KEY="${apiKey}"`;
         });
 
         // Load pool status and historical keys on page load (register tab is active by default)
+        document.getElementById('regModelGroup')?.addEventListener('change', updateModelGroupHint);
+        updateModelGroupHint();
         loadPoolStatus();
         displayMyKeys();
 

@@ -114,6 +114,9 @@ type Config struct {
 	// ClaudeKey defines a list of Claude API key configurations as specified in the YAML configuration file.
 	ClaudeKey []ClaudeKey `yaml:"claude-api-key" json:"claude-api-key"`
 
+	// BedrockClaude defines AWS Bedrock Claude configurations using the AWS credential chain.
+	BedrockClaude []BedrockClaudeKey `yaml:"bedrock-claude" json:"bedrock-claude"`
+
 	// ClaudeHeaderDefaults configures default header values for Claude API requests.
 	// These are used as fallbacks when the client does not send its own headers.
 	ClaudeHeaderDefaults ClaudeHeaderDefaults `yaml:"claude-header-defaults" json:"claude-header-defaults"`
@@ -411,6 +414,28 @@ type ClaudeKey struct {
 
 func (k ClaudeKey) GetAPIKey() string  { return k.APIKey }
 func (k ClaudeKey) GetBaseURL() string { return k.BaseURL }
+
+// BedrockClaudeKey configures Claude access through AWS Bedrock Runtime.
+type BedrockClaudeKey struct {
+	Enabled  *bool                `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Label    string               `yaml:"label,omitempty" json:"label,omitempty"`
+	Region   string               `yaml:"region" json:"region"`
+	Profile  string               `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Priority int                  `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Prefix   string               `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	ProxyURL string               `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+	Models   []BedrockClaudeModel `yaml:"models,omitempty" json:"models,omitempty"`
+}
+
+// BedrockClaudeModel maps a client-visible model name to an AWS Bedrock model ID.
+type BedrockClaudeModel struct {
+	Name           string `yaml:"name" json:"name"`
+	Alias          string `yaml:"alias,omitempty" json:"alias,omitempty"`
+	BedrockModelID string `yaml:"bedrock-model-id" json:"bedrock-model-id"`
+}
+
+func (m BedrockClaudeModel) GetName() string  { return m.Name }
+func (m BedrockClaudeModel) GetAlias() string { return m.Alias }
 
 // ClaudeModel describes a mapping between an alias and the actual upstream model name.
 type ClaudeModel struct {

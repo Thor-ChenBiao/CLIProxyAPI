@@ -5,6 +5,7 @@ package cliproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -422,6 +423,8 @@ func (s *Service) ensureExecutorsForAuthWithMode(a *coreauth.Auth, forceReplace 
 		s.coreManager.RegisterExecutor(executor.NewAntigravityExecutor(s.cfg))
 	case "claude":
 		s.coreManager.RegisterExecutor(executor.NewClaudeExecutor(s.cfg))
+	case "bedrock-claude":
+		s.coreManager.RegisterExecutor(executor.NewBedrockClaudeExecutor(s.cfg))
 	case "kimi":
 		s.coreManager.RegisterExecutor(executor.NewKimiExecutor(s.cfg))
 	default:
@@ -898,6 +901,8 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 			}
 		}
 		models = applyExcludedModels(models, excluded)
+	case "bedrock-claude":
+		models = buildBedrockClaudeModelsFromAuth(a)
 	case "codex":
 		codexPlanType := ""
 		if a.Attributes != nil {
@@ -1407,6 +1412,21 @@ func buildClaudeConfigModels(entry *config.ClaudeKey) []*ModelInfo {
 		return nil
 	}
 	return buildConfigModels(entry.Models, "anthropic", "claude")
+}
+
+func buildBedrockClaudeModelsFromAuth(auth *coreauth.Auth) []*ModelInfo {
+	if auth == nil || auth.Attributes == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(auth.Attributes["bedrock_models"])
+	if raw == "" {
+		return nil
+	}
+	var models []config.BedrockClaudeModel
+	if err := json.Unmarshal([]byte(raw), &models); err != nil {
+		return nil
+	}
+	return buildConfigModels(models, "aws-bedrock", "claude")
 }
 
 func buildCodexConfigModels(entry *config.CodexKey) []*ModelInfo {

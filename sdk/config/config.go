@@ -11,6 +11,7 @@ type SDKConfig = internalconfig.SDKConfig
 type Config = internalconfig.Config
 
 type StreamingConfig = internalconfig.StreamingConfig
+type APIKeyPermission = internalconfig.APIKeyPermission
 type TLSConfig = internalconfig.TLSConfig
 type RemoteManagement = internalconfig.RemoteManagement
 type AmpCode = internalconfig.AmpCode
@@ -23,6 +24,8 @@ type PayloadModelRule = internalconfig.PayloadModelRule
 type GeminiKey = internalconfig.GeminiKey
 type CodexKey = internalconfig.CodexKey
 type ClaudeKey = internalconfig.ClaudeKey
+type BedrockClaudeKey = internalconfig.BedrockClaudeKey
+type BedrockClaudeModel = internalconfig.BedrockClaudeModel
 type VertexCompatKey = internalconfig.VertexCompatKey
 type VertexCompatModel = internalconfig.VertexCompatModel
 type OpenAICompatibility = internalconfig.OpenAICompatibility

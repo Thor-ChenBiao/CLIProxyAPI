@@ -22,6 +22,12 @@ def get_db_connection():
         conn.close()
 
 
+def ensure_integer_column(cursor, table, column):
+    columns = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT 0")
+
+
 def init_database():
     """Initialize database if it doesn't exist."""
     if not os.path.exists(DB_FILE):
@@ -43,18 +49,34 @@ def ensure_indexes():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_api_key ON user_usage(api_key)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_email_date ON user_usage(user_email, date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_usage_date_api_key ON user_usage(date, api_key)")
+        for table in ("daily_usage", "user_usage"):
+            ensure_integer_column(cursor, table, "cached_tokens")
+            ensure_integer_column(cursor, table, "reasoning_tokens")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hourly_usage (
+                hour_key TEXT PRIMARY KEY,
+                tokens INTEGER DEFAULT 0,
+                requests INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                failure_count INTEGER DEFAULT 0,
+                latency_sum_ms INTEGER DEFAULT 0,
+                latency_count INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour_key ON hourly_usage(hour_key)")
         conn.commit()
 
 
 def upsert_daily_usage(date, total_requests, success_count, failure_count,
-                       total_tokens, input_tokens, output_tokens):
+                       total_tokens, input_tokens, output_tokens, cached_tokens=0, reasoning_tokens=0):
     """Insert or update daily usage statistics."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         now = datetime.utcnow().isoformat() + 'Z'
         existing = cursor.execute("""
             SELECT total_requests, success_count, failure_count,
-                   total_tokens, input_tokens, output_tokens
+                   total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens
             FROM daily_usage
             WHERE date = ?
         """, (date,)).fetchone()
@@ -65,17 +87,19 @@ def upsert_daily_usage(date, total_requests, success_count, failure_count,
             total_tokens = max(total_tokens, existing['total_tokens'] or 0)
             input_tokens = max(input_tokens, existing['input_tokens'] or 0)
             output_tokens = max(output_tokens, existing['output_tokens'] or 0)
+            cached_tokens = max(cached_tokens, existing['cached_tokens'] or 0)
+            reasoning_tokens = max(reasoning_tokens, existing['reasoning_tokens'] or 0)
 
         cursor.execute("""
             INSERT OR REPLACE INTO daily_usage
             (date, total_requests, success_count, failure_count,
-             total_tokens, input_tokens, output_tokens, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?,
+             total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
                     COALESCE((SELECT created_at FROM daily_usage WHERE date = ?), ?),
                     ?)
         """, (
             date, total_requests, success_count, failure_count,
-            total_tokens, input_tokens, output_tokens,
+            total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens,
             date, now, now
         ))
 
@@ -84,14 +108,14 @@ def upsert_daily_usage(date, total_requests, success_count, failure_count,
 
 def upsert_user_usage(date, user_email, api_key, total_requests,
                       success_count, failure_count, total_tokens,
-                      input_tokens, output_tokens):
+                      input_tokens, output_tokens, cached_tokens=0, reasoning_tokens=0):
     """Insert or update user usage statistics."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         now = datetime.utcnow().isoformat() + 'Z'
         existing = cursor.execute("""
             SELECT total_requests, success_count, failure_count,
-                   total_tokens, input_tokens, output_tokens
+                   total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens
             FROM user_usage
             WHERE date = ? AND user_email = ? AND api_key = ?
         """, (date, user_email, api_key)).fetchone()
@@ -102,17 +126,19 @@ def upsert_user_usage(date, user_email, api_key, total_requests,
             total_tokens = max(total_tokens, existing['total_tokens'] or 0)
             input_tokens = max(input_tokens, existing['input_tokens'] or 0)
             output_tokens = max(output_tokens, existing['output_tokens'] or 0)
+            cached_tokens = max(cached_tokens, existing['cached_tokens'] or 0)
+            reasoning_tokens = max(reasoning_tokens, existing['reasoning_tokens'] or 0)
 
         cursor.execute("""
             INSERT OR REPLACE INTO user_usage
             (date, user_email, api_key, total_requests, success_count, failure_count,
-             total_tokens, input_tokens, output_tokens, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+             total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     COALESCE((SELECT created_at FROM user_usage WHERE date = ? AND user_email = ? AND api_key = ?), ?),
                     ?)
         """, (
             date, user_email, api_key, total_requests, success_count, failure_count,
-            total_tokens, input_tokens, output_tokens,
+            total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens,
             date, user_email, api_key, now, now
         ))
 
@@ -125,7 +151,7 @@ def reassign_user_usage_key(api_key, new_user_email):
         cursor = conn.cursor()
         rows = cursor.execute("""
             SELECT date, user_email, total_requests, success_count, failure_count,
-                   total_tokens, input_tokens, output_tokens
+                   total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens
             FROM user_usage
             WHERE api_key = ? AND user_email != ?
         """, (api_key, new_user_email)).fetchall()
@@ -134,7 +160,7 @@ def reassign_user_usage_key(api_key, new_user_email):
         for row in rows:
             existing = cursor.execute("""
                 SELECT total_requests, success_count, failure_count,
-                       total_tokens, input_tokens, output_tokens
+                       total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens
                 FROM user_usage
                 WHERE date = ? AND user_email = ? AND api_key = ?
             """, (row['date'], new_user_email, api_key)).fetchone()
@@ -143,7 +169,8 @@ def reassign_user_usage_key(api_key, new_user_email):
                 cursor.execute("""
                     UPDATE user_usage
                     SET total_requests = ?, success_count = ?, failure_count = ?,
-                        total_tokens = ?, input_tokens = ?, output_tokens = ?, updated_at = ?
+                        total_tokens = ?, input_tokens = ?, output_tokens = ?,
+                        cached_tokens = ?, reasoning_tokens = ?, updated_at = ?
                     WHERE date = ? AND user_email = ? AND api_key = ?
                 """, (
                     max(row['total_requests'] or 0, existing['total_requests'] or 0),
@@ -152,6 +179,8 @@ def reassign_user_usage_key(api_key, new_user_email):
                     max(row['total_tokens'] or 0, existing['total_tokens'] or 0),
                     max(row['input_tokens'] or 0, existing['input_tokens'] or 0),
                     max(row['output_tokens'] or 0, existing['output_tokens'] or 0),
+                    max(row['cached_tokens'] or 0, existing['cached_tokens'] or 0),
+                    max(row['reasoning_tokens'] or 0, existing['reasoning_tokens'] or 0),
                     now,
                     row['date'], new_user_email, api_key,
                 ))
@@ -176,7 +205,7 @@ def get_daily_usage_history():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT date, total_requests, success_count, failure_count,
-                   total_tokens, input_tokens, output_tokens
+                   total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens
             FROM daily_usage
             ORDER BY date ASC
         """)
@@ -191,6 +220,8 @@ def get_daily_usage_history():
                 'total_tokens': row['total_tokens'],
                 'input_tokens': row['input_tokens'],
                 'output_tokens': row['output_tokens'],
+                'cached_tokens': row['cached_tokens'] or 0,
+                'reasoning_tokens': row['reasoning_tokens'] or 0,
             })
 
         return results
@@ -227,6 +258,8 @@ def get_user_usage_by_period(period='month'):
                 SUM(total_tokens) as total_tokens,
                 SUM(input_tokens) as input_tokens,
                 SUM(output_tokens) as output_tokens,
+                SUM(cached_tokens) as cached_tokens,
+                SUM(reasoning_tokens) as reasoning_tokens,
                 GROUP_CONCAT(DISTINCT api_key) as api_keys
             FROM user_usage
             GROUP BY user_email, period_key
@@ -244,6 +277,8 @@ def get_user_usage_by_period(period='month'):
                 'total_tokens': row['total_tokens'],
                 'input_tokens': row['input_tokens'],
                 'output_tokens': row['output_tokens'],
+                'cached_tokens': row['cached_tokens'] or 0,
+                'reasoning_tokens': row['reasoning_tokens'] or 0,
                 'api_keys': row['api_keys'].split(',') if row['api_keys'] else [],
             })
 
@@ -263,6 +298,8 @@ def get_user_total_usage(user_email):
                 SUM(total_tokens) as total_tokens,
                 SUM(input_tokens) as input_tokens,
                 SUM(output_tokens) as output_tokens,
+                SUM(cached_tokens) as cached_tokens,
+                SUM(reasoning_tokens) as reasoning_tokens,
                 COUNT(DISTINCT api_key) as num_keys,
                 COUNT(DISTINCT date) as num_days
             FROM user_usage
@@ -281,6 +318,8 @@ def get_user_total_usage(user_email):
             'total_tokens': row['total_tokens'] or 0,
             'input_tokens': row['input_tokens'] or 0,
             'output_tokens': row['output_tokens'] or 0,
+            'cached_tokens': row['cached_tokens'] or 0,
+            'reasoning_tokens': row['reasoning_tokens'] or 0,
             'num_keys': row['num_keys'] or 0,
             'num_days': row['num_days'] or 0,
         }
@@ -300,6 +339,8 @@ def get_all_users_total_usage():
                 SUM(total_tokens) as total_tokens,
                 SUM(input_tokens) as input_tokens,
                 SUM(output_tokens) as output_tokens,
+                SUM(cached_tokens) as cached_tokens,
+                SUM(reasoning_tokens) as reasoning_tokens,
                 COUNT(DISTINCT api_key) as num_keys,
                 COUNT(DISTINCT date) as num_days,
                 GROUP_CONCAT(DISTINCT api_key) as api_keys
@@ -318,6 +359,8 @@ def get_all_users_total_usage():
                 'total_tokens': row['total_tokens'] or 0,
                 'input_tokens': row['input_tokens'] or 0,
                 'output_tokens': row['output_tokens'] or 0,
+                'cached_tokens': row['cached_tokens'] or 0,
+                'reasoning_tokens': row['reasoning_tokens'] or 0,
                 'num_keys': row['num_keys'] or 0,
                 'num_days': row['num_days'] or 0,
                 'api_keys': row['api_keys'].split(',') if row['api_keys'] else [],
@@ -338,7 +381,9 @@ def get_user_key_usage_for_date(user_email, date):
                 failure_count,
                 total_tokens,
                 input_tokens,
-                output_tokens
+                output_tokens,
+                cached_tokens,
+                reasoning_tokens
             FROM user_usage
             WHERE user_email = ? AND date = ?
             ORDER BY total_tokens DESC
@@ -352,6 +397,88 @@ def get_user_key_usage_for_date(user_email, date):
                 'total_tokens': row['total_tokens'] or 0,
                 'input_tokens': row['input_tokens'] or 0,
                 'output_tokens': row['output_tokens'] or 0,
+                'cached_tokens': row['cached_tokens'] or 0,
+                'reasoning_tokens': row['reasoning_tokens'] or 0,
+            }
+            for row in cursor.fetchall()
+        }
+
+
+def get_user_key_usage_range(user_email, api_key, date_from, date_to):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                date,
+                total_requests,
+                success_count,
+                failure_count,
+                total_tokens,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                reasoning_tokens
+            FROM user_usage
+            WHERE user_email = ? AND api_key = ? AND date BETWEEN ? AND ?
+            ORDER BY date ASC
+        """, (user_email, api_key, date_from, date_to))
+        return [
+            {
+                'date': row['date'],
+                'requests': row['total_requests'] or 0,
+                'success_count': row['success_count'] or 0,
+                'failure_count': row['failure_count'] or 0,
+                'total_tokens': row['total_tokens'] or 0,
+                'input_tokens': row['input_tokens'] or 0,
+                'output_tokens': row['output_tokens'] or 0,
+                'cached_tokens': row['cached_tokens'] or 0,
+                'reasoning_tokens': row['reasoning_tokens'] or 0,
+            }
+            for row in cursor.fetchall()
+        ]
+
+
+def upsert_hourly_usage(hour_key, tokens, requests, success_count, failure_count, latency_sum_ms=0, latency_count=0):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow().isoformat() + 'Z'
+        cursor.execute("""
+            INSERT INTO hourly_usage (
+                hour_key, tokens, requests, success_count, failure_count,
+                latency_sum_ms, latency_count, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hour_key) DO UPDATE SET
+                tokens = excluded.tokens,
+                requests = excluded.requests,
+                success_count = excluded.success_count,
+                failure_count = excluded.failure_count,
+                latency_sum_ms = excluded.latency_sum_ms,
+                latency_count = excluded.latency_count,
+                updated_at = excluded.updated_at
+        """, (
+            hour_key, int(tokens or 0), int(requests or 0), int(success_count or 0), int(failure_count or 0),
+            int(latency_sum_ms or 0), int(latency_count or 0), now,
+        ))
+        conn.commit()
+
+
+def get_hourly_usage_range(start_hour_key, end_hour_key):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT hour_key, tokens, requests, success_count, failure_count, latency_sum_ms, latency_count
+            FROM hourly_usage
+            WHERE hour_key BETWEEN ? AND ?
+            ORDER BY hour_key ASC
+        """, (start_hour_key, end_hour_key))
+        return {
+            row['hour_key']: {
+                'tokens': row['tokens'] or 0,
+                'requests': row['requests'] or 0,
+                'success_count': row['success_count'] or 0,
+                'failure_count': row['failure_count'] or 0,
+                'latency_sum_ms': row['latency_sum_ms'] or 0,
+                'latency_count': row['latency_count'] or 0,
             }
             for row in cursor.fetchall()
         }
@@ -361,8 +488,8 @@ def get_usage_aggregated():
     """Get usage history with daily, monthly, and yearly aggregations."""
     history = get_daily_usage_history()
 
-    by_month = defaultdict(lambda: {"total_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0})
-    by_year = defaultdict(lambda: {"total_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0})
+    by_month = defaultdict(lambda: {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0})
+    by_year = defaultdict(lambda: {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0})
 
     for data in history:
         date = data['date']
@@ -370,6 +497,10 @@ def get_usage_aggregated():
         # Monthly aggregation (YYYY-MM)
         month_key = date[:7]
         by_month[month_key]["total_tokens"] += data["total_tokens"]
+        by_month[month_key]["input_tokens"] += data.get("input_tokens", 0)
+        by_month[month_key]["output_tokens"] += data.get("output_tokens", 0)
+        by_month[month_key]["cached_tokens"] += data.get("cached_tokens", 0)
+        by_month[month_key]["reasoning_tokens"] += data.get("reasoning_tokens", 0)
         by_month[month_key]["total_requests"] += data["total_requests"]
         by_month[month_key]["success_count"] += data.get("success_count", 0)
         by_month[month_key]["failure_count"] += data.get("failure_count", 0)
@@ -377,6 +508,10 @@ def get_usage_aggregated():
         # Yearly aggregation (YYYY)
         year_key = date[:4]
         by_year[year_key]["total_tokens"] += data["total_tokens"]
+        by_year[year_key]["input_tokens"] += data.get("input_tokens", 0)
+        by_year[year_key]["output_tokens"] += data.get("output_tokens", 0)
+        by_year[year_key]["cached_tokens"] += data.get("cached_tokens", 0)
+        by_year[year_key]["reasoning_tokens"] += data.get("reasoning_tokens", 0)
         by_year[year_key]["total_requests"] += data["total_requests"]
         by_year[year_key]["success_count"] += data.get("success_count", 0)
         by_year[year_key]["failure_count"] += data.get("failure_count", 0)

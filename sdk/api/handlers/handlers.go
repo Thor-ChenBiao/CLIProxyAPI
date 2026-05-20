@@ -538,6 +538,9 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 	if errMsg != nil {
 		return nil, nil, errMsg
 	}
+	if errMsg := h.authorizeDownstreamModelAccess(ctx, modelName, normalizedModel, providers); errMsg != nil {
+		return nil, nil, errMsg
+	}
 	reqMeta := requestExecutionMetadata(ctx)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = modelName
 	payload := rawJSON
@@ -584,6 +587,9 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
 	if errMsg != nil {
+		return nil, nil, errMsg
+	}
+	if errMsg := h.authorizeDownstreamModelAccess(ctx, modelName, normalizedModel, providers); errMsg != nil {
 		return nil, nil, errMsg
 	}
 	reqMeta := requestExecutionMetadata(ctx)
@@ -633,6 +639,12 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
 	if errMsg != nil {
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- errMsg
+		close(errChan)
+		return nil, nil, errChan
+	}
+	if errMsg := h.authorizeDownstreamModelAccess(ctx, modelName, normalizedModel, providers); errMsg != nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- errMsg
 		close(errChan)
@@ -844,6 +856,130 @@ func statusFromError(err error) int {
 		}
 	}
 	return 0
+}
+
+func (h *BaseAPIHandler) authorizeDownstreamModelAccess(ctx context.Context, requestedModel, normalizedModel string, providers []string) *interfaces.ErrorMessage {
+	if h == nil || h.Cfg == nil || len(h.Cfg.APIKeyPermissions) == 0 {
+		return nil
+	}
+	apiKey := downstreamAPIKeyFromContext(ctx)
+	if apiKey == "" {
+		return nil
+	}
+	permission, ok := apiKeyPermissionForKey(h.Cfg.APIKeyPermissions, apiKey)
+	if !ok {
+		return nil
+	}
+	models := []string{requestedModel, normalizedModel, thinking.ParseSuffix(requestedModel).ModelName, thinking.ParseSuffix(normalizedModel).ModelName}
+	groups := providerModelGroups(providers)
+	if matchesAnyModel(permission.DenyModels, models) || matchesAnyModel(permission.DenyModelGroups, groups) {
+		return modelPermissionError()
+	}
+	hasAllowRules := len(permission.AllowModels) > 0 || len(permission.AllowModelGroups) > 0
+	if !hasAllowRules {
+		return nil
+	}
+	if matchesAnyModel(permission.AllowModels, models) || matchesAnyModel(permission.AllowModelGroups, groups) {
+		return nil
+	}
+	return modelPermissionError()
+}
+
+func downstreamAPIKeyFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil {
+		return ""
+	}
+	value, exists := ginCtx.Get("apiKey")
+	if !exists {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []byte:
+		return strings.TrimSpace(string(v))
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func apiKeyPermissionForKey(permissions []config.APIKeyPermission, apiKey string) (config.APIKeyPermission, bool) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return config.APIKeyPermission{}, false
+	}
+	for i := range permissions {
+		if strings.TrimSpace(permissions[i].Key) == apiKey {
+			return permissions[i], true
+		}
+	}
+	return config.APIKeyPermission{}, false
+}
+
+func providerModelGroups(providers []string) []string {
+	out := make([]string, 0, len(providers))
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		group := providerModelGroup(provider)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		out = append(out, group)
+	}
+	return out
+}
+
+func providerModelGroup(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude", "bedrock-claude":
+		return "claude"
+	case "gemini", "vertex", "gemini-cli", "aistudio":
+		return "gemini"
+	case "deepseek":
+		return "deepseek"
+	default:
+		return strings.ToLower(strings.TrimSpace(provider))
+	}
+}
+
+func matchesAnyModel(rules, values []string) bool {
+	for _, rule := range rules {
+		rule = strings.ToLower(strings.TrimSpace(rule))
+		if rule == "" {
+			continue
+		}
+		for _, value := range values {
+			if modelRuleMatches(rule, strings.ToLower(strings.TrimSpace(value))) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func modelRuleMatches(rule, value string) bool {
+	if rule == "*" {
+		return true
+	}
+	if rule == value {
+		return true
+	}
+	if strings.HasSuffix(rule, "*") && strings.HasPrefix(value, strings.TrimSuffix(rule, "*")) {
+		return true
+	}
+	return false
+}
+
+func modelPermissionError() *interfaces.ErrorMessage {
+	return &interfaces.ErrorMessage{StatusCode: http.StatusForbidden, Error: fmt.Errorf("API key is not allowed to access requested model")}
 }
 
 func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
