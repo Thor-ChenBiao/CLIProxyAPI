@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>使用教程 - AI 能量站</title>
+    <script src="/static/i18n.js?v=20260426-3"></script>
+    {% include "_portal_shell.html" %}
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f7fb; color: #172033; }
+        .container { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
+        .page-head { margin-bottom: 24px; }
+        .page-head h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: 0; }
+        .page-head p { margin: 0; color: #64748b; line-height: 1.7; }
+        .grid { display: grid; grid-template-columns: 1fr 320px; gap: 18px; align-items: start; }
+        .section, .side { background: #fff; border: 1px solid #e3e9f2; border-radius: 8px; padding: 22px; margin-bottom: 18px; box-shadow: 0 8px 24px rgba(15,23,42,.06); }
+        .section h2, .side h2 { margin: 0 0 14px; font-size: 20px; color: #0f766e; }
+        .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+        .step { border: 1px solid #dfe7f1; border-radius: 8px; padding: 14px; background: #fbfcfe; }
+        .step strong { display: block; margin-bottom: 6px; color: #111827; }
+        .step span, .muted { color: #64748b; font-size: 13px; line-height: 1.6; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 12px; border-bottom: 1px solid #e8edf4; text-align: left; vertical-align: top; }
+        th { color: #334155; background: #f8fafc; font-weight: 750; }
+        .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; background: #e7f8f4; color: #0f766e; font-size: 12px; font-weight: 800; }
+        .code-card { border: 1px solid #dfe7f1; border-radius: 8px; overflow: hidden; margin-top: 12px; }
+        .code-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; background: #f8fafc; border-bottom: 1px solid #dfe7f1; }
+        .code-head strong { color: #111827; }
+        .copy { border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; border-radius: 7px; padding: 7px 11px; cursor: pointer; font-weight: 750; }
+        pre { margin: 0; padding: 14px; overflow-x: auto; background: #0f172a; color: #e2e8f0; font-size: 12px; line-height: 1.55; }
+        code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .link-list { display: grid; gap: 10px; }
+        .resource { display: block; border: 1px solid #dfe7f1; border-radius: 8px; padding: 12px; color: #172033; text-decoration: none; background: #fbfcfe; }
+        .resource strong { display: block; margin-bottom: 4px; color: #1d4ed8; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <div class="page-head">
+            <h1>使用教程</h1>
+            <p>新用户先按这个顺序走：登录飞书，申请 Key，配置工具，再回来看自己的用量。</p>
+        </div>
+
+        <div class="grid">
+            <div>
+                <section class="section">
+                    <h2>开始使用</h2>
+                    <div class="steps">
+                        <div class="step"><strong>1. 飞书登录</strong><span>所有 Key Portal 页面都需要登录态，邮箱用于绑定归属。</span></div>
+                        <div class="step"><strong>2. 申请 Key</strong><span>默认选 GPT Key；Claude 和 DeepSeek 需要审批。</span></div>
+                        <div class="step"><strong>3. 配置工具</strong><span>复制“我的 Keys”里的配置命令到终端执行。</span></div>
+                        <div class="step"><strong>4. 看用量</strong><span>总览看整体趋势，“我的 Keys”只看自己的明细。</span></div>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <h2>Key 分类</h2>
+                    <table>
+                        <thead>
+                            <tr><th>类型</th><th>模型</th><th>审批</th><th>建议</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for item in guide.models %}
+                            <tr>
+                                <td><span class="pill">{{ item.name }}</span><div class="muted">{{ item.key_type }}</div></td>
+                                <td>{{ item.models }}</td>
+                                <td>{{ item.approval }}</td>
+                                <td>{{ item.recommendation }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <p class="muted" style="margin-top:12px;">用户侧只使用公开模型名，例如 <code>gpt-5.5</code>、<code>claude-opus-4-6</code>、<code>deepseek-chat</code>；不要使用内部 <code>bedrock-*</code> 名称。</p>
+                </section>
+
+                <section class="section">
+                    <h2>配置命令</h2>
+                    {% for cmd in guide.commands %}
+                    <div class="code-card">
+                        <div class="code-head">
+                            <div>
+                                <strong>{{ cmd.title }}</strong>
+                                <div class="muted">{{ cmd.note }}</div>
+                            </div>
+                            <button class="copy" type="button" data-copy="{{ cmd.id }}">复制</button>
+                        </div>
+                        <pre><code id="{{ cmd.id }}">{{ cmd.command }}</code></pre>
+                    </div>
+                    {% endfor %}
+                </section>
+            </div>
+
+            <aside>
+                <section class="side">
+                    <h2>推荐选择</h2>
+                    <p class="muted">大多数开发、Claude Code、Codex CLI 任务都先用 GPT Key，模型选 <code>gpt-5.5</code>。只有明确需要真实 Claude/DeepSeek 后端时，再申请对应 Key。</p>
+                </section>
+
+                <section class="side">
+                    <h2>常用资源</h2>
+                    <div class="link-list">
+                        {% for item in guide.links %}
+                        <a class="resource" href="{{ item.href }}" target="_blank" rel="noopener noreferrer">
+                            <strong>{{ item.label }}</strong>
+                            <span class="muted">{{ item.note }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </section>
+
+                <section class="side">
+                    <h2>安全习惯</h2>
+                    <p class="muted">不要把 Key 发到群里或提交到代码仓库。怀疑泄露时，去“我的 Keys”撤销旧 Key，再重新申请。</p>
+                </section>
+            </aside>
+        </div>
+    </main>
+
+    <script>
+        document.querySelectorAll('[data-copy]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const el = document.getElementById(button.dataset.copy);
+                const text = el ? el.textContent : '';
+                if (!text) return;
+                await navigator.clipboard.writeText(text);
+                const old = button.textContent;
+                button.textContent = '已复制';
+                setTimeout(() => { button.textContent = old; }, 1500);
+            });
+        });
+    </script>
+</body>
+</html>

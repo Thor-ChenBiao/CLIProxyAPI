@@ -12,11 +12,11 @@ import config
 def _login_url() -> str:
     base = os.environ.get("PUBLIC_BASE_URL", "").strip()
     if base:
-        return f"{base.rstrip('/')}/login"
+        return f"{base.rstrip('/')}/"
     host = os.environ.get("PUBLIC_HOST", "").strip()
     if host:
-        return f"http://{host}:8080/login"
-    return "http://localhost:8080/login"
+        return f"http://{host}:8080/"
+    return "http://localhost:8080/"
 
 
 # Cache for Feishu access token
@@ -113,4 +113,49 @@ def send_feishu_notification(receiver_email, title, content):
             return False
     except Exception as e:
         print(f"[Feishu] Error sending notification: {e}")
+        return False
+
+
+def send_feishu_webhook(webhook_url, title, content, template="orange"):
+    """Send a status card to a Feishu custom bot webhook."""
+    webhook_url = str(webhook_url or "").strip()
+    if not webhook_url:
+        print(f"[FeishuWebhook] No webhook configured. {title}: {content}")
+        return False
+
+    try:
+        resp = requests.post(
+            webhook_url,
+            json={
+                "msg_type": "interactive",
+                "card": {
+                    "config": {"wide_screen_mode": True},
+                    "header": {
+                        "template": template or "orange",
+                        "title": {"tag": "plain_text", "content": title},
+                    },
+                    "elements": [
+                        {
+                            "tag": "div",
+                            "text": {"tag": "lark_md", "content": content},
+                        }
+                    ],
+                },
+            },
+            timeout=10,
+        )
+        if 200 <= resp.status_code < 300:
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+            if not data or data.get("code") in (0, None):
+                print(f"[FeishuWebhook] Sent: {title}")
+                return True
+            print(f"[FeishuWebhook] Failed: {data}")
+            return False
+        print(f"[FeishuWebhook] HTTP {resp.status_code}: {resp.text[:300]}")
+        return False
+    except Exception as e:
+        print(f"[FeishuWebhook] Error sending webhook: {e}")
         return False

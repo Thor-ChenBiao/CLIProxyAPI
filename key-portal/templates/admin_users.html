@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>用户统计 - Key Portal</title>
     <script src="/static/i18n.js?v=20260426-3"></script>
+    {% include "_portal_shell.html" %}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -529,7 +530,7 @@
         }
 
         const MODEL_GROUP_LABELS = {
-            common: '通用 Key',
+            common: 'GPT Key',
             claude: 'Claude Key',
             gemini: 'Gemini Key',
             deepseek: 'DeepSeek Key'

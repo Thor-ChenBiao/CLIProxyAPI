@@ -4,9 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 能量站</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="/static/chart.js?v=20260521-1"></script>
+    <script>
+        window.addEventListener('error', function(event) {
+            const box = document.getElementById('pageError');
+            if (box) {
+                box.style.display = 'block';
+                box.textContent = '页面脚本错误：' + (event.message || 'unknown');
+            }
+        });
+    </script>
+    <script src="/static/socket.io.min.js?v=20260521-1"></script>
     <script src="/static/i18n.js?v=20260426-3"></script>
+    {% include "_portal_shell.html" %}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
@@ -19,6 +29,12 @@
         .token-counter .label { font-size: 12px; opacity: 0.8; margin-top: 3px; }
         .token-counter .token-detail { font-size: 10px; opacity: 0.82; margin-top: 2px; min-height: 28px; line-height: 1.35; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
         .token-counter .token-cost { font-size: 11px; color: #ffd700; font-weight: 600; margin-top: 1px; min-height: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .personal-token-banner { background: linear-gradient(135deg, #eef4ff 0%, #e7f7f3 100%); border: 1px solid #d7e5f2; border-radius: 10px; padding: 15px 0; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; margin: 12px 0 24px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8); }
+        .personal-token-counter { text-align: center; flex: 0 0 250px; width: 250px; color: #263445; }
+        .personal-token-counter .value { color: #132033; font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; min-height: 34px; white-space: nowrap; letter-spacing: 0; }
+        .personal-token-counter .label { color: #486072; font-size: 12px; opacity: 0.9; margin-top: 3px; font-weight: 650; }
+        .personal-token-counter .token-detail { color: #5f7486; font-size: 10px; opacity: 0.95; margin-top: 2px; min-height: 28px; line-height: 1.35; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .personal-token-counter .token-cost { color: #0f766e; font-size: 11px; font-weight: 700; margin-top: 1px; min-height: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
         .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
         .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
@@ -58,6 +74,7 @@
         .key-status.expired { background: #f8d7da; color: #721c24; }
         .empty { text-align: center; padding: 40px; color: #999; }
         .refresh-btn { background: #667eea; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; margin-bottom: 15px; }
+        .report-refresh-btn { margin-bottom: 0; padding: 8px 14px; white-space: nowrap; }
         .auth-step { text-align: center; }
         .step-label { font-size: 16px; color: #333; margin-bottom: 15px; font-weight: 500; }
         .paste-box { display: flex; gap: 10px; max-width: 500px; margin: 0 auto; }
@@ -76,13 +93,13 @@
         .report-token-detail { font-size: 11px; color: #777; margin-top: 3px; line-height: 1.45; }
         .report-token-cost { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 2px; }
         .token-num { font-weight: 600; color: #667eea; }
-        .chart-container { margin: 20px 0; padding: 20px; background: #fafafa; border-radius: 10px; }
-        .chart-container canvas { max-height: 300px; }
+        .chart-container { margin: 20px 0; padding: 20px; background: #fafafa; border-radius: 10px; position: relative; height: 340px; }
+        .chart-container canvas { width: 100% !important; height: 300px !important; }
         .view-toggle { display: flex; gap: 10px; margin-bottom: 15px; }
         .view-btn { padding: 8px 16px; border: 2px solid #667eea; background: white; color: #667eea; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
         .view-btn:hover { background: #f0f4ff; }
         .view-btn.active { background: #667eea; color: white; }
-        .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 15px; }
         .section-title h3 { color: #667eea; margin: 0; }
         .account-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; }
         .account-item.no-key { background: #fff9e6; border-left: 4px solid #ffc107; }
@@ -131,6 +148,7 @@
 </head>
 <body>
 
+    <div id="pageError" style="display:none;background:#fee2e2;color:#991b1b;padding:10px 16px;font-size:13px;"></div>
     <div class="header">
         <p class="slogan">Token 是 AI 时代的<em>电力</em>，用起来才能创造价值！</p>
         <div class="token-banner">
@@ -165,18 +183,6 @@
 
         <div id="register" class="tab-content active">
             <div class="login-box">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
-                    <h2 style="margin: 0;">🔑 申请个人 API Key</h2>
-                    <div style="display: flex; gap: 10px;">
-                        <button onclick="showTutorialModal()" style="padding: 8px 16px; background: #fff; color: #667eea; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 500; transition: all 0.3s; border: 1px solid #d4ddff; cursor: pointer;" onmouseover="this.style.background='#f8f9fa'; this.style.borderColor='#667eea'" onmouseout="this.style.background='#fff'; this.style.borderColor='#d4ddff'">
-                            📖 使用教程
-                        </button>
-                        <a href="/my-keys" target="_blank" style="display: inline-block; padding: 8px 16px; background: #f0f4ff; color: #667eea; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 500; transition: all 0.3s; border: 1px solid #d4ddff;" onmouseover="this.style.background='#e3ebff'; this.style.borderColor='#667eea'" onmouseout="this.style.background='#f0f4ff'; this.style.borderColor='#d4ddff'">
-                            📊 查看统计
-                        </a>
-                    </div>
-                </div>
-
                 <div style="background: linear-gradient(135deg, #e0e7ff 0%, #f0f4ff 100%); padding: 18px; border-radius: 10px; margin-bottom: 25px; text-align: center; border: 1px solid #d4ddff;">
                     <div style="font-size: 14px; color: #667eea; font-weight: 600; margin-bottom: 5px;">
                         💎 剩余可用 Key
@@ -194,27 +200,32 @@
                         <p style="font-size: 13px; color: #999; margin-top: 5px;">用于区分设备或用途，会作为 Key 标签展示</p>
                     </div>
 
-                    <div style="margin-bottom: 20px; text-align: left;">
-                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">公司邮箱 *</label>
-                        <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;">
-                            <input type="text" id="regEmailPrefix" placeholder="your.name"
-                                style="flex: 1; min-width: 0; padding: 12px 15px; border: none; outline: none; font-size: 15px;">
-                            <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-left: 1px solid #d4ddff; font-size: 15px; font-weight: 600; white-space: nowrap;">@zilliz.com</span>
-                        </div>
-                        <p style="font-size: 13px; color: #999; margin-top: 5px;">只需要填写 @zilliz.com 前面的部分，用于把 Key 归属和用量统计到正确用户</p>
-                    </div>
-
                     <div style="margin-bottom: 24px; text-align: left;">
                         <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">Key 类型 *</label>
                         <select id="regModelGroup" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: white; color: #333;">
-                            <option value="common" selected>通用 Key（common）</option>
-                            <option value="claude">Claude Key</option>
-                            <option value="gemini">Gemini Key</option>
-                            <option value="deepseek">DeepSeek Key</option>
+                            <option value="common" selected>GPT Key（不限量）</option>
+                            <option value="claude">Claude Key（需审批）</option>
+                            <option value="deepseek">DeepSeek Key（需审批）</option>
                         </select>
                         <div id="regModelGroupHint" style="margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; color: #555; font-size: 13px; line-height: 1.5;">
-                            通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。
+                            GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。
                         </div>
+                    </div>
+
+                    <div id="regApprovalFields" style="display: none; margin-bottom: 24px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">申请理由 *</label>
+                        <textarea id="regReason" rows="3" placeholder="Bedrock / Claude 按量计费成本较高，请说明必须使用它完成任务的紧急或必要场景；常规用量推荐优先使用 GPT Key。"
+                            style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; resize: vertical; font-family: inherit;"></textarea>
+
+                        <label style="display: block; margin-bottom: 8px; margin-top: 12px; color: #333; font-weight: 500;">总额度 (USD) *</label>
+                        <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;">
+                            <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-right: 1px solid #d4ddff; font-size: 15px; font-weight: 600;">$</span>
+                            <input type="number" id="regDailyBudget" placeholder="5" min="0.1" step="0.1"
+                                style="flex: 1; min-width: 0; padding: 12px 15px; border: none; outline: none; font-size: 15px;"
+                                oninput="updateBudgetEstimate()">
+                        </div>
+                        <div id="regBudgetEstimate" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; line-height: 1.6; display: none;"></div>
+                        <p style="font-size: 13px; color: #999; margin-top: 5px;">额度用完后请求将被拒绝，不会按天自动重置；需要追加额度后继续使用</p>
                     </div>
 
                     <button class="btn btn-primary" onclick="registerUserKey()" id="regBtn">申请 API Key</button>
@@ -235,12 +246,6 @@
                 </div>
 
                 <div id="regResult" style="margin-top: 30px; display: none;"></div>
-
-                <!-- 历史申请的Keys -->
-                <div id="myKeysHistory" style="margin-top: 40px; display: none;">
-                    <h3 style="color: #667eea; margin-bottom: 15px; text-align: center;">📋 我申请过的 Keys</h3>
-                    <div id="myKeysList" style="max-width: 800px; margin: 0 auto;"></div>
-                </div>
             </div>
         </div>
 
@@ -249,33 +254,51 @@
         <div id="report" class="tab-content">
             <div style="margin-bottom: 20px;">
                 <h2 style="margin: 0; color: #667eea;">📊 用量报表</h2>
+                <div style="font-size:12px;color:#999;margin-top:4px;">上方展示当前登录用户的个人实时用量；下方图表和表格展示全站聚合数据。</div>
             </div>
-            <button class="refresh-btn" onclick="loadUsageHistory()">🔄 刷新数据</button>
-            <div class="stats">
-                <div class="stat">
-                    <div class="num" id="totalTokens">-</div>
-                    <div class="label">累计 Token</div>
+            <div id="usageDataSnapshot" style="display:none;margin:12px 0 18px 0;padding:14px 16px;background:#f8f9ff;border:1px solid #dfe3ff;border-radius:10px;color:#333;font-size:13px;"></div>
+            <div class="section-title" style="margin-bottom: 10px;">
+                <div>
+                    <h3>我的实时用量</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">仅统计当前登录邮箱名下的 Key，自动刷新。</div>
                 </div>
-                <div class="stat green">
-                    <div class="num" id="totalRequests">-</div>
-                    <div class="label">总请求数</div>
+            </div>
+            <div class="personal-token-banner">
+                <div class="personal-token-counter">
+                    <div class="value" id="myTodayTokenCounter">0</div>
+                    <div class="label">我的今日 Tokens</div>
+                    <div class="token-detail" id="myTodayTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                    <div class="token-cost" id="myTodayTokenCost">估算 $0.00</div>
                 </div>
-                <div class="stat">
-                    <div class="num" id="successRate">-</div>
-                    <div class="label">成功率</div>
+                <div class="personal-token-counter requests">
+                    <div class="value" id="myTodayRequestCounter">0</div>
+                    <div class="label">我的今日请求数</div>
+                </div>
+                <div class="personal-token-counter total">
+                    <div class="value" id="myTotalTokenCounter">0</div>
+                    <div class="label">我的累计 Tokens</div>
+                    <div class="token-detail" id="myTotalTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                    <div class="token-cost" id="myTotalTokenCost">估算 $0.00</div>
+                </div>
+                <div class="personal-token-counter total-requests">
+                    <div class="value" id="myTotalRequestCounter">0</div>
+                    <div class="label">我的累计请求数</div>
                 </div>
             </div>
 
             <div class="section-title">
                 <div>
-                    <h3>用量趋势</h3>
-                    <div style="font-size:12px;color:#999;margin-top:4px;">橙线是 Token/请求，紫线是平均 Token/小时。</div>
+                    <h3>全站用量趋势</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">这里是全站聚合数据，不是个人数据；橙线是 Token/请求，紫线是平均 Token/小时。</div>
                 </div>
-                <div class="view-toggle">
-                    <button class="view-btn active" onclick="setChartView('hour')" id="viewHour">时</button>
-                    <button class="view-btn" onclick="setChartView('day')" id="viewDay">日</button>
-                    <button class="view-btn" onclick="setChartView('month')" id="viewMonth">月</button>
-                    <button class="view-btn" onclick="setChartView('year')" id="viewYear">年</button>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+                    <button class="refresh-btn report-refresh-btn" onclick="loadUsageHistory()">刷新全站数据</button>
+                    <div class="view-toggle">
+                        <button class="view-btn active" onclick="setChartView('hour')" id="viewHour">时</button>
+                        <button class="view-btn" onclick="setChartView('day')" id="viewDay">日</button>
+                        <button class="view-btn" onclick="setChartView('month')" id="viewMonth">月</button>
+                        <button class="view-btn" onclick="setChartView('year')" id="viewYear">年</button>
+                    </div>
                 </div>
             </div>
             <div class="chart-container">
@@ -285,22 +308,20 @@
             <div class="section-title" style="margin-top: 28px;">
                 <div>
                     <h3>每小时请求与成功/失败率</h3>
-                    <div style="font-size:12px;color:#999;margin-top:4px;">柱子是每小时请求数，绿线是成功率，红线是失败率。</div>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">全站聚合数据；柱子是每小时请求数，绿线是成功率，红线是失败率。</div>
                 </div>
             </div>
             <div class="chart-container">
                 <canvas id="requestQualityChart"></canvas>
             </div>
 
-            <div class="auth-stats-panel">
-                <div class="auth-stats-head">
-                    <div>
-                        <h3>认证文件整体统计</h3>
-                        <p>认证文件明细已经拆到独立页面，按节点聚合展示 1 小时、5 小时、24 小时、7 天和累计用量。</p>
-                    </div>
-                    <a href="/admin/auth-stats" target="_blank" class="refresh-btn" style="margin:0;text-decoration:none;display:inline-block;">打开认证统计</a>
+            <div class="section-title" style="margin-top: 28px;">
+                <div>
+                    <h3>按模型类型统计</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">全站聚合数据；最近 7 天按模型类型聚合 Token、请求、成功率和估算费用。</div>
                 </div>
             </div>
+            <div id="modelGroupReport" style="margin:8px 0 28px 0;"></div>
 
             <h3 style="margin-bottom: 10px; color: #667eea;">详细数据</h3>
             <table class="report-table">
@@ -311,6 +332,7 @@
                     <tr><td colspan="3" style="text-align:center;color:#999;">加载中...</td></tr>
                 </tbody>
             </table>
+
         </div>
     </div>
 
@@ -320,7 +342,17 @@
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.querySelector('.tab[onclick="showTab(\'' + name + '\')"]').classList.add('active');
             document.getElementById(name).classList.add('active');
-            if (name === 'report') loadUsage();
+            if (name === 'report') {
+                startPersonalUsageSummaryPolling();
+                loadUsage().then(() => {
+                    setTimeout(() => {
+                        renderChart();
+                        renderRequestQualityChart();
+                    }, 50);
+                });
+            } else {
+                stopPersonalUsageSummaryPolling();
+            }
         }
 
         function copyText(id, btn) {
@@ -360,9 +392,10 @@
         }
 
         function formatNumber(num) {
-            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-            if (num >= 10000) return (num / 1000).toFixed(1) + 'K';
-            return num.toLocaleString('zh-CN');
+            const value = Number(num || 0);
+            if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+            if (value >= 10000) return (value / 10000).toFixed(1) + '万';
+            return value.toLocaleString('zh-CN');
         }
 
         function formatNumberFull(num) {
@@ -393,7 +426,7 @@
 
         function tokenCostText(item) {
             if (!item) return '估算 $0.00';
-            return '估算 ' + formatCost(item.cost_usd, 'usd');
+            return '估算 ' + formatCost(item.cost_usd ?? item.spend_usd, 'usd');
         }
 
         function tokenUsageCellHtml(item) {
@@ -415,11 +448,15 @@
             return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || '').trim());
         }
 
-        function buildZillizEmail(prefixValue) {
-            let prefix = String(prefixValue || '').trim().toLowerCase();
-            if (prefix.endsWith('@zilliz.com')) prefix = prefix.slice(0, -'@zilliz.com'.length);
-            if (!prefix || prefix.includes('@') || /\s/.test(prefix)) return '';
-            return `${prefix}@zilliz.com`;
+        function rememberMyKeysEmail(email) {
+            const normalized = String(email || '').trim().toLowerCase();
+            if (normalized.endsWith('@zilliz.com')) {
+                localStorage.setItem(EMAIL_STORAGE_KEY, normalized);
+            }
+        }
+
+        function getRememberedMyKeysEmail() {
+            return String(localStorage.getItem(EMAIL_STORAGE_KEY) || '').trim().toLowerCase();
         }
 
         function formatDateTime(value) {
@@ -447,9 +484,15 @@
         // Smooth flowing counter effect
         const counterState = {};
         let counterAnimationFrame = null;
+        let counterRateSnapshot = null;
+
+        function currentCounterDisplay(elementId) {
+            const state = counterState[elementId];
+            return state ? state.display : null;
+        }
 
         function counterFormatter(elementId) {
-            const isFullCounter = elementId === 'todayTokenCounter' || elementId === 'todayRequestCounter';
+            const isFullCounter = ['todayTokenCounter', 'todayRequestCounter', 'myTodayTokenCounter', 'myTodayRequestCounter'].includes(elementId);
             return isFullCounter ? formatNumberFull : formatNumber;
         }
 
@@ -461,6 +504,9 @@
                 if (!el) return;
                 const deltaSeconds = Math.min((now - state.lastUpdate) / 1000, 0.08);
                 state.lastUpdate = now;
+                if (state.ratePerSecond > 0 && now < state.rateExpiresAt) {
+                    state.target += state.ratePerSecond * deltaSeconds;
+                }
                 const diff = state.target - state.display;
                 const absDiff = Math.abs(diff);
                 if (absDiff <= 0.75) {
@@ -475,7 +521,7 @@
             counterAnimationFrame = active ? requestAnimationFrame(updateCountersFrame) : null;
         }
 
-        function animateCounter(elementId, targetValue) {
+        function animateCounter(elementId, targetValue, ratePerSecond = 0) {
             const el = document.getElementById(elementId);
             if (!el) return;
             const target = Number(targetValue || 0);
@@ -484,12 +530,16 @@
                 counterState[elementId] = {
                     display: target,
                     target,
+                    ratePerSecond: Math.max(0, Number(ratePerSecond || 0)),
+                    rateExpiresAt: performance.now() + 12000,
                     lastUpdate: performance.now()
                 };
                 el.textContent = counterFormatter(elementId)(Math.round(target));
                 return;
             }
-            existing.target = target;
+            existing.target = Math.max(target, existing.display);
+            existing.ratePerSecond = Math.max(0, Number(ratePerSecond || 0));
+            existing.rateExpiresAt = performance.now() + 12000;
             existing.lastUpdate = performance.now();
             if (!counterAnimationFrame) {
                 counterAnimationFrame = requestAnimationFrame(updateCountersFrame);
@@ -497,29 +547,39 @@
         }
 
         // Chart state
-        let usageChart = null;
-        let requestQualityChart = null;
-        let usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {}, recent_hours: [] };
-        let currentView = 'hour';
+        window.usageChart = null;
+        window.requestQualityChart = null;
+        window.usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {}, recent_hours: [], model_groups: [] };
+        window.currentView = 'hour';
         let usageSummaryPollTimer = null;
         let usageSummaryLoading = false;
         let lastUsageSummary = { today: '', today_tokens: 0, today_requests: 0, total_tokens: 0, total_requests: 0, success_count: 0, failure_count: 0 };
+        let personalUsagePollTimer = null;
+        let personalUsageLoading = false;
+        let personalRateSnapshot = null;
+
+        function setElementText(elementId, value) {
+            const el = document.getElementById(elementId);
+            if (el) el.textContent = value;
+        }
 
         // WebSocket connection
-        const socket = io();
+        if (window.io) {
+            const socket = io();
 
-        socket.on('connect', () => {
-            console.log('[WebSocket] Connected');
-        });
+            socket.on('connect', () => {
+                console.log('[WebSocket] Connected');
+            });
 
-        socket.on('usage_update', (data) => {
-            console.log('[WebSocket] Usage update:', data);
-            loadUsageSummary();
-        });
+            socket.on('usage_update', (data) => {
+                console.log('[WebSocket] Usage update:', data);
+                loadUsageSummary();
+            });
 
-        socket.on('disconnect', () => {
-            console.log('[WebSocket] Disconnected');
-        });
+            socket.on('disconnect', () => {
+                console.log('[WebSocket] Disconnected');
+            });
+        }
 
         function setChartView(view) {
             currentView = view;
@@ -538,6 +598,26 @@
             const todayTokens = Number(data.today_tokens || 0);
             const todayRequests = Number(data.today_requests || 0);
             const tokenBreakdown = data.token_breakdown || lastUsageSummary.token_breakdown || {};
+            const nowMs = performance.now();
+            const previousSnapshot = counterRateSnapshot;
+            const elapsedSeconds = previousSnapshot ? Math.max((nowMs - previousSnapshot.at) / 1000, 0.001) : 0;
+            const rateFor = (key, value) => {
+                if (!previousSnapshot || elapsedSeconds <= 0) return 0;
+                return Math.max(0, (Number(value || 0) - Number(previousSnapshot[key] || 0)) / elapsedSeconds);
+            };
+            const rates = {
+                today_tokens: rateFor('today_tokens', todayTokens),
+                total_tokens: rateFor('total_tokens', totalTokens),
+                today_requests: rateFor('today_requests', todayRequests),
+                total_requests: rateFor('total_requests', totalRequests)
+            };
+            counterRateSnapshot = {
+                at: nowMs,
+                today_tokens: todayTokens,
+                total_tokens: totalTokens,
+                today_requests: todayRequests,
+                total_requests: totalRequests
+            };
             lastUsageSummary = {
                 today,
                 today_tokens: todayTokens,
@@ -548,20 +628,77 @@
                 failure_count: failureCount,
                 token_breakdown: tokenBreakdown
             };
-            animateCounter('todayTokenCounter', todayTokens);
-            animateCounter('totalTokenCounter', totalTokens);
-            animateCounter('todayRequestCounter', todayRequests);
-            animateCounter('totalRequestCounter', totalRequests);
-            document.getElementById('totalTokens').textContent = formatNumber(totalTokens);
-            document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
-            document.getElementById('todayTokenBreakdown').textContent = tokenBreakdownText(tokenBreakdown.today);
-            document.getElementById('totalTokenBreakdown').textContent = tokenBreakdownText(tokenBreakdown.total);
-            document.getElementById('todayTokenCost').textContent = tokenCostText(tokenBreakdown.today);
-            document.getElementById('totalTokenCost').textContent = tokenCostText(tokenBreakdown.total);
-            const successRate = totalRequests > 0
-                ? Math.round((successCount / totalRequests) * 100) + '%'
-                : '-';
-            document.getElementById('successRate').textContent = successRate;
+            animateCounter('todayTokenCounter', todayTokens, rates.today_tokens);
+            animateCounter('totalTokenCounter', totalTokens, rates.total_tokens);
+            animateCounter('todayRequestCounter', todayRequests, rates.today_requests);
+            animateCounter('totalRequestCounter', totalRequests, rates.total_requests);
+            setElementText('todayTokenBreakdown', tokenBreakdownText(tokenBreakdown.today));
+            setElementText('totalTokenBreakdown', tokenBreakdownText(tokenBreakdown.total));
+            setElementText('todayTokenCost', tokenCostText(tokenBreakdown.today));
+            setElementText('totalTokenCost', tokenCostText(tokenBreakdown.total));
+        }
+
+        function applyPersonalUsageSummary(data) {
+            const totalTokens = Number(data.total_tokens || 0);
+            const totalRequests = Number(data.total_requests || 0);
+            const todayTokens = Number(data.today_tokens || 0);
+            const todayRequests = Number(data.today_requests || 0);
+            const tokenBreakdown = data.token_breakdown || {};
+            const nowMs = performance.now();
+            const previousSnapshot = personalRateSnapshot;
+            const elapsedSeconds = previousSnapshot ? Math.max((nowMs - previousSnapshot.at) / 1000, 0.001) : 0;
+            const rateFor = (key, value) => {
+                if (!previousSnapshot || elapsedSeconds <= 0) return 0;
+                return Math.max(0, (Number(value || 0) - Number(previousSnapshot[key] || 0)) / elapsedSeconds);
+            };
+            const rates = {
+                today_tokens: rateFor('today_tokens', todayTokens),
+                total_tokens: rateFor('total_tokens', totalTokens),
+                today_requests: rateFor('today_requests', todayRequests),
+                total_requests: rateFor('total_requests', totalRequests)
+            };
+            personalRateSnapshot = {
+                at: nowMs,
+                today_tokens: todayTokens,
+                total_tokens: totalTokens,
+                today_requests: todayRequests,
+                total_requests: totalRequests
+            };
+            animateCounter('myTodayTokenCounter', todayTokens, rates.today_tokens);
+            animateCounter('myTotalTokenCounter', totalTokens, rates.total_tokens);
+            animateCounter('myTodayRequestCounter', todayRequests, rates.today_requests);
+            animateCounter('myTotalRequestCounter', totalRequests, rates.total_requests);
+            setElementText('myTodayTokenBreakdown', tokenBreakdownText(tokenBreakdown.today));
+            setElementText('myTotalTokenBreakdown', tokenBreakdownText(tokenBreakdown.total));
+            setElementText('myTodayTokenCost', tokenCostText(tokenBreakdown.today));
+            setElementText('myTotalTokenCost', tokenCostText(tokenBreakdown.total));
+        }
+
+        async function loadPersonalUsageSummary() {
+            if (personalUsageLoading) return;
+            personalUsageLoading = true;
+            try {
+                const resp = await fetch('/api/my-usage-summary', { cache: 'no-store' });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || '个人用量加载失败');
+                applyPersonalUsageSummary(data);
+            } catch (e) {
+                console.error('Load personal usage summary error:', e);
+            } finally {
+                personalUsageLoading = false;
+            }
+        }
+
+        function startPersonalUsageSummaryPolling() {
+            if (personalUsagePollTimer) return;
+            loadPersonalUsageSummary();
+            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 2000);
+        }
+
+        function stopPersonalUsageSummaryPolling() {
+            if (!personalUsagePollTimer) return;
+            clearInterval(personalUsagePollTimer);
+            personalUsagePollTimer = null;
         }
 
         async function loadUsageSummary() {
@@ -586,7 +723,16 @@
 
         function getRecentBeijingHourBuckets() {
             if (Array.isArray(usageData.recent_hours) && usageData.recent_hours.length > 0) {
-                return usageData.recent_hours;
+                return usageData.recent_hours.map(h => ({
+                    ...h,
+                    label: h.label || h.hour || h.utcKey || '',
+                    utcKey: h.utcKey || h.hour || h.label || '',
+                    tokens: Number(h.tokens ?? h.total_tokens ?? 0),
+                    requests: Number(h.requests ?? h.total_requests ?? 0),
+                    success_count: Number(h.success_count ?? 0),
+                    failure_count: Number(h.failure_count ?? 0),
+                    avg_latency_ms: h.avg_latency_ms == null ? null : Number(h.avg_latency_ms)
+                }));
             }
             return Array.from({ length: 48 }, (_, i) => {
                 const offset = 47 - i;
@@ -595,16 +741,57 @@
                 const beijingMonth = String(beijingDate.getUTCMonth() + 1).padStart(2, '0');
                 const beijingDay = String(beijingDate.getUTCDate()).padStart(2, '0');
                 const beijingHour = beijingDate.getUTCHours();
-                const utcHour = utcDate.getUTCHours();
                 return {
                     label: `${beijingMonth}-${beijingDay} ${String(beijingHour).padStart(2, '0')}:00`,
-                    utcKey: String(utcHour).padStart(2, '0')
+                    utcKey: `${beijingMonth}-${beijingDay} ${String(beijingHour).padStart(2, '0')}:00`,
+                    tokens: 0,
+                    requests: 0,
+                    success_count: 0,
+                    failure_count: 0,
+                    avg_latency_ms: null
                 };
             });
         }
 
+        function modelGroupLabelForReport(group) {
+            const labels = { gpt: 'GPT', claude: 'Claude / Bedrock', deepseek: 'DeepSeek', gemini: 'Gemini' };
+            return labels[group] || group || '其他';
+        }
+
+        function renderModelGroupReport() {
+            const container = document.getElementById('modelGroupReport');
+            if (!container) return;
+            const rows = Array.isArray(usageData.model_groups) ? usageData.model_groups : [];
+            if (!rows.length) {
+                container.innerHTML = '<div style="padding:14px 16px;background:#f8f9ff;border:1px solid #dfe3ff;border-radius:8px;color:#999;">暂无模型类型用量数据</div>';
+                return;
+            }
+            container.innerHTML = '<table class="report-table"><thead><tr><th>模型类型</th><th>Tokens</th><th>请求</th><th>成功率</th><th>失败率</th><th>估算费用</th></tr></thead><tbody>' +
+                rows.map(row => {
+                    const requests = Number(row.requests || 0);
+                    const success = Number(row.success_count || 0);
+                    const failure = Number(row.failure_count || 0);
+                    const successRate = requests ? (success * 100 / requests).toFixed(1) + '%' : '-';
+                    const failureRate = requests ? (failure * 100 / requests).toFixed(1) + '%' : '-';
+                    return '<tr><td>' + escapeHtml(modelGroupLabelForReport(row.model_group)) + '</td>' +
+                        '<td>' + tokenUsageCellHtml({
+                            total_tokens: row.tokens,
+                            input_tokens: row.input_tokens,
+                            output_tokens: row.output_tokens,
+                            cached_tokens: row.cached_tokens,
+                            spend_usd: row.spend_usd
+                        }) + '</td>' +
+                        '<td>' + escapeHtml(formatNumber(requests)) + '</td>' +
+                        '<td>' + escapeHtml(successRate) + '</td>' +
+                        '<td>' + escapeHtml(failureRate) + '</td>' +
+                        '<td>' + escapeHtml(formatCost(row.spend_usd || 0)) + '</td></tr>';
+                }).join('') + '</tbody></table>';
+        }
+
         function renderChart() {
-            const ctx = document.getElementById('usageChart').getContext('2d');
+            const canvas = document.getElementById('usageChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
 
             let labels = [];
             let tokenData = [];
@@ -652,11 +839,16 @@
             const tokensPerRequestData = tokenData.map((tokens, i) => requestData[i] ? tokens / requestData[i] : null);
             const tokensPerHourData = tokenData.map((tokens, i) => hoursForRate[i] ? tokens / hoursForRate[i] : null);
 
-            if (usageChart) {
-                usageChart.destroy();
+            if (window.usageChart) {
+                window.usageChart.destroy();
             }
 
-            usageChart = new Chart(ctx, {
+            if (!window.Chart) {
+                console.error('Chart.js not loaded');
+                return;
+            }
+
+            window.usageChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: labels,
@@ -705,6 +897,7 @@
                 },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
                         legend: { position: 'top' },
@@ -732,6 +925,7 @@
                             type: 'linear',
                             display: true,
                             position: 'left',
+                            beginAtZero: true,
                             title: { display: true, text: 'Tokens' },
                             ticks: { callback: v => formatNumber(v) }
                         },
@@ -739,23 +933,27 @@
                             type: 'linear',
                             display: true,
                             position: 'right',
+                            beginAtZero: true,
                             title: { display: true, text: '请求数' },
-                            grid: { drawOnChartArea: false }
+                            grid: { drawOnChartArea: false },
+                            ticks: { callback: v => formatNumber(v) }
                         },
                         y2: {
                             type: 'linear',
-                            display: true,
+                            display: currentView !== 'hour',
                             position: 'left',
                             offset: true,
+                            beginAtZero: true,
                             title: { display: true, text: 'Token/请求', color: '#fd7e14' },
                             grid: { drawOnChartArea: false },
                             ticks: { color: '#fd7e14', callback: v => Number(v).toFixed(0) }
                         },
                         y3: {
                             type: 'linear',
-                            display: true,
+                            display: currentView !== 'hour',
                             position: 'right',
                             offset: true,
+                            beginAtZero: true,
                             title: { display: true, text: '平均 Token/小时', color: '#6f42c1' },
                             grid: { drawOnChartArea: false },
                             ticks: { color: '#6f42c1', callback: v => formatNumber(v) }
@@ -808,11 +1006,16 @@
             const successRateData = requestData.map((requests, i) => requests ? successData[i] * 100 / requests : null);
             const failureRateData = requestData.map((requests, i) => requests ? failureData[i] * 100 / requests : null);
 
-            if (requestQualityChart) {
-                requestQualityChart.destroy();
+            if (window.requestQualityChart) {
+                window.requestQualityChart.destroy();
             }
 
-            requestQualityChart = new Chart(ctx, {
+            if (!window.Chart) {
+                console.error('Chart.js not loaded');
+                return;
+            }
+
+            window.requestQualityChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels,
@@ -867,6 +1070,7 @@
                 },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
                         legend: { position: 'top' },
@@ -912,6 +1116,7 @@
                             display: currentView === 'hour',
                             position: 'right',
                             offset: true,
+                            beginAtZero: true,
                             title: { display: true, text: '平均耗时(ms)', color: '#17a2b8' },
                             grid: { drawOnChartArea: false },
                             ticks: { color: '#17a2b8', callback: v => formatNumber(v) }
@@ -922,20 +1127,25 @@
         }
 
         async function loadUsageHistory() {
+            const tbody = document.getElementById('dailyReport');
             try {
                 loadUsageSummary();
+                loadPersonalUsageSummary();
 
-                // Load history data
-                const histResp = await fetch('/api/usage-history');
-                usageData = await histResp.json();
+                const histResp = await fetch('/api/usage-history', {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                });
+                const histText = await histResp.text();
+                if (!histResp.ok) {
+                    throw new Error('HTTP ' + histResp.status + ': ' + histText.slice(0, 120));
+                }
+                if (!histResp.headers.get('content-type')?.includes('application/json')) {
+                    throw new Error('接口返回了非 JSON：' + histText.slice(0, 120));
+                }
+                window.usageData = JSON.parse(histText);
 
-                // Render charts
-                renderChart();
-                renderRequestQualityChart();
-
-                // Update table
-                const tbody = document.getElementById('dailyReport');
-                const history = usageData.history || [];
+                const history = window.usageData.history || [];
                 if (history.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">暂无数据</td></tr>';
                 } else {
@@ -944,9 +1154,27 @@
                         '<tr><td>' + d.date + '</td><td>' + tokenUsageCellHtml(d) + '</td><td>' + d.total_requests + '</td></tr>'
                     ).join('');
                 }
+
+                renderModelGroupReport();
+
+                try {
+                    renderChart();
+                } catch (chartError) {
+                    console.error('Usage chart render error:', chartError);
+                }
+                try {
+                    renderRequestQualityChart();
+                } catch (chartError) {
+                    console.error('Request quality chart render error:', chartError);
+                }
             } catch (e) {
                 console.error('Load usage error:', e);
-                document.getElementById('dailyReport').innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">加载失败</td></tr>';
+                if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">加载失败</td></tr>';
+                const box = document.getElementById('pageError');
+                if (box) {
+                    box.style.display = 'block';
+                    box.textContent = '用量报表加载失败：' + (e.message || e);
+                }
             }
         }
 
@@ -961,28 +1189,60 @@
         // ========================================
 
         const STORAGE_KEY = 'my_api_keys';
+        const EMAIL_STORAGE_KEY = 'my_keys_email';
+        let portalSessionEmail = '';
         const MODEL_GROUP_LABELS = {
-            common: '通用 Key',
+            common: 'GPT Key',
             claude: 'Claude Key',
-            gemini: 'Gemini Key',
             deepseek: 'DeepSeek Key'
         };
         const MODEL_GROUP_HINTS = {
-            common: '通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
-            claude: 'Claude Key 面向 Claude 原生和 Bedrock Claude 模型，后续会接入审批和额度限制。',
-            gemini: 'Gemini Key 面向 Google Gemini 模型，后续会接入审批和额度限制。',
-            deepseek: 'DeepSeek Key 面向 DeepSeek 模型，后续会接入审批和额度限制。'
+            common: 'GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
+            claude: '⚠️ Claude / Bedrock 按量计费成本较高，请仅在必要、紧急或 GPT 无法满足任务时申请；常规用量推荐优先使用 GPT Key。审批通过后自动生成 Key 并通过飞书通知你。当前仅支持 Opus 4.6（模型名选 claude-opus-4-6），暂不支持 4.7。',
+            deepseek: '⚠️ DeepSeek Key 需要飞书审批。审批通过后自动生成 Key 并通过飞书通知你。'
         };
+        const APPROVAL_REQUIRED = new Set(['claude', 'deepseek']);
 
         function modelGroupLabel(modelGroup) {
             return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
         }
 
+        // Pricing: input/output per 1M tokens (USD)
+        const MODEL_PRICING = {
+            claude: { input: 5, output: 25, label: 'Claude Opus' },
+            deepseek: { input: 0.14, output: 0.28, label: 'DeepSeek' },
+        };
+
+        function updateBudgetEstimate() {
+            const budget = parseFloat(document.getElementById('regDailyBudget')?.value || 0);
+            const modelGroup = document.getElementById('regModelGroup')?.value || 'common';
+            const el = document.getElementById('regBudgetEstimate');
+            if (!el || !budget || budget <= 0 || !MODEL_PRICING[modelGroup]) {
+                if (el) el.style.display = 'none';
+                return;
+            }
+            const p = MODEL_PRICING[modelGroup];
+            // Assume average mix: 3:1 input:output ratio
+            const avgCostPerMToken = (p.input * 3 + p.output * 1) / 4;
+            const mTokens = budget / avgCostPerMToken;
+            const tokens = Math.round(mTokens * 1000000);
+            // Rough estimate: ~4000 tokens per request average
+            const requests = Math.round(tokens / 4000);
+            el.innerHTML = `<strong>$${budget}</strong> ≈ <strong>${mTokens >= 1 ? mTokens.toFixed(1) + 'M' : Math.round(mTokens * 1000) + 'K'}</strong> tokens（${p.label}）≈ <strong>${requests.toLocaleString()}</strong> 次请求`;
+            el.style.display = 'block';
+        }
+
         function updateModelGroupHint() {
             const selector = document.getElementById('regModelGroup');
             const hint = document.getElementById('regModelGroupHint');
+            const approvalFields = document.getElementById('regApprovalFields');
+            const btn = document.getElementById('regBtn');
             if (!selector || !hint) return;
             hint.textContent = MODEL_GROUP_HINTS[selector.value] || MODEL_GROUP_HINTS.common;
+            const needsApproval = APPROVAL_REQUIRED.has(selector.value);
+            if (approvalFields) approvalFields.style.display = needsApproval ? 'block' : 'none';
+            if (btn) btn.textContent = needsApproval ? '提交审批申请' : '申请 API Key';
+            updateBudgetEstimate();
         }
 
         function getMyKeys() {
@@ -1010,173 +1270,6 @@
             }
         }
 
-        function updateStoredKey(apiKey, updates) {
-            const keys = getMyKeys();
-            const item = keys.find(k => k.key === apiKey);
-            if (item) Object.assign(item, updates);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
-        }
-
-        function removeMyKey(apiKey) {
-            try {
-                const keys = getMyKeys();
-                const filtered = keys.filter(k => k.key !== apiKey);
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
-                displayMyKeys();
-            } catch (e) {
-                console.error('Failed to remove from localStorage:', e);
-            }
-        }
-
-        async function displayMyKeys() {
-            const keys = getMyKeys();
-            const container = document.getElementById('myKeysHistory');
-            const listDiv = document.getElementById('myKeysList');
-
-            if (keys.length === 0) {
-                container.style.display = 'none';
-                return;
-            }
-
-            container.style.display = 'block';
-
-            // Fetch stats for all keys
-            const keysWithStats = await Promise.all(keys.map(async (keyInfo) => {
-                try {
-                    const resp = await fetch('/api/query-by-key', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ api_key: keyInfo.key })
-                    });
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        return { ...keyInfo, stats: data };
-                    }
-                } catch (e) {
-                    console.error('Failed to fetch stats for', keyInfo.key, e);
-                }
-                return { ...keyInfo, stats: null };
-            }));
-
-            listDiv.innerHTML = keysWithStats.map((item, index) => {
-                const stats = item.stats;
-                const requests = stats ? (stats.today_requests || 0) : 0;
-                const tokens = stats ? (stats.today_tokens || 0) : 0;
-                const inferredEmail = item.email || (stats && isValidEmail(stats.identifier) ? stats.identifier : '');
-                const emailText = inferredEmail || '未填写邮箱';
-                const emailColor = inferredEmail ? '#666' : '#ad6800';
-                const modelGroup = item.model_group || 'common';
-
-                return `
-                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
-                            <div style="flex: 1; min-width: 260px;">
-                                <div style="font-size: 15px; color: #333; margin-bottom: 6px; font-weight: 600;">
-                                    ${escapeHtml(item.identifier || '未命名 Key')}
-                                </div>
-                                <div style="font-family: 'Courier New', monospace; font-size: 12px; color: #667eea; background: #f0f4ff; padding: 4px 8px; border-radius: 4px; display: inline-block;">
-                                    ${escapeHtml(item.key)}
-                                </div>
-                                <div style="font-size: 12px; color: #999; margin-top: 8px;">
-                                    📅 ${formatDateTime(item.created_at)}
-                                </div>
-                                <div style="margin-top: 8px; font-size: 12px; color: #555;">
-                                    Key 类型：<span style="display: inline-block; padding: 2px 8px; background: #eef2ff; color: #4f46e5; border-radius: 999px; font-weight: 600;">${escapeHtml(modelGroupLabel(modelGroup))}</span>
-                                </div>
-                                <div style="margin-top: 10px; font-size: 12px; color: ${emailColor}; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-                                    <span>邮箱：<span id="historyEmailText${index}">${escapeHtml(emailText)}</span></span>
-                                    <button onclick="showEmailEditor(${index})" title="修改邮箱" style="width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: #f0f4ff; color: #667eea; cursor: pointer; font-size: 12px; line-height: 22px;">✎</button>
-                                </div>
-                                <div id="historyEmailEditor${index}" style="display: none; margin-top: 8px; padding: 10px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px;">
-                                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                                        <input id="historyEmail${index}" type="email" value="${escapeAttr(inferredEmail)}" placeholder="your.name@company.com" style="flex: 1; min-width: 220px; padding: 8px 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 13px;">
-                                        <button id="historyEmailBtn${index}" onclick="updateKeyEmail('${escapeAttr(item.key)}', ${index})" style="padding: 8px 12px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">保存</button>
-                                        <button onclick="hideEmailEditor(${index})" style="padding: 8px 12px; background: white; color: #666; border: 1px solid #d9d9d9; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">取消</button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div style="text-align: center; margin: 0 10px; background: #f0f4ff; padding: 10px 16px; border-radius: 8px;">
-                                <div style="font-size: 11px; color: #667eea; font-weight: 600; margin-bottom: 3px;">今日请求数</div>
-                                <div style="font-size: 20px; font-weight: 700; color: #667eea;">${requests.toLocaleString()}</div>
-                            </div>
-                            <div style="text-align: center; margin-right: 10px; background: #e8f5e9; padding: 10px 16px; border-radius: 8px;">
-                                <div style="font-size: 11px; color: #28a745; font-weight: 600; margin-bottom: 3px;">今日 Tokens</div>
-                                <div style="font-size: 20px; font-weight: 700; color: #28a745;">${tokens.toLocaleString()}</div>
-                            </div>
-                            <div style="display: flex; gap: 8px;">
-                                <button onclick="viewKeyDetails('${escapeAttr(item.key)}')" style="padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 6px rgba(102,126,234,0.3)'">
-                                    查看详情
-                                </button>
-                                <button onclick="removeMyKey('${escapeAttr(item.key)}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
-                                    删除
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        function viewKeyDetails(apiKey) {
-            window.open(`/my-keys?key=${apiKey}`, '_blank');
-        }
-
-        function showEmailEditor(index) {
-            const editor = document.getElementById(`historyEmailEditor${index}`);
-            const input = document.getElementById(`historyEmail${index}`);
-            if (editor) editor.style.display = 'block';
-            if (input) input.focus();
-        }
-
-        function hideEmailEditor(index) {
-            const editor = document.getElementById(`historyEmailEditor${index}`);
-            if (editor) editor.style.display = 'none';
-        }
-
-        async function updateKeyEmail(apiKey, index) {
-            const input = document.getElementById(`historyEmail${index}`);
-            const btn = document.getElementById(`historyEmailBtn${index}`);
-            const email = input ? input.value.trim().toLowerCase() : '';
-
-            if (!email) {
-                alert('请输入邮箱');
-                return;
-            }
-            if (!isValidEmail(email)) {
-                alert('请输入有效的邮箱');
-                return;
-            }
-
-            const originalText = btn ? btn.textContent : '';
-            if (btn) {
-                btn.disabled = true;
-                btn.textContent = '保存中...';
-            }
-
-            try {
-                const resp = await fetch('/api/update-key-email', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: apiKey, email })
-                });
-                const data = await resp.json();
-                if (!resp.ok || data.error) {
-                    throw new Error(data.error || '保存失败');
-                }
-                updateStoredKey(apiKey, { email });
-                const text = document.getElementById(`historyEmailText${index}`);
-                if (text) text.textContent = email;
-                hideEmailEditor(index);
-            } catch (e) {
-                alert('保存失败：' + e.message);
-            } finally {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = originalText || '保存邮箱';
-                }
-            }
-        }
-
         async function loadPoolStatus() {
             try {
                 const resp = await fetch('/api/key-pool-status');
@@ -1187,11 +1280,29 @@
             }
         }
 
+        async function applySessionToRegisterForm() {
+            try {
+                const resp = await fetch('/api/session');
+                const session = await resp.json();
+                const email = String(session.email || session.user?.email || '').toLowerCase();
+                if (!session.authenticated || !email.endsWith('@zilliz.com')) return;
+                portalSessionEmail = email;
+                const identifier = document.getElementById('regIdentifier');
+                if (identifier && !identifier.value && session.user?.name) {
+                    identifier.placeholder = `${session.user.name}-工作电脑`;
+                }
+                rememberMyKeysEmail(email);
+            } catch (e) {
+                console.error('Failed to apply session defaults:', e);
+            }
+        }
+
         async function registerUserKey() {
             const identifier = document.getElementById('regIdentifier').value.trim();
-            const emailPrefix = document.getElementById('regEmailPrefix').value.trim();
-            const email = buildZillizEmail(emailPrefix);
+            const email = portalSessionEmail;
             const modelGroup = document.getElementById('regModelGroup')?.value || 'common';
+            const reason = document.getElementById('regReason')?.value.trim() || '';
+            const dailyBudget = document.getElementById('regDailyBudget')?.value.trim() || '';
             const btn = document.getElementById('regBtn');
             const result = document.getElementById('regResult');
 
@@ -1200,24 +1311,53 @@
                 return;
             }
             if (!email) {
-                alert('请输入 @zilliz.com 前面的邮箱部分');
+                alert('登录态未加载完成，请稍后再试或刷新页面');
+                return;
+            }
+            if (APPROVAL_REQUIRED.has(modelGroup) && !reason) {
+                alert('申请该模型组需要填写申请理由');
+                return;
+            }
+            if (APPROVAL_REQUIRED.has(modelGroup) && !dailyBudget) {
+                alert('请填写额度');
                 return;
             }
 
             btn.disabled = true;
-            btn.textContent = '申请中...';
+            btn.textContent = '提交中...';
             result.style.display = 'none';
 
             try {
                 const resp = await fetch('/api/register-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, name: identifier, label: identifier, model_group: modelGroup })
+                    body: JSON.stringify({ email, name: identifier, label: identifier, model_group: modelGroup, reason, daily_budget: dailyBudget })
                 });
 
                 const data = await resp.json();
 
                 if (resp.ok) {
+                    const assignedEmail = String(data.email || email).toLowerCase();
+                    rememberMyKeysEmail(assignedEmail);
+                    if (data.pending_approval) {
+                        result.className = '';
+                        result.innerHTML = `
+                            <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 2px solid #ffc107; border-radius: 12px; padding: 25px; text-align: left;">
+                                <h3 style="color: #856404; margin: 0 0 15px 0; font-size: 18px;">📋 审批已提交</h3>
+                                <p style="color: #856404; margin: 0 0 10px 0; font-size: 14px;"><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
+                                <p style="color: #856404; margin: 0 0 10px 0; font-size: 14px;">审批请求已发送到飞书，审批通过后将自动生成 Key 并通过飞书消息通知你。</p>
+                                <p style="color: #856404; margin: 0; font-size: 13px;">请在飞书中关注审批进度。</p>
+                            </div>
+                        `;
+                        result.style.display = 'block';
+                        result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        document.getElementById('regIdentifier').value = '';
+                        document.getElementById('regModelGroup').value = 'common';
+                        document.getElementById('regReason').value = '';
+                        document.getElementById('regDailyBudget').value = '';
+                        updateModelGroupHint();
+                        return;
+                    }
                     const apiKey = data.api_key;
                     const baseUrl = {{ service_info.base_url|tojson }};
                     const claudeCmd = `node << 'CLAUDE_EOF'
@@ -1288,7 +1428,7 @@ export OPENAI_API_KEY="${apiKey}"`;
                     saveMyKey({
                         key: apiKey,
                         identifier: identifier,
-                        email: email,
+                        email: assignedEmail,
                         model_group: modelGroup,
                         model_group_label: modelGroupLabel(modelGroup),
                         created_at: new Date().toISOString()
@@ -1359,15 +1499,11 @@ export OPENAI_API_KEY="${apiKey}"`;
 
                     // Clear form
                     document.getElementById('regIdentifier').value = '';
-                    document.getElementById('regEmailPrefix').value = '';
                     document.getElementById('regModelGroup').value = 'common';
                     updateModelGroupHint();
 
                     // Refresh pool status
                     loadPoolStatus();
-
-                    // Refresh historical keys display (don't let errors propagate)
-                    displayMyKeys().catch(err => console.error('displayMyKeys error:', err));
                 } else {
                     result.className = 'result-box error';
                     result.innerHTML = `
@@ -1385,7 +1521,7 @@ export OPENAI_API_KEY="${apiKey}"`;
                 result.style.display = 'inline-block';
             } finally {
                 btn.disabled = false;
-                btn.textContent = '申请 API Key';
+                updateModelGroupHint();
             }
         }
 
@@ -1425,12 +1561,11 @@ export OPENAI_API_KEY="${apiKey}"`;
             originalShowTab(name);
             if (name === 'register') {
                 loadPoolStatus();
-                displayMyKeys();
             }
         };
 
-        // Load usage on page load and keep the lightweight counters fresh.
-        loadUsageHistory();
+        // Keep the lightweight counters fresh; defer chart rendering until the report tab is visible.
+        loadUsageSummary();
         startUsageSummaryPolling();
 
         // Fill dynamic API URL shown in UI
@@ -1448,8 +1583,8 @@ export OPENAI_API_KEY="${apiKey}"`;
         // Load pool status and historical keys on page load (register tab is active by default)
         document.getElementById('regModelGroup')?.addEventListener('change', updateModelGroupHint);
         updateModelGroupHint();
+        applySessionToRegisterForm();
         loadPoolStatus();
-        displayMyKeys();
 
         // Tutorial Modal Functions
         function showTutorialModal() {

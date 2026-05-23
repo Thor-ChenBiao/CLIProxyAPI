@@ -6,9 +6,47 @@ import os
 CLIPROXY_API_URL = "http://localhost:8317"
 CLIPROXY_MANAGEMENT_KEY = "admin123"
 
-# Feishu App credentials for sending notifications
-FEISHU_APP_ID = "cli_a23fe3b0b6fa900b"
-FEISHU_APP_SECRET = "3I6GxOUWak70VjVnYF39nnX57N7kNnuS"
+# Feishu App credentials for login and notifications. Production reuses the
+# approval/message app from systemd unless FEISHU_APP_ID is explicitly set.
+FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", os.environ.get("FEISHU_APPROVAL_APP_ID", "cli_a23fe3b0b6fa900b"))
+FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", os.environ.get("FEISHU_APPROVAL_APP_SECRET", "3I6GxOUWak70VjVnYF39nnX57N7kNnuS"))
+
+# LiteLLM virtual key issuance and persisted usage aggregates
+LITELLM_API_URL = os.environ.get("LITELLM_API_URL", "http://127.0.0.1:4000").strip().rstrip("/")
+LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "").strip()
+LITELLM_ISSUE_KEYS = os.environ.get("LITELLM_ISSUE_KEYS", "").strip().lower() in {"1", "true", "yes", "on"}
+LITELLM_DATABASE_URL = os.environ.get("LITELLM_DATABASE_URL", os.environ.get("DATABASE_URL", "")).strip()
+
+# Key Portal state backends reuse the existing service database/cache by
+# default. KEY_PORTAL_* can still override them if we split storage later.
+KEY_PORTAL_DATABASE_URL = os.environ.get(
+    "KEY_PORTAL_DATABASE_URL", os.environ.get("DATABASE_URL", "")
+).strip()
+KEY_PORTAL_REDIS_URL = os.environ.get(
+    "KEY_PORTAL_REDIS_URL", os.environ.get("REDIS_URL", "")
+).strip()
+try:
+    KEY_PORTAL_SESSION_DAYS = int(os.environ.get("KEY_PORTAL_SESSION_DAYS", "30") or "30")
+except ValueError:
+    KEY_PORTAL_SESSION_DAYS = 30
+KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED = os.environ.get(
+    "KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+KEY_PORTAL_ADMIN_EMAILS = [
+    email.strip().lower()
+    for email in os.environ.get(
+        "KEY_PORTAL_ADMIN_EMAILS",
+        "biao.chen@zilliz.com,xiaofan.luan@zilliz.com",
+    ).split(",")
+    if email.strip()
+]
+
+# Feishu Approval — separate app from the notification app above
+FEISHU_APPROVAL_APP_ID = os.environ.get("FEISHU_APPROVAL_APP_ID", "")
+FEISHU_APPROVAL_APP_SECRET = os.environ.get("FEISHU_APPROVAL_APP_SECRET", "")
+FEISHU_APPROVAL_CODE = os.environ.get("FEISHU_APPROVAL_CODE", "FB411A4C-6C30-426B-AF4F-4D8892996EC9")
+FEISHU_APPROVAL_ENCRYPT_KEY = os.environ.get("FEISHU_APPROVAL_ENCRYPT_KEY", "")
+FEISHU_APPROVAL_VERIFICATION_TOKEN = os.environ.get("FEISHU_APPROVAL_VERIFICATION_TOKEN", "")
 
 # Key expiry warning threshold (hours before expiry to send notification)
 KEY_EXPIRE_WARNING_HOURS = 2
@@ -29,6 +67,16 @@ def _env_int(name, default):
 # Server settings
 HOST = os.environ.get("KEY_PORTAL_HOST", "0.0.0.0").strip() or "0.0.0.0"
 PORT = _env_int("KEY_PORTAL_PORT", 8080)
+
+# NLB health monitor settings. Only the full key-portal process uses these.
+NLB_MONITOR_ENABLED = os.environ.get("NLB_MONITOR_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+NLB_MONITOR_INTERVAL_SECONDS = _env_int("NLB_MONITOR_INTERVAL_SECONDS", 60)
+
+# Status announcements and incident notifications.
+STATUS_FEISHU_WEBHOOK_URL = os.environ.get("STATUS_FEISHU_WEBHOOK_URL", "").strip()
+STATUS_PUBLIC_URL = os.environ.get("STATUS_PUBLIC_URL", "").strip()
+STATUS_USAGE_RECORD_ENABLED = os.environ.get("STATUS_USAGE_RECORD_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+STATUS_USAGE_RECORD_LOOKBACK_DAYS = _env_int("STATUS_USAGE_RECORD_LOOKBACK_DAYS", 365)
 
 # Service info for tutorial page
 _public_base = os.environ.get("PUBLIC_BASE_URL", "").strip()

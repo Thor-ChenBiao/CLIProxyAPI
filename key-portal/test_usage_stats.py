@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import app as portal_app
@@ -59,7 +60,7 @@ class TempUsageDb(unittest.TestCase):
 class UsageMergeTests(unittest.TestCase):
     def test_merge_usage_payloads_combines_nodes_and_preserves_details(self):
         detail = {
-            "timestamp": "2026-05-10T16:30:00Z",
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "tokens": {"input_tokens": 3, "output_tokens": 7, "total_tokens": 10},
             "failed": False,
         }
@@ -153,10 +154,118 @@ class FlaskSmokeTests(unittest.TestCase):
              patch.object(portal_app, "get_usage_stats_cached", return_value=({"usage": {}}, None)), \
              patch.object(portal_app, "build_all_users_stats_response", return_value={"users": [], "summary": {}, "aggregation": "total"}), \
              patch.object(portal_app, "get_auth_stats_cached", return_value={"auth_files": [], "nodes": {}, "errors": []}):
-            self.assertEqual(client.get("/api/usage-summary").status_code, 200)
-            self.assertEqual(client.get("/api/usage-history").status_code, 200)
-            self.assertEqual(client.get("/api/all-users-stats").status_code, 200)
-            self.assertEqual(client.get("/api/auth-stats").status_code, 200)
+            self.assertEqual(client.get("/api/usage-summary").status_code, 401)
+            with patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}):
+                self.assertEqual(client.get("/api/usage-summary").status_code, 200)
+                self.assertEqual(client.get("/api/usage-history").status_code, 200)
+                self.assertEqual(client.get("/api/all-users-stats").status_code, 403)
+                self.assertEqual(client.get("/api/auth-stats").status_code, 403)
+            with patch.object(portal_app, "current_portal_session", return_value={"email": "biao.chen@zilliz.com", "user": {}}):
+                self.assertEqual(client.get("/api/all-users-stats").status_code, 200)
+                self.assertEqual(client.get("/api/auth-stats").status_code, 200)
+
+    def test_monitor_log_recent_entries_metadata_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            with open(os.path.join(tmpdir, "monitor-test.log"), "w", encoding="utf-8") as handle:
+                handle.write(f"========== {timestamp} ==========\n")
+                handle.write("Key: sk-test-1234567890\n")
+                handle.write("Method: POST\n")
+                handle.write("URL: /v1/chat/completions\n")
+                handle.write("Status: 200\n")
+                handle.write("Request-Size: 10\n")
+                handle.write("Response-Size: 20\n")
+                handle.write("\n--- REQUEST BODY ---\n")
+                handle.write("secret request body\n")
+                handle.write("\n--- RESPONSE ---\n")
+                handle.write("secret response body\n")
+                handle.write("\n========== END ==========\n")
+
+            rows = portal_app.monitor_log_recent_entries("sk-test-1234567890", hours=1, log_dir=tmpdir)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["key"], "sk-tes...7890")
+        self.assertEqual(rows[0]["url"], "/v1/chat/completions")
+        self.assertNotIn("request_body", rows[0])
+        self.assertNotIn("response_body", rows[0])
+        self.assertNotIn("secret request body", str(rows[0]))
+
+    def test_monitor_log_recent_entries_filters_old_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            timestamp = (datetime.utcnow() - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with open(os.path.join(tmpdir, "monitor-old.log"), "w", encoding="utf-8") as handle:
+                handle.write(f"========== {timestamp} ==========\n")
+                handle.write("Key: sk-test-1234567890\n")
+                handle.write("Status: 200\n")
+                handle.write("========== END ==========\n")
+
+            rows = portal_app.monitor_log_recent_entries("sk-test-1234567890", hours=1, log_dir=tmpdir)
+
+        self.assertEqual(rows, [])
+
+    def test_user_monitor_recent_requests_returns_metadata_only(self):
+        user_data = {
+            "users": {"u@example.com": {"api_keys": ["sk-test-1234567890"]}},
+            "keys": {"sk-test-1234567890": {"email": "u@example.com", "label": "test-key"}},
+        }
+        rows = [{
+            "start_time": "2026-05-23T01:00:00Z",
+            "end_time": "2026-05-23T01:00:01Z",
+            "key_label": "test-key",
+            "user_email": "u@example.com",
+            "model": "gpt-5.5",
+            "status": "success",
+            "total_tokens": 10,
+            "input_tokens": 4,
+            "output_tokens": 6,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "spend_usd": 0.001,
+            "latency_ms": 1000,
+            "call_type": "acompletion",
+            "request_id": "req-1",
+            "user_api_base": "",
+        }]
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_recent_requests", return_value=rows):
+            response = client.get("/api/user-monitor/recent-requests?api_key=sk-test-1234567890")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["api_key"], "sk-tes...7890")
+        self.assertEqual(payload["source"], "litellm_spendlogs")
+        self.assertEqual(payload["requests"][0]["model"], "gpt-5.5")
+        self.assertNotIn("request_body", payload["requests"][0])
+        self.assertNotIn("response_body", payload["requests"][0])
+
+    def test_user_monitor_reconcile_compares_counts(self):
+        user_data = {
+            "users": {"u@example.com": {"api_keys": ["sk-test-1234567890"]}},
+            "keys": {"sk-test-1234567890": {"email": "u@example.com", "label": "test-key"}},
+        }
+        litellm_rows = [
+            {"status": "success", "model": "gpt-5.5"},
+            {"status": "failure", "model": "gpt-5.5"},
+        ]
+        monitor_rows = [
+            {"status": "200", "url": "/v1/chat/completions"},
+            {"status": "500", "url": "/v1/chat/completions"},
+        ]
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_recent_requests", return_value=litellm_rows), \
+             patch.object(portal_app, "monitor_log_recent_entries", return_value=monitor_rows):
+            response = client.get("/api/user-monitor/reconcile?api_key=sk-test-1234567890&hours=1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["litellm"]["requests"], 2)
+        self.assertEqual(payload["monitor_logs"]["requests"], 2)
+        self.assertEqual(payload["difference"], 0)
+        self.assertTrue(payload["within_one_percent"])
 
 
 if __name__ == "__main__":

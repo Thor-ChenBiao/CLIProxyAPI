@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>申请 API Key - Key Portal</title>
     <script src="/static/i18n.js?v=20260426-3"></script>
+    {% include "_portal_shell.html" %}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -154,12 +155,24 @@
             <div class="form-group">
                 <label for="modelGroup">Key 类型 *</label>
                 <select id="modelGroup" name="modelGroup" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: white; color: #333;">
-                    <option value="common" selected>通用 Key（common）</option>
-                    <option value="claude">Claude Key</option>
-                    <option value="gemini">Gemini Key</option>
-                    <option value="deepseek">DeepSeek Key</option>
+                    <option value="common" selected>GPT Key（不限量）</option>
+                    <option value="claude">Claude Key（需审批）</option>
+                    <option value="deepseek">DeepSeek Key（需审批）</option>
                 </select>
-                <p id="modelGroupHint" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; line-height: 1.5;">通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。</p>
+                <p id="modelGroupHint" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; line-height: 1.5;">GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。</p>
+            </div>
+
+            <div class="form-group" id="approvalFields" style="display: none;">
+                <label for="reason">申请理由 *</label>
+                <textarea id="reason" name="reason" rows="3" placeholder="Bedrock / Claude 按量计费成本较高，请说明必须使用它完成任务的紧急或必要场景；常规用量推荐优先使用 GPT Key。" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; resize: vertical; font-family: inherit;"></textarea>
+
+                <label for="dailyBudget" style="margin-top: 12px;">总额度 (USD) *</label>
+                <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                    <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-right: 1px solid #d4ddff; font-size: 15px; font-weight: 600;">$</span>
+                    <input type="number" id="dailyBudget" name="dailyBudget" placeholder="5" min="0.1" step="0.1" style="flex: 1; min-width: 0; padding: 12px 15px; border: none; outline: none; font-size: 15px;" oninput="updateBudgetEstimate()">
+                </div>
+                <div id="budgetEstimate" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; line-height: 1.6; display: none;"></div>
+                <p style="font-size: 13px; color: #999; margin-top: 5px;">额度用完后请求将被拒绝，不会按天自动重置；需要追加额度后继续使用</p>
             </div>
 
             <button type="submit" class="btn" id="submitBtn">申请 API Key</button>
@@ -176,17 +189,37 @@
 
     <script>
         const MODEL_GROUP_LABELS = {
-            common: '通用 Key',
+            common: 'GPT Key',
             claude: 'Claude Key',
-            gemini: 'Gemini Key',
             deepseek: 'DeepSeek Key'
         };
         const MODEL_GROUP_HINTS = {
-            common: '通用 Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
-            claude: 'Claude Key 面向 Claude 原生和 Bedrock Claude 模型，后续会接入审批和额度限制。',
-            gemini: 'Gemini Key 面向 Google Gemini 模型，后续会接入审批和额度限制。',
-            deepseek: 'DeepSeek Key 面向 DeepSeek 模型，后续会接入审批和额度限制。'
+            common: 'GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
+            claude: '⚠️ Claude / Bedrock 按量计费成本较高，请仅在必要、紧急或 GPT 无法满足任务时申请；常规用量推荐优先使用 GPT Key。审批通过后自动生成 Key 并通过飞书通知你。当前仅支持 Opus 4.6（模型名选 claude-opus-4-6），暂不支持 4.7。',
+            deepseek: '⚠️ DeepSeek Key 需要飞书审批。审批通过后自动生成 Key 并通过飞书通知你。'
         };
+        const APPROVAL_REQUIRED = new Set(['claude', 'deepseek']);
+        const MODEL_PRICING = {
+            claude: { input: 5, output: 25, label: 'Claude Opus' },
+            deepseek: { input: 0.14, output: 0.28, label: 'DeepSeek' },
+        };
+
+        function updateBudgetEstimate() {
+            const budget = parseFloat(document.getElementById('dailyBudget')?.value || 0);
+            const modelGroup = document.getElementById('modelGroup')?.value || 'common';
+            const el = document.getElementById('budgetEstimate');
+            if (!el || !budget || budget <= 0 || !MODEL_PRICING[modelGroup]) {
+                if (el) el.style.display = 'none';
+                return;
+            }
+            const p = MODEL_PRICING[modelGroup];
+            const avgCostPerMToken = (p.input * 3 + p.output * 1) / 4;
+            const mTokens = budget / avgCostPerMToken;
+            const tokens = Math.round(mTokens * 1000000);
+            const requests = Math.round(tokens / 4000);
+            el.innerHTML = `<strong>$${budget}</strong> ≈ <strong>${mTokens >= 1 ? mTokens.toFixed(1) + 'M' : Math.round(mTokens * 1000) + 'K'}</strong> tokens（${p.label}）≈ <strong>${requests.toLocaleString()}</strong> 次请求`;
+            el.style.display = 'block';
+        }
 
         function modelGroupLabel(modelGroup) {
             return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
@@ -195,8 +228,12 @@
         function updateModelGroupHint() {
             const selector = document.getElementById('modelGroup');
             const hint = document.getElementById('modelGroupHint');
+            const approvalFields = document.getElementById('approvalFields');
             if (!selector || !hint) return;
             hint.textContent = MODEL_GROUP_HINTS[selector.value] || MODEL_GROUP_HINTS.common;
+            const needsApproval = APPROVAL_REQUIRED.has(selector.value);
+            approvalFields.style.display = needsApproval ? 'block' : 'none';
+            document.getElementById('submitBtn').textContent = needsApproval ? '提交审批申请' : '申请 API Key';
         }
 
         document.getElementById('modelGroup').addEventListener('change', updateModelGroupHint);
@@ -216,6 +253,30 @@
             return `${prefix}@zilliz.com`;
         }
 
+        function prefixFromZillizEmail(email) {
+            return String(email || '').toLowerCase().replace(/@zilliz\.com$/, '');
+        }
+
+        async function applySessionToForm() {
+            try {
+                const resp = await fetch('/api/session');
+                const session = await resp.json();
+                const email = String(session.email || session.user?.email || '').toLowerCase();
+                if (!session.authenticated || !email.endsWith('@zilliz.com')) return;
+                const emailInput = document.getElementById('emailPrefix');
+                if (emailInput) {
+                    emailInput.value = prefixFromZillizEmail(email);
+                    if (!session.is_admin) emailInput.disabled = true;
+                }
+                const nameInput = document.getElementById('name');
+                if (nameInput && !nameInput.value && session.user?.name) {
+                    nameInput.value = session.user.name;
+                }
+            } catch (e) {
+                console.error('Failed to apply session defaults:', e);
+            }
+        }
+
         document.getElementById('registerForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -223,6 +284,8 @@
             const name = document.getElementById('name').value.trim();
             const label = document.getElementById('label').value.trim();
             const modelGroup = document.getElementById('modelGroup').value || 'common';
+            const reason = document.getElementById('reason').value.trim();
+            const dailyBudget = document.getElementById('dailyBudget').value.trim();
             const submitBtn = document.getElementById('submitBtn');
             const result = document.getElementById('result');
 
@@ -233,30 +296,55 @@
                 return;
             }
 
+            if (APPROVAL_REQUIRED.has(modelGroup) && !reason) {
+                result.className = 'result error';
+                result.innerHTML = '<strong>❌ 申请该模型组需要填写申请理由</strong>';
+                result.style.display = 'block';
+                return;
+            }
+            if (APPROVAL_REQUIRED.has(modelGroup) && !dailyBudget) {
+                result.className = 'result error';
+                result.innerHTML = '<strong>❌ 请填写额度</strong>';
+                result.style.display = 'block';
+                return;
+            }
+
             submitBtn.disabled = true;
-            submitBtn.textContent = '申请中...';
+            submitBtn.textContent = '提交中...';
             result.style.display = 'none';
 
             try {
                 const response = await fetch('/api/register-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, name, label, model_group: modelGroup })
+                    body: JSON.stringify({ email, name, label, model_group: modelGroup, reason, daily_budget: dailyBudget })
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    result.className = 'result success';
-                    result.innerHTML = `
-                        <strong>✅ 申请成功！</strong><br><br>
-                        您的 API Key：<br>
-                        <div class="api-key">${data.api_key}</div>
-                        <p><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
-                        <p>请妥善保管此 Key，配置到 Claude Code 中使用。</p>
-                    `;
+                    if (data.pending_approval) {
+                        result.className = 'result success';
+                        result.innerHTML = `
+                            <strong>📋 审批已提交</strong><br><br>
+                            <p><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
+                            <p>审批请求已发送到飞书，审批通过后将自动生成 Key 并通过飞书消息通知你。</p>
+                            <p style="margin-top: 10px; color: #666; font-size: 13px;">请在飞书中关注审批进度。</p>
+                        `;
+                    } else {
+                        result.className = 'result success';
+                        result.innerHTML = `
+                            <strong>✅ 申请成功！</strong><br><br>
+                            您的 API Key：<br>
+                            <div class="api-key">${data.api_key}</div>
+                            <p><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
+                            <p>请妥善保管此 Key，配置到 Claude Code 中使用。</p>
+                        `;
+                    }
                     result.style.display = 'block';
                     document.getElementById('registerForm').reset();
+                    updateModelGroupHint();
+                    applySessionToForm();
 
                     // Refresh pool status
                     fetch('/api/key-pool-status')
@@ -273,9 +361,10 @@
                 result.style.display = 'block';
             } finally {
                 submitBtn.disabled = false;
-                submitBtn.textContent = '申请 API Key';
+                updateModelGroupHint();
             }
         });
+        applySessionToForm();
     </script>
 </body>
 </html>

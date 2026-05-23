@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>认证文件统计 - Key Portal</title>
+    {% include "_portal_shell.html" %}
     <style>
         :root {
             --bg: #eef2f6;
@@ -87,37 +88,49 @@
             line-height: 1.55;
             box-shadow: 0 8px 22px rgba(128, 73, 0, 0.08);
         }
-        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 22px; }
+        .summary { display: grid; gap: 14px; margin-bottom: 18px; }
         .node-card {
-            background: rgba(255,255,255,0.92);
+            background: rgba(255,255,255,0.94);
             border: 1px solid var(--line);
             border-radius: 20px;
-            padding: 18px;
-            box-shadow: var(--shadow);
+            padding: 16px;
+            box-shadow: 0 10px 26px rgba(34, 49, 76, 0.08);
         }
-        .node-card h3 { margin: 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-        .node-pill { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; color: var(--blue); background: var(--blue-soft); padding: 5px 10px; border-radius: 999px; white-space: nowrap; font-weight: 800; }
-        .node-overview { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12px; margin-top: 15px; }
-        .node-health, .node-risk { border: 1px solid rgba(223,230,240,0.9); border-radius: 16px; background: #f8fbff; padding: 13px; }
-        .node-health span, .node-risk span, .node-window span, .node-mini span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; margin-bottom: 5px; }
-        .node-health strong { color: var(--green); font-size: 34px; line-height: 1; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
-        .node-health small { display: block; color: var(--muted); margin-top: 6px; font-size: 11px; }
-        .node-risk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
-        .node-risk-item { padding: 8px 6px; border-radius: 12px; background: #fff; border: 1px solid rgba(223,230,240,0.86); text-align: center; }
-        .node-risk-item strong { display: block; color: var(--ink); font-size: 19px; line-height: 1; font-variant-numeric: tabular-nums; }
-        .node-risk-item.watch strong { color: var(--orange); }
-        .node-risk-item.error strong { color: var(--red); }
-        .node-window-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
-        .node-window { border: 1px solid rgba(223,230,240,0.9); border-radius: 16px; background: #fff; padding: 13px; }
-        .node-window h4 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 10px; color: #172846; font-size: 13px; }
-        .node-window h4 b { color: var(--muted); font-size: 11px; font-weight: 800; }
-        .node-window-main { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .node-window strong, .node-mini strong { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-        .node-failure { margin-top: 10px; padding: 8px 10px; border-radius: 12px; background: #f3f6fb; color: var(--muted); font-size: 12px; font-weight: 850; display: flex; justify-content: space-between; }
-        .node-failure.warn { background: var(--orange-soft); color: var(--orange); }
-        .node-failure.danger { background: var(--red-soft); color: var(--red); }
-        .node-mini-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-        .node-mini { border: 1px solid rgba(223,230,240,0.9); border-radius: 14px; background: #f8fafc; padding: 10px 12px; }
+        .node-card h3 { margin: 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 17px; }
+        .node-pill, .node-state { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; color: var(--blue); background: var(--blue-soft); padding: 5px 10px; border-radius: 999px; white-space: nowrap; font-weight: 900; }
+        .node-state.good { color: var(--green); background: var(--green-soft); }
+        .node-state.warn { color: var(--orange); background: var(--orange-soft); }
+        .node-state.danger { color: var(--red); background: var(--red-soft); }
+        .node-summary-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,0.94); box-shadow: 0 10px 26px rgba(34, 49, 76, 0.08); }
+        .node-summary-table { width: 100%; border-collapse: collapse; min-width: 1080px; }
+        .node-summary-table th, .node-summary-table td { padding: 12px 14px; border-bottom: 1px solid rgba(223,230,240,0.82); text-align: left; vertical-align: middle; white-space: nowrap; }
+        .node-summary-table th { color: var(--muted); background: #f8fbff; font-size: 12px; font-weight: 950; }
+        .node-summary-table tbody tr:last-child td { border-bottom: 0; }
+        .node-summary-table tbody tr.node-summary-row { cursor: pointer; }
+        .node-summary-table tbody tr.node-summary-row:hover { background: #fbfcff; }
+        .node-summary-table tbody tr.node-summary-row.is-expanded { background: #f3f7ff; }
+        .node-detail-row td { padding: 0; background: #fbfcff; }
+        .node-inline-detail { display: grid; gap: 12px; padding: 14px; border-top: 1px solid rgba(207,216,234,0.9); }
+        .node-expand-mark { display: inline-flex; width: 20px; height: 20px; margin-right: 7px; align-items: center; justify-content: center; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-weight: 950; transition: transform 0.18s ease; }
+        .node-summary-row.is-expanded .node-expand-mark { transform: rotate(90deg); }
+        .node-name { color: #172846; font-size: 15px; font-weight: 950; }
+        .node-number { color: var(--ink); font-size: 18px; font-weight: 950; font-variant-numeric: tabular-nums; }
+        .node-number.good { color: var(--green); }
+        .node-number.warn { color: var(--orange); }
+        .node-number.danger { color: var(--red); }
+        .node-subtext { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+        .node-risk-line { display: flex; flex-wrap: wrap; gap: 6px; }
+        .node-risk-chip { display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid rgba(223,230,240,0.9); border-radius: 999px; background: #fff; padding: 5px 9px; color: var(--muted); font-size: 12px; font-weight: 850; }
+        .node-risk-chip strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+        .node-risk-chip.warn strong { color: var(--orange); }
+        .node-risk-chip.danger strong { color: var(--red); }
+        .node-action-link { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 6px 11px; border-radius: 999px; border: 1px solid #cdd8ea; background: #fff; color: var(--blue); font-size: 12px; font-weight: 900; text-decoration: none; }
+        .node-action-link:hover { background: var(--blue-soft); }
+        .node-overview { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 10px; margin-top: 12px; }
+        .node-health, .node-risk { border: 1px solid rgba(223,230,240,0.9); border-radius: 15px; background: #f8fbff; padding: 12px; min-width: 0; }
+        .node-health span, .node-risk span { display: block; color: var(--muted); font-size: 12px; font-weight: 900; margin-bottom: 7px; }
+        .node-health strong { display: block; color: var(--ink); font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
+        .node-health small, .node-risk small { display: block; color: var(--muted); margin-top: 7px; font-size: 12px; overflow-wrap: anywhere; }
         .table-card { background: rgba(255,255,255,0.94); padding: 22px; border-radius: 24px; border: 1px solid var(--line); box-shadow: var(--shadow); }
         .table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
         .table-title h2 { color: #10192b; margin: 0; font-size: 24px; letter-spacing: -0.03em; }
@@ -251,11 +264,10 @@
                 <h1>认证文件整体统计</h1>
                 <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；限额来自 provider 原生接口，后端会缓存读取结果以减少上游请求。</p>
             </div>
-            <div class="actions">
+            <div class="actions" id="authStatsActions">
                 <a class="btn secondary" href="/">返回首页</a>
-                <a class="btn secondary" href="/admin/users" target="_blank">👥 用户用量</a>
-                <a class="btn green" href="/management.html#/" target="_blank">old 管理后台</a>
-                <a class="btn orange" href="/b/management.html#/" target="_blank">node-b 管理后台</a>
+                <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
+                <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
             </div>
         </div>
         <div id="authStatsMeta" class="meta">加载中...</div>
@@ -280,6 +292,7 @@
 
     <script>
         let authStatsLoading = false;
+        let authStatsRetryTimer = null;
         const AUTH_STATS_REFRESH_MS = 5000;
         const authRowOrder = new Map();
         const authRowsByKey = new Map();
@@ -471,6 +484,27 @@
                 acc[node] = item;
                 return acc;
             }, {});
+        }
+
+        const expandedAuthNodes = new Set();
+        let authNodeExpansionInitialized = false;
+
+        function groupAuthRowsByNode(rows) {
+            return rows.reduce((groups, row) => {
+                const node = row.node || 'unknown';
+                if (!groups.has(node)) groups.set(node, []);
+                groups.get(node).push(row);
+                return groups;
+            }, new Map());
+        }
+
+        function ensureAuthNodeExpansion(nodeEntries, nodeSignals) {
+            if (authNodeExpansionInitialized || !nodeEntries.length) return;
+            const attentionNodes = nodeEntries
+                .filter(([node]) => Number(nodeSignals[node]?.watch || 0) > 0)
+                .map(([node]) => node);
+            (attentionNodes.length ? attentionNodes : [nodeEntries[0][0]]).forEach(node => expandedAuthNodes.add(node));
+            authNodeExpansionInitialized = true;
         }
 
         function windowStat(row, windowName) {
@@ -712,33 +746,99 @@
             </div>`;
         }
 
-        function renderNodeSummaryCard(node, n, signals) {
-            return `<div class="node-card">
-                <h3>${escapeHtml(node)} <span class="node-pill">${formatNumberFull(n.auth_files || 0)} files</span></h3>
-                <div class="node-overview">
-                    <div class="node-health">
-                        <span>可用认证</span>
-                        <strong>${formatNumberFull(n.active || 0)}</strong>
-                        <small>异常 ${formatNumberFull(n.warning || 0)} · 不可用 ${formatNumberFull(n.unavailable || 0)}</small>
-                    </div>
-                    <div class="node-risk">
-                        <span>风险信号</span>
-                        <div class="node-risk-grid">
-                            <div class="node-risk-item watch"><strong>${formatNumberFull(signals.watch)}</strong><span>关注</span></div>
-                            <div class="node-risk-item"><strong>${formatNumberFull(signals.lowQuota)}</strong><span>低额度</span></div>
-                            <div class="node-risk-item error"><strong>${formatNumberFull(signals.quotaError)}</strong><span>限额异常</span></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="node-window-grid">
-                    ${renderNodeWindow('近 5 小时', n.last_5h || {})}
-                    ${renderNodeWindow('近 7 天', n.last_7d || {})}
-                </div>
-                <div class="node-mini-grid">
-                    <div class="node-mini"><span>近 1 小时请求</span><strong>${formatNumberFull(n.last_1h?.requests || 0)}</strong></div>
-                    <div class="node-mini"><span>近 24 小时请求</span><strong>${formatNumberFull(n.last_24h?.requests || 0)}</strong></div>
-                </div>
+        function renderNodeManagementActions() {
+            const actionsEl = document.getElementById('authStatsActions');
+            actionsEl.innerHTML = `
+                <a class="btn secondary" href="/">返回首页</a>
+                <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
+                <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>`;
+        }
+
+        function nodeSummaryState(n, signals) {
+            const total = Number(n.auth_files || 0);
+            const warning = Number(n.warning || 0);
+            const unavailable = Number(n.unavailable || 0);
+            if (!total) return { cls: 'danger', text: '无认证文件' };
+            if (unavailable > 0) return { cls: 'danger', text: '有不可用' };
+            if (warning > 0 || signals.watch > 0) return { cls: 'warn', text: '需关注' };
+            return { cls: 'good', text: '健康' };
+        }
+
+        function renderNodeSummaryRow(node, n, signals, nodeRows) {
+            const managementPath = n.management_path || '#';
+            const total = Number(n.auth_files || 0);
+            const active = Number(n.active || 0);
+            const warning = Number(n.warning || 0);
+            const unavailable = Number(n.unavailable || 0);
+            const five = n.last_5h || {};
+            const day = n.last_24h || {};
+            const seven = n.last_7d || {};
+            const state = nodeSummaryState(n, signals);
+            const fiveFailClass = nodeFailureClass(five.failure_rate);
+            const sevenFailClass = nodeFailureClass(seven.failure_rate);
+            const expanded = expandedAuthNodes.has(node);
+            const detailRows = nodeRows || [];
+            const detailHtml = detailRows.length ? detailRows.map(renderAuthCard).join('') : '<div class="empty-state">该节点暂无认证文件明细</div>';
+            return `<tr class="node-summary-row ${expanded ? 'is-expanded' : ''}" data-node="${escapeHtml(node)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                <td><span class="node-expand-mark" aria-hidden="true">›</span><span class="node-name">${escapeHtml(node)}</span><span class="node-state ${state.cls}">${state.text}</span><span class="node-subtext">点击展开 / 收起认证文件明细</span></td>
+                <td><span class="node-number">${formatNumberFull(total)}</span></td>
+                <td><span class="node-number good">${formatNumberFull(active)}</span></td>
+                <td><span class="node-number warn">${formatNumberFull(warning)}</span></td>
+                <td><span class="node-number danger">${formatNumberFull(unavailable)}</span></td>
+                <td><span class="node-number">${formatNumberFull(five.requests || 0)}</span><span class="node-subtext">失败 ${formatNumberFull(five.failure || 0)}</span></td>
+                <td><span class="node-number ${fiveFailClass}">${formatPercent(five.failure_rate)}</span></td>
+                <td><span class="node-number">${formatNumberFull(day.requests || 0)}</span></td>
+                <td><span class="node-number ${sevenFailClass}">${formatPercent(seven.failure_rate)}</span></td>
+                <td><span class="node-number" title="${escapeHtml(tokenBreakdownText(seven))}">${formatCompactNumber(seven.tokens || 0)}</span></td>
+                <td><a class="node-action-link" href="${escapeHtml(managementPath)}" target="_blank">管理后台</a></td>
+            </tr>
+            <tr class="node-detail-row" data-node="${escapeHtml(node)}" style="display:${expanded ? 'table-row' : 'none'}">
+                <td colspan="11"><div class="node-inline-detail">${detailHtml}</div></td>
+            </tr>`;
+        }
+
+        function renderNodeSummaryTable(nodeEntries, nodeSignals, groupedRows) {
+            if (!nodeEntries.length) return '<div class="empty-state">暂无节点数据</div>';
+            const rows = nodeEntries.map(([node, n]) => {
+                const signals = nodeSignals[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
+                return renderNodeSummaryRow(node, n, signals, groupedRows.get(node) || []);
+            }).join('');
+            return `<div class="node-summary-table-wrap">
+                <table class="node-summary-table">
+                    <thead><tr>
+                        <th>节点</th>
+                        <th>认证文件</th>
+                        <th>可用</th>
+                        <th>异常</th>
+                        <th>不可用</th>
+                        <th>5h 请求</th>
+                        <th>5h 失败率</th>
+                        <th>24h 请求</th>
+                        <th>7d 失败率</th>
+                        <th>7d Tokens</th>
+                        <th>操作</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
             </div>`;
+        }
+
+        function bindNodeSummaryRows() {
+            document.querySelectorAll('.node-summary-row').forEach(row => {
+                row.addEventListener('click', (event) => {
+                    if (event.target.closest('a, button, details, summary')) return;
+                    const node = row.dataset.node || '';
+                    const expanded = !row.classList.contains('is-expanded');
+                    const detailRow = row.nextElementSibling;
+                    row.classList.toggle('is-expanded', expanded);
+                    row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                    if (detailRow?.classList.contains('node-detail-row')) {
+                        detailRow.style.display = expanded ? 'table-row' : 'none';
+                    }
+                    if (expanded) expandedAuthNodes.add(node);
+                    else expandedAuthNodes.delete(node);
+                });
+            });
         }
 
         function renderAuthCard(row) {
@@ -838,11 +938,23 @@
 
         async function loadAuthStats(force = false) {
             if (authStatsLoading) return;
+            if (force && authStatsRetryTimer) {
+                clearTimeout(authStatsRetryTimer);
+                authStatsRetryTimer = null;
+            }
             authStatsLoading = true;
             const loading = document.getElementById('loading');
             const cardsEl = document.getElementById('authStatsCards');
             try {
-                const resp = await fetch('/api/auth-stats');
+                const resp = await fetch(`/api/auth-stats?_=${Date.now()}`, {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' },
+                });
+                const contentType = resp.headers.get('content-type') || '';
+                if (!resp.ok || !contentType.includes('application/json')) {
+                    const text = await resp.text();
+                    throw new Error(`API 返回异常：HTTP ${resp.status} ${contentType} ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+                }
                 const data = await resp.json();
                 const summaryEl = document.getElementById('authStatsSummary');
                 const metaEl = document.getElementById('authStatsMeta');
@@ -857,23 +969,40 @@
                 rows.forEach(row => authRowsByKey.set(authRowKey(row), row));
                 const nodeSignals = computeNodeSignals(rows);
                 const nodes = data.nodes || {};
-                const nodeNames = Object.keys(nodes).sort();
+                const configuredNodes = Array.isArray(data.configured_nodes) ? data.configured_nodes : [];
+                const orderedNodeNames = configuredNodes.map(item => item.name).filter(Boolean);
+                Object.keys(nodes).sort().forEach(node => {
+                    if (!orderedNodeNames.includes(node)) orderedNodeNames.push(node);
+                });
+                const nodeEntries = orderedNodeNames.map(node => {
+                    const configured = configuredNodes.find(item => item.name === node) || {};
+                    return [node, { ...(nodes[node] || {}), ...configured }];
+                });
+                renderNodeManagementActions();
+                const groupedRows = groupAuthRowsByNode(rows);
+                ensureAuthNodeExpansion(Array.from(groupedRows.entries()), nodeSignals);
                 const quotaCard = renderTodayQuotaCard(data.today_quota_usage || {});
-                const nodeCards = nodeNames.length ? nodeNames.map(node => {
-                    const n = nodes[node];
-                    const signals = nodeSignals[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
-                    return renderNodeSummaryCard(node, n, signals);
-                }).join('') : '<div class="empty-state">暂无节点数据</div>';
-                summaryEl.innerHTML = quotaCard + nodeCards;
+                const nodeTable = renderNodeSummaryTable(nodeEntries, nodeSignals, groupedRows);
+                summaryEl.innerHTML = quotaCard + nodeTable;
 
-                cardsEl.innerHTML = rows.length ? rows.map(renderAuthCard).join('') : '<div class="empty-state">暂无认证文件数据</div>';
+                cardsEl.innerHTML = '';
+                bindNodeSummaryRows();
                 bindAuthToggleButtons();
                 loading.style.display = 'none';
-                cardsEl.style.display = 'grid';
+                cardsEl.style.display = 'none';
             } catch (e) {
-                loading.textContent = '加载失败：' + e.message;
+                const transient = /HTTP 502|HTTP 503|HTTP 504|Bad Gateway|Gateway Timeout/i.test(e.message || '');
+                loading.textContent = transient
+                    ? '网关临时不可用，可能是 key-portal 正在重启，3 秒后自动重试...'
+                    : '加载失败：' + e.message;
                 loading.style.display = 'block';
                 cardsEl.style.display = 'none';
+                if (transient && !authStatsRetryTimer) {
+                    authStatsRetryTimer = setTimeout(() => {
+                        authStatsRetryTimer = null;
+                        loadAuthStats(true);
+                    }, 3000);
+                }
             } finally {
                 authStatsLoading = false;
             }

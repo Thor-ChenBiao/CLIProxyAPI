@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的 Keys - Key Portal</title>
     <script src="/static/i18n.js?v=20260426-3"></script>
+    {% include "_portal_shell.html" %}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -56,6 +57,36 @@
             padding: 8px 15px;
             font-size: 13px;
         }
+        .btn-topup {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            padding: 8px 15px;
+            font-size: 13px;
+        }
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            width: min(440px, calc(100vw - 32px));
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal input, .modal textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        .modal label { display: block; margin-top: 14px; color: #333; font-weight: 600; }
         .user-info {
             background: white;
             padding: 30px;
@@ -138,16 +169,9 @@
 </head>
 <body>
     <div class="container">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
-            <h1 style="margin: 0;">🔑 我的 API Keys</h1>
-            <a href="/" style="display: inline-block; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 8px; font-size: 14px; transition: all 0.3s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(102,126,234,0.4)'" onmouseout="this.style.transform=''; this.style.boxShadow=''">
-                🏠 返回首页
-            </a>
-        </div>
-
         <div class="search-box">
-            <input type="text" id="keyInput" placeholder="输入你的 API Key（如：usr_pool_0001_xxxx）">
-            <button class="btn" onclick="searchKeys()">查询</button>
+            <input type="text" id="keyInput" placeholder="输入 API Key（如：sk-... 或 usr_pool_...）">
+            <button class="btn" onclick="searchKeys()">查询 Key</button>
         </div>
 
         <!-- 历史申请的Keys -->
@@ -216,19 +240,82 @@
             </table>
         </div>
 
+        <div class="modal-backdrop" id="topupModal">
+            <div class="modal">
+                <h3 style="margin-bottom: 8px; color: #333;">申请追加额度</h3>
+                <p id="topupKeyInfo" style="font-size: 13px; color: #666; line-height: 1.5;"></p>
+                <label for="topupBudget">追加额度 (USD)</label>
+                <input type="number" id="topupBudget" min="0.1" step="0.1" placeholder="例如：5">
+                <label for="topupReason">申请理由</label>
+                <textarea id="topupReason" rows="3" placeholder="请说明为什么需要追加额度"></textarea>
+                <div id="topupResult" style="display: none; margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 13px;"></div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px;">
+                    <button class="btn" onclick="closeTopupModal()" style="background: #e5e7eb; color: #374151;">取消</button>
+                    <button class="btn btn-topup" id="topupSubmitBtn" onclick="submitTopupRequest()">提交审批</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
         const STORAGE_KEY = 'my_api_keys';
+        const EMAIL_STORAGE_KEY = 'my_keys_email';
         const MODEL_GROUP_LABELS = {
-            common: '通用 Key',
+            common: 'GPT Key',
             claude: 'Claude Key',
             gemini: 'Gemini Key',
             deepseek: 'DeepSeek Key'
         };
+        let currentTopupKey = null;
+        let currentLookup = null;
 
         function modelGroupLabel(modelGroup) {
             return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
+
+        function jsArg(value) {
+            return JSON.stringify(String(value ?? '')).replace(/</g, '\\u003c');
+        }
+
+        function topupButtonHtml(keyInfo, style) {
+            if (!keyInfo?.can_topup) return '';
+            return `<button ${style || 'class="btn btn-topup"'} onclick='openTopupModal(${jsArg(keyInfo.key)}, ${jsArg(modelGroupLabel(keyInfo.model_group || 'common'))}, ${jsArg(keyInfo.label || '')}, ${Number(keyInfo.max_budget || 0)})'>追加额度</button>`;
+        }
+
+        function rememberEmail(email) {
+            if (!email || !email.endsWith('@zilliz.com')) return;
+            localStorage.setItem(EMAIL_STORAGE_KEY, email);
+        }
+
+        function getRememberedEmail() {
+            return String(localStorage.getItem(EMAIL_STORAGE_KEY) || '').trim().toLowerCase();
+        }
+
+        async function loadPortalSession() {
+            try {
+                const resp = await fetch('/api/session');
+                const data = await resp.json();
+                if (!resp.ok || !data.authenticated) return null;
+                return data;
+            } catch (e) {
+                console.error('Failed to load session:', e);
+                return null;
+            }
+        }
+
+        async function claimLocalKeysForSession(session) {
+            const keys = getMyKeys().map(k => k.key).filter(Boolean);
+            if (!session?.authenticated || keys.length === 0) return;
+            try {
+                await fetch('/api/session/claim-local-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keys })
+                });
+            } catch (e) {
+                console.error('Failed to claim local keys:', e);
+            }
         }
 
         function getMyKeys() {
@@ -289,6 +376,8 @@
                     : null;
                 const requests = keyStats ? keyStats.total_requests : 0;
                 const tokens = keyStats ? keyStats.total_tokens : 0;
+                const displayInfo = { ...item, ...(keyStats || {}) };
+                const topupButton = topupButtonHtml(displayInfo, 'style="padding: 9px 14px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(245,158,11,0.3);" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'"');
 
                 return `
                     <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
@@ -324,6 +413,7 @@
                                 <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
                                     查看详情
                                 </button>
+                                ${topupButton}
                                 <button onclick="removeMyKey('${item.key}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
                                     删除
                                 </button>
@@ -380,6 +470,97 @@
             return new Date(dateStr).toLocaleString('zh-CN');
         }
 
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderKeysResult({ title, detail, totalRequests, totalTokens, tokenBreakdown, estimatedCostUsd, keys }) {
+            const userInfo = document.getElementById('userInfo');
+            const keysList = document.getElementById('keysList');
+            const tbody = document.getElementById('keysTableBody');
+
+            document.getElementById('userName').textContent = title;
+            document.getElementById('userEmail').textContent = detail;
+            document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
+            document.getElementById('totalTokens').innerHTML = tokenUsageHtml({
+                total_tokens: totalTokens,
+                token_breakdown: tokenBreakdown,
+                estimated_cost_usd: estimatedCostUsd
+            });
+            document.getElementById('keyCount').textContent = keys.length;
+
+            tbody.innerHTML = '';
+            keys.forEach(key => {
+                const normalized = {
+                    ...key,
+                    estimated_cost_usd: key.estimated_cost_usd ?? key.spend_usd,
+                    total_requests: key.total_requests || 0,
+                    total_tokens: key.total_tokens || 0
+                };
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td><span class="key-value">${escapeHtml(normalized.key)}</span></td>
+                    <td>${escapeHtml(normalized.label || '默认')}</td>
+                    <td>${escapeHtml(modelGroupLabel(normalized.model_group || 'common'))}</td>
+                    <td>${formatDate(normalized.created_at)}</td>
+                    <td>${formatNumber(normalized.total_requests)}</td>
+                    <td>${tokenUsageHtml(normalized)}</td>
+                    <td>
+                        ${topupButtonHtml(normalized)}
+                        <button class="btn btn-danger" onclick='revokeKey(${jsArg(normalized.key)})'>撤销</button>
+                    </td>
+                `;
+            });
+
+            userInfo.style.display = 'block';
+            keysList.style.display = 'block';
+        }
+
+        async function searchByEmail() {
+            const errorDiv = document.getElementById('error');
+            const userInfo = document.getElementById('userInfo');
+            const keysList = document.getElementById('keysList');
+
+            errorDiv.style.display = 'none';
+            userInfo.style.display = 'none';
+            keysList.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/my-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    const keys = Array.isArray(data.keys) ? data.keys : [];
+                    const email = String(data.email || '').toLowerCase();
+                    currentLookup = { type: 'email', value: email };
+                    rememberEmail(email);
+                    renderKeysResult({
+                        title: data.name || email,
+                        detail: email,
+                        totalRequests: keys.reduce((sum, key) => sum + Number(key.total_requests || 0), 0),
+                        totalTokens: keys.reduce((sum, key) => sum + Number(key.total_tokens || 0), 0),
+                        estimatedCostUsd: keys.reduce((sum, key) => sum + Number(key.estimated_cost_usd ?? key.spend_usd ?? 0), 0),
+                        keys
+                    });
+                } else {
+                    errorDiv.textContent = data.error || '查询失败';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                errorDiv.textContent = '网络错误：' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
         async function searchKeys() {
             const apiKey = document.getElementById('keyInput').value.trim();
             const errorDiv = document.getElementById('error');
@@ -397,7 +578,6 @@
             keysList.style.display = 'none';
 
             try {
-                // Query by API key
                 const response = await fetch('/api/query-by-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -407,47 +587,92 @@
                 const data = await response.json();
 
                 if (response.ok) {
+                    currentLookup = { type: 'key', value: apiKey };
                     const userTotalRequests = data.user_total_requests !== undefined ? data.user_total_requests : data.total_requests;
                     const userTotalTokens = data.user_total_tokens !== undefined ? data.user_total_tokens : data.total_tokens;
-                    // Display user info
-                    document.getElementById('userName').textContent = data.identifier;
-                    document.getElementById('userEmail').textContent = `Key: ${apiKey}`;
-                    document.getElementById('totalRequests').textContent = formatNumber(userTotalRequests);
-                    document.getElementById('totalTokens').innerHTML = tokenUsageHtml({
-                        total_tokens: userTotalTokens,
-                        token_breakdown: data.user_token_breakdown,
-                        estimated_cost_usd: data.user_estimated_cost_usd
+                    renderKeysResult({
+                        title: data.identifier,
+                        detail: `Key: ${apiKey}`,
+                        totalRequests: userTotalRequests,
+                        totalTokens: userTotalTokens,
+                        tokenBreakdown: data.user_token_breakdown,
+                        estimatedCostUsd: data.user_estimated_cost_usd,
+                        keys: Array.isArray(data.all_keys) ? data.all_keys : []
                     });
-                    document.getElementById('keyCount').textContent = data.all_keys.length;
-                    userInfo.style.display = 'block';
-
-                    // Display all keys for this user
-                    const tbody = document.getElementById('keysTableBody');
-                    tbody.innerHTML = '';
-
-                    data.all_keys.forEach(key => {
-                        const row = tbody.insertRow();
-                        row.innerHTML = `
-                            <td><span class="key-value">${key.key}</span></td>
-                            <td>${key.label}</td>
-                            <td>${modelGroupLabel(key.model_group || 'common')}</td>
-                            <td>${formatDate(key.created_at)}</td>
-                            <td>${formatNumber(key.total_requests)}</td>
-                            <td>${tokenUsageHtml(key)}</td>
-                            <td>
-                                <button class="btn btn-danger" onclick="revokeKey('${key.key}')">撤销</button>
-                            </td>
-                        `;
-                    });
-
-                    keysList.style.display = 'block';
                 } else {
-                    errorDiv.textContent = data.error;
+                    errorDiv.textContent = data.error || '查询失败';
                     errorDiv.style.display = 'block';
                 }
             } catch (error) {
                 errorDiv.textContent = '网络错误：' + error.message;
                 errorDiv.style.display = 'block';
+            }
+        }
+
+        function openTopupModal(apiKey, modelGroupLabelText, label, currentBudget) {
+            currentTopupKey = apiKey;
+            document.getElementById('topupBudget').value = '';
+            document.getElementById('topupReason').value = '';
+            const result = document.getElementById('topupResult');
+            result.style.display = 'none';
+            result.textContent = '';
+            document.getElementById('topupKeyInfo').textContent = `${modelGroupLabelText} · ${label || '默认'} · 当前总额度 $${Number(currentBudget || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 })}`;
+            document.getElementById('topupModal').style.display = 'flex';
+        }
+
+        function closeTopupModal() {
+            currentTopupKey = null;
+            document.getElementById('topupModal').style.display = 'none';
+        }
+
+        async function submitTopupRequest() {
+            const additionalBudget = document.getElementById('topupBudget').value.trim();
+            const reason = document.getElementById('topupReason').value.trim();
+            const result = document.getElementById('topupResult');
+            const btn = document.getElementById('topupSubmitBtn');
+            if (!currentTopupKey) return;
+            if (!additionalBudget || Number(additionalBudget) <= 0) {
+                result.style.display = 'block';
+                result.style.background = '#f8d7da';
+                result.style.color = '#721c24';
+                result.textContent = '请填写有效的追加额度';
+                return;
+            }
+            if (!reason) {
+                result.style.display = 'block';
+                result.style.background = '#f8d7da';
+                result.style.color = '#721c24';
+                result.textContent = '请填写申请理由';
+                return;
+            }
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+            try {
+                const response = await fetch('/api/keys/topup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: currentTopupKey, additional_budget: additionalBudget, reason })
+                });
+                const data = await response.json();
+                result.style.display = 'block';
+                if (response.ok) {
+                    result.style.background = '#d4edda';
+                    result.style.color = '#155724';
+                    result.textContent = `已提交审批：当前 $${data.current_budget} + 追加 $${data.additional_budget} = 新预算 $${data.new_budget}`;
+                    setTimeout(closeTopupModal, 1800);
+                } else {
+                    result.style.background = '#f8d7da';
+                    result.style.color = '#721c24';
+                    result.textContent = data.error || '提交失败';
+                }
+            } catch (error) {
+                result.style.display = 'block';
+                result.style.background = '#f8d7da';
+                result.style.color = '#721c24';
+                result.textContent = '网络错误：' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '提交审批';
             }
         }
 
@@ -467,7 +692,12 @@
 
                 if (response.ok) {
                     alert('Key 已撤销');
-                    searchKeys(); // Refresh list
+                    if (currentLookup?.type === 'email') {
+                        searchByEmail();
+                    } else if (currentLookup?.type === 'key') {
+                        document.getElementById('keyInput').value = currentLookup.value;
+                        searchKeys();
+                    }
                 } else {
                     alert('撤销失败：' + data.error);
                 }
@@ -604,13 +834,38 @@ REMOVE_EOF`;
         // Load historical keys on page load
         displayMyKeys();
 
-        // Auto-fill key from URL (if needed)
-        const params = new URLSearchParams(window.location.search);
-        const keyParam = params.get('key');
-        if (keyParam) {
-            document.getElementById('keyInput').value = keyParam;
-            searchKeys();
+        async function bootMyKeysPage() {
+            const params = new URLSearchParams(window.location.search);
+            const keyParam = params.get('key');
+            const loginError = params.get('login_error');
+            if (loginError) {
+                const errorDiv = document.getElementById('error');
+                errorDiv.textContent = `飞书登录失败：${loginError}`;
+                errorDiv.style.display = 'block';
+            }
+
+            const session = await loadPortalSession();
+            if (session?.authenticated) {
+                const email = String(session.email || session.user?.email || '').toLowerCase();
+                if (email.endsWith('@zilliz.com')) {
+                    rememberEmail(email);
+                    await claimLocalKeysForSession(session);
+                    if (!keyParam) {
+                        searchByEmail();
+                        return;
+                    }
+                }
+            }
+
+            if (keyParam) {
+                document.getElementById('keyInput').value = keyParam;
+                searchKeys();
+                return;
+            }
+            searchByEmail();
         }
+
+        bootMyKeysPage();
     </script>
 </body>
 </html>

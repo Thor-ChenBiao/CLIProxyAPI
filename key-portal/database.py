@@ -106,6 +106,93 @@ def upsert_daily_usage(date, total_requests, success_count, failure_count,
         conn.commit()
 
 
+def replace_litellm_usage_for_dates(rows):
+    dates = sorted({row.get('date') for row in rows if row.get('date')})
+    if not dates:
+        return {"dates": 0, "rows": 0}
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow().isoformat() + 'Z'
+        for date in dates:
+            cursor.execute("DELETE FROM user_usage WHERE date = ? AND api_key LIKE 'litellm:%'", (date,))
+
+        for row in rows:
+            date = row.get('date')
+            if not date:
+                continue
+            cursor.execute("""
+                INSERT INTO user_usage
+                (date, user_email, api_key, total_requests, success_count, failure_count,
+                 total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                date,
+                row.get('user_email') or 'unknown',
+                row.get('api_key') or 'litellm:unknown',
+                int(row.get('total_requests', 0) or 0),
+                int(row.get('success_count', 0) or 0),
+                int(row.get('failure_count', 0) or 0),
+                int(row.get('total_tokens', 0) or 0),
+                int(row.get('input_tokens', 0) or 0),
+                int(row.get('output_tokens', 0) or 0),
+                int(row.get('cached_tokens', 0) or 0),
+                int(row.get('reasoning_tokens', 0) or 0),
+                now,
+                now,
+            ))
+
+        conn.commit()
+    return {"dates": len(dates), "rows": len(rows)}
+
+
+def rebuild_daily_usage_from_user_usage(dates):
+    dates = sorted({date for date in dates if date})
+    if not dates:
+        return {"dates": 0}
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow().isoformat() + 'Z'
+        for date in dates:
+            row = cursor.execute("""
+                SELECT
+                    COALESCE(SUM(total_requests), 0) AS total_requests,
+                    COALESCE(SUM(success_count), 0) AS success_count,
+                    COALESCE(SUM(failure_count), 0) AS failure_count,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                    COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                    COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
+                FROM user_usage
+                WHERE date = ?
+                  AND api_key NOT LIKE 'litellm_internal%'
+                  AND api_key != 'sk-shared-001'
+            """, (date,)).fetchone()
+            cursor.execute("""
+                INSERT OR REPLACE INTO daily_usage
+                (date, total_requests, success_count, failure_count,
+                 total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        COALESCE((SELECT created_at FROM daily_usage WHERE date = ?), ?),
+                        ?)
+            """, (
+                date,
+                int(row['total_requests'] or 0),
+                int(row['success_count'] or 0),
+                int(row['failure_count'] or 0),
+                int(row['total_tokens'] or 0),
+                int(row['input_tokens'] or 0),
+                int(row['output_tokens'] or 0),
+                int(row['cached_tokens'] or 0),
+                int(row['reasoning_tokens'] or 0),
+                date, now, now,
+            ))
+        conn.commit()
+    return {"dates": len(dates)}
+
+
 def upsert_user_usage(date, user_email, api_key, total_requests,
                       success_count, failure_count, total_tokens,
                       input_tokens, output_tokens, cached_tokens=0, reasoning_tokens=0):
@@ -262,6 +349,8 @@ def get_user_usage_by_period(period='month'):
                 SUM(reasoning_tokens) as reasoning_tokens,
                 GROUP_CONCAT(DISTINCT api_key) as api_keys
             FROM user_usage
+            WHERE api_key NOT LIKE 'litellm_internal%'
+              AND api_key != 'sk-shared-001'
             GROUP BY user_email, period_key
             ORDER BY period_key DESC, total_tokens DESC
         """)
@@ -304,6 +393,8 @@ def get_user_total_usage(user_email):
                 COUNT(DISTINCT date) as num_days
             FROM user_usage
             WHERE user_email = ?
+              AND api_key NOT LIKE 'litellm_internal%'
+              AND api_key != 'sk-shared-001'
         """, (user_email,))
 
         row = cursor.fetchone()
@@ -345,6 +436,8 @@ def get_all_users_total_usage():
                 COUNT(DISTINCT date) as num_days,
                 GROUP_CONCAT(DISTINCT api_key) as api_keys
             FROM user_usage
+            WHERE api_key NOT LIKE 'litellm_internal%'
+              AND api_key != 'sk-shared-001'
             GROUP BY user_email
             ORDER BY total_tokens DESC
         """)
@@ -386,6 +479,8 @@ def get_user_key_usage_for_date(user_email, date):
                 reasoning_tokens
             FROM user_usage
             WHERE user_email = ? AND date = ?
+              AND api_key NOT LIKE 'litellm_internal%'
+              AND api_key != 'sk-shared-001'
             ORDER BY total_tokens DESC
         """, (user_email, date))
 
@@ -420,6 +515,8 @@ def get_user_key_usage_range(user_email, api_key, date_from, date_to):
                 reasoning_tokens
             FROM user_usage
             WHERE user_email = ? AND api_key = ? AND date BETWEEN ? AND ?
+              AND api_key NOT LIKE 'litellm_internal%'
+              AND api_key != 'sk-shared-001'
             ORDER BY date ASC
         """, (user_email, api_key, date_from, date_to))
         return [

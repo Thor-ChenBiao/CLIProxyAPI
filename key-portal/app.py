@@ -6,6 +6,7 @@ A web service for managing OAuth key contributions and monitoring key status.
 
 import csv
 import json
+import hashlib
 import math
 import os
 import re
@@ -16,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote, urlencode
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_socketio import SocketIO, emit
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -24,16 +25,22 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import config
 import database as db
 import usage_sync
+import portal_state
+import portal_auth
+import portal_docs
 
 # Import modular components
 import snapshot
 import user_keys
 import feishu
+import approval
+import nlb_monitor
 from routes import pages, websocket
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'key-portal-secret'
+app.config['SECRET_KEY'] = os.environ.get('KEY_PORTAL_SECRET_KEY', 'key-portal-secret')
 socketio = SocketIO(app, cors_allowed_origins="*")
+portal_state.configure(config.KEY_PORTAL_DATABASE_URL, config.KEY_PORTAL_REDIS_URL)
 
 # Track last usage state for change detection
 _last_usage_state = {"total_tokens": 0, "total_requests": 0}
@@ -54,6 +61,12 @@ _usage_summary_cache = {
     "ttl": 1
 }
 _usage_summary_cache_lock = threading.Lock()
+
+_user_usage_summary_cache = {
+    "data": {},
+    "ttl": 2,
+}
+_user_usage_summary_cache_lock = threading.Lock()
 
 _auth_stats_cache = {
     "data": None,
@@ -77,10 +90,19 @@ _persistent_floor_cache = {
 }
 _persistent_floor_cache_lock = threading.Lock()
 
+_litellm_usage_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 10,
+}
+_litellm_usage_cache_lock = threading.Lock()
+
 _usage_floor_delta_baseline = {
     "data": {},
 }
 _usage_floor_delta_baseline_lock = threading.Lock()
+
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 _user_key_timeseries_cache = {
     "data": {},
@@ -103,10 +125,21 @@ _recent_hours_cache = {
 }
 _recent_hours_cache_lock = threading.Lock()
 
+_usage_history_response_cache = {
+    "data": None,
+    "last_update": 0,
+    "ttl": 60,
+    "refreshing": False,
+}
+_usage_history_response_cache_lock = threading.Lock()
+USAGE_HISTORY_RESPONSE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "usage_history_cache.json")
+
 # User keys cache and file path
 USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
 KEY_POOL_FILE = os.path.join(os.path.dirname(__file__), "data", "key_pool.json")
-ALLOWED_MODEL_GROUPS = {"common", "claude", "gemini", "deepseek"}
+MONITOR_LOG_DIR = os.environ.get("KEY_PORTAL_MONITOR_LOG_DIR", os.path.join(os.path.dirname(__file__), "..", "monitor-logs"))
+ALLOWED_MODEL_GROUPS = {"common", "claude", "deepseek"}
+SESSION_COOKIE_NAME = "kp_session"
 
 
 def float_env(name, default):
@@ -140,7 +173,16 @@ def _public_base_url() -> str:
 
 
 def _login_url() -> str:
-    return f"{_public_base_url()}/login"
+    return f"{_public_base_url()}/"
+
+
+def _safe_next_url(value, default="/"):
+    next_url = str(value or "").strip()
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        return default
+    if next_url.startswith("/login"):
+        return default
+    return next_url
 
 
 def _api_base_url() -> str:
@@ -186,6 +228,13 @@ def load_user_keys():
     if _user_keys_cache["loaded"] and _user_keys_cache["data"]:
         return _user_keys_cache["data"]
 
+    pg_data = portal_state.load_user_keys()
+    if pg_data:
+        _user_keys_cache["data"] = pg_data
+        _user_keys_cache["loaded"] = True
+        print(f"[UserKeys] Loaded {len(pg_data.get('users', {}))} users, {len(pg_data.get('keys', {}))} keys from Postgres")
+        return pg_data
+
     if os.path.exists(USER_KEYS_FILE):
         try:
             with open(USER_KEYS_FILE, "r") as f:
@@ -206,6 +255,15 @@ def load_user_keys():
 
 def save_user_keys(data):
     """Save user keys database to file."""
+    if portal_state.is_pg_enabled():
+        if portal_state.save_user_keys(data):
+            _user_keys_cache["data"] = data
+            _user_keys_cache["loaded"] = True
+            print(f"[UserKeys] Saved {len(data.get('users', {}))} users to Postgres")
+            return True
+        print("[UserKeys] Error saving to Postgres")
+        return False
+
     try:
         os.makedirs(os.path.dirname(USER_KEYS_FILE), exist_ok=True)
         with open(USER_KEYS_FILE, "w") as f:
@@ -220,6 +278,10 @@ def save_user_keys(data):
 
 def load_key_pool():
     """Load key pool."""
+    pg_pool = portal_state.load_key_pool()
+    if pg_pool:
+        return pg_pool
+
     if os.path.exists(KEY_POOL_FILE):
         try:
             with open(KEY_POOL_FILE, "r") as f:
@@ -231,6 +293,9 @@ def load_key_pool():
 
 def save_key_pool(data):
     """Save key pool."""
+    if portal_state.is_pg_enabled():
+        return portal_state.save_key_pool(data)
+
     try:
         os.makedirs(os.path.dirname(KEY_POOL_FILE), exist_ok=True)
         with open(KEY_POOL_FILE, "w") as f:
@@ -248,25 +313,69 @@ def normalize_model_group(model_group):
     return model_group
 
 
-def assign_key_to_user(email, name, label, model_group="common"):
-    """Assign an unused key from pool to user."""
-    model_group = normalize_model_group(model_group)
+def mask_api_key(api_key):
+    text = str(api_key or "")
+    if len(text) <= 12:
+        return "[redacted]"
+    return f"{text[:6]}...{text[-4:]}"
 
-    # Load key pool
-    pool = load_key_pool()
 
-    if not pool.get("unused"):
-        return None, "Key pool is empty, please generate more keys"
+LITELLM_MODEL_GROUPS = {
+    "common": {
+        "models": [
+            "gpt-5.5",
+            "gpt-5.4",
+            "claude-sonnet-4-5",
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-20250514",
+            "claude-opus-4-1-20250805",
+            "claude-opus-4-5-20251101",
+            "claude-3-5-haiku-20241022",
+        ],
+        "key_type": "gpt",
+    },
+    "claude": {
+        "models": [
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            "claude-haiku-4-5",
+        ],
+        "aliases": {
+            "claude-opus-4-6": "bedrock-claude-opus-4-6",
+            "claude-sonnet-4-6": "bedrock-claude-sonnet-4-6",
+            "claude-sonnet-4-5": "bedrock-claude-sonnet-4-5",
+            "claude-haiku-4-5": "bedrock-claude-haiku-4-5",
+        },
+        "key_type": "claude",
+        "rpm_limit": 20,
+        "tpm_limit": 200000,
+        "max_budget": 1.0,
+    },
+    "gemini": {
+        "models": ["gemini-3-pro-preview", "gemini-2.5-pro"],
+        "key_type": "gemini",
+        "rpm_limit": 30,
+        "tpm_limit": 300000,
+        "max_budget": 1.0,
+    },
+    "deepseek": {
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "key_type": "deepseek",
+        "rpm_limit": 30,
+        "tpm_limit": 300000,
+        "max_budget": 1.0,
+    },
+}
 
-    # Take one key from pool
-    api_key = pool["unused"].pop(0)
-    pool["assigned"][api_key] = email
-    save_key_pool(pool)
 
-    # Load user keys database
+def save_user_key_assignment(api_key, email, name, label, model_group, source, max_budget=None):
     user_keys = load_user_keys()
-
-    # Find or create user
     if email not in user_keys["users"]:
         user_keys["users"][email] = {
             "email": email,
@@ -275,33 +384,191 @@ def assign_key_to_user(email, name, label, model_group="common"):
             "created_at": datetime.utcnow().isoformat() + "Z"
         }
 
-    # Add key to user
-    key_info = {
-        "key": api_key,
-        "label": label or "默认",
-        "model_group": model_group,
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "last_used": None
-    }
+    created_at = datetime.utcnow().isoformat() + "Z"
     user_keys["users"][email]["api_keys"].append(api_key)
-
-    # Add to keys index
-    user_keys["keys"][api_key] = {
+    entry = {
         "email": email,
         "label": label or "默认",
         "model_group": model_group,
-        "created_at": key_info["created_at"]
+        "source": source,
+        "created_at": created_at
     }
-
-    # Save
+    if max_budget is not None:
+        entry["max_budget"] = float(max_budget)
+    user_keys["keys"][api_key] = entry
     save_user_keys(user_keys)
 
-    print(f"[UserKeys] Assigned {api_key} to {email} ({model_group})")
+
+def issue_litellm_key(email, name, label, model_group, max_budget=None):
+    group_config = LITELLM_MODEL_GROUPS[model_group]
+    payload = {
+        "models": group_config["models"],
+        "user_id": email,
+        "key_alias": f"{model_group}:{label or name or email}",
+        "metadata": {
+            "email": email,
+            "name": name or email,
+            "label": label or "默认",
+            "model_group": model_group,
+            "key_type": group_config["key_type"],
+            "issuer": "key-portal",
+        },
+    }
+    if group_config.get("aliases"):
+        payload["aliases"] = group_config["aliases"]
+    for field in ("rpm_limit", "tpm_limit", "max_budget"):
+        if field in group_config:
+            payload[field] = group_config[field]
+    if max_budget is not None:
+        payload["max_budget"] = max_budget
+
+    try:
+        resp = requests.post(
+            f"{config.LITELLM_API_URL}/key/generate",
+            headers={"Authorization": f"Bearer {config.LITELLM_MASTER_KEY}"},
+            json=payload,
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return None, f"LiteLLM key generation failed: {resp.status_code}"
+        data = resp.json()
+        api_key = data.get("key") or data.get("token")
+        if not api_key:
+            return None, "LiteLLM key generation response did not include a key"
+        clear_litellm_key_budget_duration(api_key)
+        return api_key, None
+    except Exception as e:
+        return None, f"LiteLLM key generation failed: {e}"
+
+
+def assign_key_to_user(email, name, label, model_group="common", max_budget=None):
+    """Assign a new API key to user."""
+    model_group = normalize_model_group(model_group)
+
+    if config.LITELLM_ISSUE_KEYS and config.LITELLM_MASTER_KEY:
+        api_key, error = issue_litellm_key(email, name, label, model_group, max_budget=max_budget)
+        if error:
+            return None, error
+        save_user_key_assignment(api_key, email, name, label, model_group, "litellm", max_budget=max_budget)
+        print(f"[UserKeys] Assigned LiteLLM key {mask_api_key(api_key)} to {email} ({model_group}) budget={max_budget}")
+        return api_key, None
+
+    pool = load_key_pool()
+    if not pool.get("unused"):
+        return None, "Key pool is empty, please generate more keys"
+
+    api_key = pool["unused"].pop(0)
+    pool["assigned"][api_key] = email
+    save_key_pool(pool)
+    save_user_key_assignment(api_key, email, name, label, model_group, "cliproxy")
+
+    print(f"[UserKeys] Assigned pool key {mask_api_key(api_key)} to {email} ({model_group})")
     return api_key, None
 
 
+def _litellm_token_hash(api_key):
+    return hashlib.sha256(str(api_key or "").encode()).hexdigest()
+
+
+def clear_litellm_key_budget_duration(api_key):
+    sql = f"""
+    WITH updated AS (
+      UPDATE "LiteLLM_VerificationToken"
+      SET budget_duration = NULL,
+          budget_reset_at = NULL,
+          updated_at = NOW()
+      WHERE token = {_sql_literal(_litellm_token_hash(api_key))}
+      RETURNING token
+    )
+    SELECT json_build_object('updated', count(*)) FROM updated
+    """
+    row = litellm_psql_json(sql, timeout=10)
+    return isinstance(row, dict) and int(row.get("updated") or 0) > 0
+
+
+def update_litellm_key_budget(api_key, max_budget):
+    if not config.LITELLM_MASTER_KEY:
+        return False, "LiteLLM master key is not configured"
+    try:
+        resp = requests.post(
+            f"{config.LITELLM_API_URL}/key/update",
+            headers={"Authorization": f"Bearer {config.LITELLM_MASTER_KEY}"},
+            json={"key": api_key, "max_budget": float(max_budget)},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            clear_litellm_key_budget_duration(api_key)
+            return True, None
+        return False, f"LiteLLM key update failed: {resp.status_code}"
+    except Exception as e:
+        return False, f"LiteLLM key update failed: {e}"
+
+
+def update_user_key_budget(api_key, max_budget):
+    user_keys = load_user_keys()
+    key_info = user_keys.get("keys", {}).get(api_key)
+    if not key_info:
+        return False
+    key_info["max_budget"] = float(max_budget)
+    key_info["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    return save_user_keys(user_keys)
+
+
+def _parse_positive_budget(value):
+    text = str(value or "").strip().replace("$", "").replace("￥", "").replace("元", "").replace("美元", "")
+    try:
+        amount = float(text)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(amount) or amount <= 0:
+        return None
+    return round(amount, 6)
+
+
+def get_litellm_key_budget(api_key):
+    sql = f"""
+    SELECT json_build_object('max_budget', max_budget)
+    FROM "LiteLLM_VerificationToken"
+    WHERE token = {_sql_literal(api_key)} OR token = {_sql_literal(_litellm_token_hash(api_key))}
+    LIMIT 1
+    """
+    row = litellm_psql_json(sql, timeout=5)
+    if isinstance(row, dict):
+        return _parse_positive_budget(row.get("max_budget"))
+    return None
+
+
+def _key_budget(key_info, api_key=None):
+    if api_key:
+        budget = get_litellm_key_budget(api_key)
+        if budget is not None:
+            return budget
+    budget = _parse_positive_budget(key_info.get("max_budget"))
+    if budget is not None:
+        return budget
+    group = normalize_model_group(key_info.get("model_group", "common"))
+    return _parse_positive_budget(LITELLM_MODEL_GROUPS.get(group, {}).get("max_budget"))
+
+
+def delete_litellm_key(api_key):
+    if not config.LITELLM_MASTER_KEY:
+        return False, "LiteLLM master key is not configured"
+    try:
+        resp = requests.post(
+            f"{config.LITELLM_API_URL}/key/delete",
+            headers={"Authorization": f"Bearer {config.LITELLM_MASTER_KEY}"},
+            json={"keys": [api_key]},
+            timeout=30,
+        )
+        if resp.status_code in (200, 404):
+            return True, None
+        return False, f"LiteLLM key delete failed: {resp.status_code}"
+    except Exception as e:
+        return False, f"LiteLLM key delete failed: {e}"
+
+
 def revoke_key(api_key):
-    """Revoke a key (remove from user, add back to pool)."""
+    """Revoke a key."""
     user_keys = load_user_keys()
 
     # Find key owner
@@ -310,9 +577,15 @@ def revoke_key(api_key):
         return False, "Key not found"
 
     email = key_info["email"]
+    source = key_info.get("source", "cliproxy")
+
+    if source == "litellm":
+        success, err = delete_litellm_key(api_key)
+        if not success:
+            return False, err
 
     # Remove from user
-    if email in user_keys["users"]:
+    if email in user_keys["users"] and api_key in user_keys["users"][email].get("api_keys", []):
         user_keys["users"][email]["api_keys"].remove(api_key)
 
     # Remove from keys index
@@ -320,22 +593,21 @@ def revoke_key(api_key):
 
     save_user_keys(user_keys)
 
-    # Add back to pool
-    pool = load_key_pool()
-    pool["unused"].append(api_key)
-    if api_key in pool["assigned"]:
-        del pool["assigned"][api_key]
-    save_key_pool(pool)
+    if source != "litellm":
+        pool = load_key_pool()
+        pool["unused"].append(api_key)
+        if api_key in pool["assigned"]:
+            del pool["assigned"][api_key]
+        save_key_pool(pool)
 
-    # Remove from CLIProxyAPI
-    data, err = call_management_api("GET", "/v0/management/api-keys")
-    if not err:
-        keys = data.get("api_keys", [])
-        if api_key in keys:
-            keys.remove(api_key)
-            call_management_api("PUT", "/v0/management/api-keys", keys)
+        data, err = call_management_api("GET", "/v0/management/api-keys")
+        if not err:
+            keys = data.get("api_keys", [])
+            if api_key in keys:
+                keys.remove(api_key)
+                call_management_api("PUT", "/v0/management/api-keys", keys)
 
-    print(f"[UserKeys] Revoked {api_key} from {email}")
+    print(f"[UserKeys] Revoked {source} key {mask_api_key(api_key)} from {email}")
     return True, None
 
 
@@ -470,39 +742,56 @@ def get_all_users_stats(include_models=True):
     return all_stats
 
 
+def _format_litellm_user_stat(row, user_keys_data, include_period=True, include_keys=False):
+    users = user_keys_data.get("users", {})
+    email = row.get("user_email", "") or "unknown"
+    user_info = users.get(email, {})
+    litellm_keys = [key for key in row.get("api_keys", []) or [] if key]
+    registered_keys = [
+        entry.get("key", "")
+        for entry in find_user_key_entries(user_keys_data, email)
+        if entry.get("key", "")
+    ]
+    display_keys = registered_keys or litellm_keys
+    spend_usd = round(_float_usage_value(row.get("spend_usd")), 6)
+    breakdown = build_litellm_token_breakdown(
+        row.get("total_tokens", 0),
+        row.get("input_tokens", 0),
+        row.get("output_tokens", 0),
+        row.get("cached_tokens", 0),
+        row.get("reasoning_tokens", 0),
+        spend_usd,
+    )
+    stat = {
+        "email": email,
+        "name": user_info.get("name", email),
+        "total_requests": row.get("total_requests", 0),
+        "success_count": row.get("success_count", 0),
+        "failure_count": row.get("failure_count", 0),
+        "total_tokens": row.get("total_tokens", 0),
+        "input_tokens": row.get("input_tokens", 0),
+        "output_tokens": row.get("output_tokens", 0),
+        "cached_tokens": row.get("cached_tokens", 0),
+        "reasoning_tokens": row.get("reasoning_tokens", 0),
+        "spend_usd": spend_usd,
+        "token_breakdown": breakdown,
+        "estimated_cost_usd": breakdown["cost_usd"],
+        "key_count": len(set(display_keys)) or row.get("num_keys", 0),
+    }
+    if include_period:
+        stat["period"] = row.get("period", "total")
+        stat["_api_keys"] = display_keys
+    if include_keys:
+        stat["keys"] = [{"key": key} for key in display_keys]
+    return stat
+
+
 def get_all_users_total_stats_from_db():
     user_keys_data = load_user_keys()
-    users = user_keys_data.get("users", {})
-    rows = db.get_all_users_total_usage()
-    stats = []
-    for row in rows:
-        email = row.get("user_email", "")
-        user_info = users.get(email, {})
-        registered_keys = [
-            entry.get("key", "")
-            for entry in find_user_key_entries(user_keys_data, email)
-            if entry.get("key", "")
-        ]
-        db_keys = row.get("api_keys", []) or []
-        display_keys = registered_keys or db_keys
-        breakdown = build_token_breakdown(row.get("total_tokens", 0), row.get("input_tokens", 0), row.get("output_tokens", 0), row.get("cached_tokens", 0), row.get("reasoning_tokens", 0))
-        stats.append({
-            "email": email,
-            "name": user_info.get("name", email),
-            "total_requests": row.get("total_requests", 0),
-            "success_count": row.get("success_count", 0),
-            "failure_count": row.get("failure_count", 0),
-            "total_tokens": row.get("total_tokens", 0),
-            "input_tokens": row.get("input_tokens", 0),
-            "output_tokens": row.get("output_tokens", 0),
-            "cached_tokens": row.get("cached_tokens", 0),
-            "reasoning_tokens": row.get("reasoning_tokens", 0),
-            "token_breakdown": breakdown,
-            "estimated_cost_usd": breakdown["cost_usd"],
-            "key_count": len(set(display_keys)) or row.get("num_keys", 0),
-            "keys": [{"key": key} for key in display_keys],
-        })
-    return stats
+    rows = litellm_user_stats("total")
+    if not rows:
+        rows = db.get_all_users_total_usage()
+    return [_format_litellm_user_stat(row, user_keys_data, include_period=False, include_keys=True) for row in rows]
 
 
 def get_all_users_stats_by_period(period="month", live_today=False):
@@ -510,65 +799,11 @@ def get_all_users_stats_by_period(period="month", live_today=False):
     Get statistics for all users aggregated by period (month or year).
     Returns a list with each user's stats broken down by the selected period.
     """
-    # Get stats from database
-    stats = db.get_user_usage_by_period(period)
-
-    # Load user names
     user_keys_data = load_user_keys()
-    users = user_keys_data.get("users", {})
-
-    today = beijing_today()
-    live_apis = {}
-    if live_today and period == "day":
-        stats_data, _ = get_usage_stats_cached()
-        live_apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
-
-    # Enrich with user names and format output
-    all_stats = []
-    for stat in stats:
-        email = stat['user_email']
-        user_info = users.get(email, {})
-        name = user_info.get("name", email)
-        period_keys = [key for key in stat.get('api_keys', []) if key]
-        registered_keys = [
-            entry.get("key", "")
-            for entry in find_user_key_entries(user_keys_data, email)
-            if entry.get("key", "")
-        ]
-        display_keys = registered_keys or period_keys
-        total_requests = stat['total_requests']
-        total_tokens = stat['total_tokens']
-        input_tokens = stat.get('input_tokens', 0)
-        output_tokens = stat.get('output_tokens', 0)
-        cached_tokens = stat.get('cached_tokens', 0)
-        reasoning_tokens = stat.get('reasoning_tokens', 0)
-        if live_today and period == "day" and stat['period'] == today:
-            live_totals = [key_usage_for_date(live_apis.get(key, {}), today) for key in period_keys]
-            total_requests = max(total_requests, sum(item.get("total_requests", 0) for item in live_totals))
-            total_tokens = max(total_tokens, sum(item.get("total_tokens", 0) for item in live_totals))
-            input_tokens = max(input_tokens, sum(item.get("input_tokens", 0) for item in live_totals))
-            output_tokens = max(output_tokens, sum(item.get("output_tokens", 0) for item in live_totals))
-            cached_tokens = max(cached_tokens, sum(item.get("cached_tokens", 0) for item in live_totals))
-            reasoning_tokens = max(reasoning_tokens, sum(item.get("reasoning_tokens", 0) for item in live_totals))
-        breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
-
-        all_stats.append({
-            "email": email,
-            "name": name,
-            "period": stat['period'],
-            "total_requests": total_requests,
-            "total_tokens": total_tokens,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cached_tokens": cached_tokens,
-            "reasoning_tokens": reasoning_tokens,
-            "token_breakdown": breakdown,
-            "estimated_cost_usd": breakdown["cost_usd"],
-            "key_count": len(set(display_keys)),
-            "_api_keys": display_keys,
-        })
-
-    return all_stats
+    rows = litellm_user_stats(period)
+    if not rows:
+        rows = db.get_user_usage_by_period(period)
+    return [_format_litellm_user_stat(row, user_keys_data, include_period=True, include_keys=False) for row in rows]
 
 
 # Cache for Feishu access token
@@ -706,8 +941,12 @@ def call_management_api(method, endpoint, data=None):
 
 
 DEFAULT_CLIPROXY_NODES = [
-    {"name": "old", "url": "http://127.0.0.1:8317"},
+    {"name": "node-a", "url": "http://127.0.0.1:8317"},
     {"name": "node-b", "url": "http://172.31.26.28:8317"},
+    {"name": "node-c", "url": "https://172.31.16.7"},
+    {"name": "node-d", "url": "https://172.31.24.86"},
+    {"name": "node-e", "url": "https://172.31.29.243"},
+    {"name": "node-f", "url": "https://172.31.25.74"},
 ]
 
 
@@ -735,17 +974,43 @@ def load_cliproxy_nodes():
 CLIPROXY_NODES = load_cliproxy_nodes()
 
 
+def node_management_path(node_name, index):
+    name = str(node_name or "").strip().lower()
+    if name in ("old", "node-a", "node_a", "a"):
+        slug = "a"
+    else:
+        match = re.match(r"^node[-_]?([a-z0-9]+)$", name)
+        if match:
+            slug = match.group(1)
+        elif 0 <= index < 26:
+            slug = chr(ord("a") + index)
+        else:
+            slug = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-") or str(index + 1)
+    return f"/{slug}/management.html#/auth-files"
+
+
+def configured_auth_stat_nodes():
+    return [
+        {
+            "name": node.get("name", ""),
+            "management_path": node_management_path(node.get("name", ""), index),
+        }
+        for index, node in enumerate(CLIPROXY_NODES)
+    ]
+
+
 def call_management_api_node(node, method, endpoint, data=None, timeout=30):
     """Call one CLIProxyAPI management endpoint."""
     url = f"{node['url']}{endpoint}"
     headers = {"X-Management-Key": config.CLIPROXY_MANAGEMENT_KEY}
     try:
+        verify_tls = not str(node.get("url", "")).startswith("https://172.31.")
         if method == "GET":
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = requests.get(url, headers=headers, timeout=timeout, verify=verify_tls)
         elif method == "POST":
-            resp = requests.post(url, headers=headers, json=data, timeout=timeout)
+            resp = requests.post(url, headers=headers, json=data, timeout=timeout, verify=verify_tls)
         elif method == "PATCH":
-            resp = requests.patch(url, headers=headers, json=data, timeout=timeout)
+            resp = requests.patch(url, headers=headers, json=data, timeout=timeout, verify=verify_tls)
         else:
             return None, f"Unsupported method: {method}"
         if resp.status_code == 200:
@@ -1229,6 +1494,7 @@ def refresh_auth_stats_cache():
     try:
         data = build_auth_stats()
         now = time.time()
+        portal_state.cache_set_json("auth_stats", data, _auth_stats_cache["ttl"] * 4)
         with _auth_stats_cache_lock:
             _auth_stats_cache["data"] = data
             _auth_stats_cache["last_update"] = now
@@ -1238,6 +1504,7 @@ def refresh_auth_stats_cache():
 
 
 def clear_auth_stats_cache():
+    portal_state.cache_delete("auth_stats")
     with _auth_stats_cache_lock:
         _auth_stats_cache["data"] = None
         _auth_stats_cache["last_update"] = 0
@@ -1266,8 +1533,17 @@ def get_auth_stats_cached():
     if cached:
         start_auth_stats_refresh()
         return _with_auth_stats_cache_metadata(cached, now, True)
+    redis_cached = portal_state.cache_get_json("auth_stats")
+    if redis_cached:
+        with _auth_stats_cache_lock:
+            _auth_stats_cache["data"] = redis_cached
+            _auth_stats_cache["last_update"] = now
+            _auth_stats_cache["refreshing"] = False
+        start_auth_stats_refresh()
+        return _with_auth_stats_cache_metadata(redis_cached, now, True)
     data = build_auth_stats()
     now = time.time()
+    portal_state.cache_set_json("auth_stats", data, _auth_stats_cache["ttl"] * 4)
     with _auth_stats_cache_lock:
         _auth_stats_cache["data"] = data
         _auth_stats_cache["last_update"] = now
@@ -1364,8 +1640,6 @@ def get_cluster_usage_summary():
     def fetch(node):
         payload, err = call_management_api_node(node, "GET", "/v0/management/usage/summary", timeout=10)
         if err:
-            payload, err = call_management_api_node(node, "GET", "/v0/management/usage", timeout=30)
-        if err:
             print(f"[Cluster] {node['name']} usage summary failed: {err}")
         return node["name"], payload, err
 
@@ -1387,34 +1661,13 @@ def get_cluster_usage_summary():
     return merge_usage_summary_payloads([result for result in results if result is not None])
 
 
-def _sum_beijing_today(usage, beijing_today_str):
-    """Sum tokens/requests for Beijing today from UTC by_day buckets."""
-    from datetime import datetime, timedelta
-    utc_now = datetime.utcnow()
-    beijing_now = utc_now + timedelta(hours=8)
-    utc_now_date = utc_now.strftime("%Y-%m-%d")
-
+def _sum_beijing_today(usage, today_str):
     tokens_by_day = usage.get("tokens_by_day") or {}
     requests_by_day = usage.get("requests_by_day") or {}
-
-    if utc_now_date == beijing_today_str:
-        # UTC day == Beijing day (Beijing 08:00~23:59), use UTC today directly
-        tokens = int(tokens_by_day.get(utc_now_date, 0) or 0)
-        requests = int(requests_by_day.get(utc_now_date, 0) or 0)
-    else:
-        # Gap period: Beijing already next day but UTC still previous day
-        # (Beijing 00:00~07:59). Estimate by hours elapsed in Beijing today.
-        hours_into_beijing_today = beijing_now.hour + beijing_now.minute / 60.0
-        # UTC yesterday has 24h of data; Beijing today's portion = last N hours (since 16:00 UTC)
-        utc_yesterday_total_tokens = int(tokens_by_day.get(utc_now_date, 0) or 0)
-        utc_yesterday_total_requests = int(requests_by_day.get(utc_now_date, 0) or 0)
-        # Fraction: hours_into_beijing_today / 24 of yesterday's data
-        # (assumes uniform distribution; good enough for dashboard display)
-        fraction = min(hours_into_beijing_today / 24.0, 1.0)
-        tokens = int(utc_yesterday_total_tokens * fraction)
-        requests = int(utc_yesterday_total_requests * fraction)
-
-    return tokens, requests
+    return (
+        int(tokens_by_day.get(today_str, 0) or 0),
+        int(requests_by_day.get(today_str, 0) or 0),
+    )
 
 
 def token_cost_usd(input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0, unknown_tokens=0):
@@ -1530,33 +1783,29 @@ def estimate_beijing_today_breakdown_from_utc_day(today_tokens):
 
 
 def attach_token_breakdown(summary):
-    today = summary.get("today") or beijing_today()
-    try:
-        totals = token_breakdown_totals_from_db(today)
-    except Exception as e:
-        print(f"[UsageSummary] Token breakdown unavailable: {e}")
-        totals = {
-            "today": {"total_tokens": summary.get("today_tokens", 0)},
-            "total": {"total_tokens": summary.get("total_tokens", 0)},
-        }
-
-    summary_today_tokens = int(summary.get("today_tokens", 0) or 0)
-    totals["today"]["total_tokens"] = max(summary_today_tokens, int(totals["today"].get("total_tokens", 0) or 0))
-    today_known_tokens = int(totals["today"].get("input_tokens", 0) or 0) + int(totals["today"].get("output_tokens", 0) or 0) + int(totals["today"].get("reasoning_tokens", 0) or 0)
-    if summary_today_tokens > 0 and today_known_tokens * 10 < summary_today_tokens:
-        estimated_today = estimate_beijing_today_breakdown_from_utc_day(summary_today_tokens)
-        if estimated_today:
-            totals["today"] = estimated_today
-
-    totals["total"]["total_tokens"] = max(int(summary.get("total_tokens", 0) or 0), int(totals["total"].get("total_tokens", 0) or 0))
+    today_breakdown = build_litellm_token_breakdown(
+        summary.get("today_tokens", 0),
+        summary.get("today_input_tokens", 0),
+        summary.get("today_output_tokens", 0),
+        summary.get("today_cached_tokens", 0),
+        summary.get("today_reasoning_tokens", 0),
+        summary.get("today_spend_usd", 0),
+    )
+    total_breakdown = build_litellm_token_breakdown(
+        summary.get("total_tokens", 0),
+        summary.get("input_tokens", 0),
+        summary.get("output_tokens", 0),
+        summary.get("cached_tokens", 0),
+        summary.get("reasoning_tokens", 0),
+        summary.get("spend_usd", 0),
+    )
     summary["token_breakdown"] = {
-        "today": build_token_breakdown(**totals["today"]),
-        "total": build_token_breakdown(**totals["total"]),
-        "pricing": {
-            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
-            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价；未分类 token 暂按 input 价估算。",
-        },
+        "today": today_breakdown,
+        "total": total_breakdown,
+        "pricing": litellm_spend_pricing_metadata(),
     }
+    summary["estimated_cost_usd"] = total_breakdown["cost_usd"]
+    summary["today_estimated_cost_usd"] = today_breakdown["cost_usd"]
     return summary
 
 
@@ -1578,6 +1827,784 @@ def build_usage_summary_response(payload):
         "failure_count": failure_count,
         "failed_requests": failure_count,
     }
+
+
+def _int_usage_value(value):
+    try:
+        return int(value or 0)
+    except Exception:
+        return 0
+
+
+def _float_usage_value(value):
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def litellm_database_url():
+    url = getattr(config, "LITELLM_DATABASE_URL", "") or os.environ.get("LITELLM_DATABASE_URL", "") or os.environ.get("DATABASE_URL", "")
+    return str(url or "").strip()
+
+
+def litellm_psql_json(sql, timeout=15):
+    database_url = litellm_database_url()
+    if not database_url:
+        return None
+    try:
+        result = subprocess.run(
+            ["psql", database_url, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode == 0:
+            return json.loads((result.stdout or "").strip() or "null")
+    except FileNotFoundError:
+        pass
+    except Exception:
+        return None
+
+    try:
+        import psycopg
+        with psycopg.connect(database_url, connect_timeout=max(1, min(int(timeout or 15), 30))) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql)
+                row = cursor.fetchone()
+                return row[0] if row else None
+    except Exception as e:
+        print(f"[LiteLLM] Database query unavailable: {e}")
+        return None
+
+
+def _sql_literal(value):
+    return "'" + str(value or "").replace("'", "''") + "'"
+
+
+def litellm_spend_identity_sql():
+    return "coalesce(nullif(v.metadata->>'email', ''), nullif(v.user_id, ''), nullif(s.\"user\", ''), 'unknown')"
+
+
+def litellm_cached_tokens_sql():
+    return "coalesce((s.metadata->'usage_object'->'prompt_tokens_details'->>'cached_tokens')::bigint, 0)"
+
+
+def build_litellm_token_breakdown(total_tokens, input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0, spend_usd=0):
+    breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
+    breakdown["cost_usd"] = round(_float_usage_value(spend_usd), 4)
+    breakdown["spend_usd"] = round(_float_usage_value(spend_usd), 6)
+    return breakdown
+
+
+def litellm_spend_pricing_metadata():
+    return {
+        "source": "litellm_spendlogs",
+        "note": "费用以 LiteLLM SpendLogs.spend 为准；该值由 LiteLLM 按模型价格表和 token usage 计算。",
+    }
+
+
+def litellm_usage_history_aggregated(days=120):
+    sql = f"""
+WITH rows AS (
+    SELECT
+        ((s."endTime" + interval '8 hours')::date)::text AS date,
+        count(*)::bigint AS total_requests,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd
+    FROM "LiteLLM_SpendLogs" s
+    WHERE s."endTime" >= (current_date - interval '{int(days)} days')
+    GROUP BY 1
+), enriched AS (
+    SELECT * FROM rows ORDER BY date
+), month_rows AS (
+    SELECT substr(date, 1, 7) AS period,
+           sum(total_requests)::bigint AS total_requests,
+           sum(success_count)::bigint AS success_count,
+           sum(failure_count)::bigint AS failure_count,
+           sum(total_tokens)::bigint AS total_tokens,
+           sum(input_tokens)::bigint AS input_tokens,
+           sum(output_tokens)::bigint AS output_tokens,
+           sum(cached_tokens)::bigint AS cached_tokens,
+           sum(reasoning_tokens)::bigint AS reasoning_tokens,
+           sum(spend_usd)::float8 AS spend_usd
+    FROM rows GROUP BY 1
+), year_rows AS (
+    SELECT substr(date, 1, 4) AS period,
+           sum(total_requests)::bigint AS total_requests,
+           sum(success_count)::bigint AS success_count,
+           sum(failure_count)::bigint AS failure_count,
+           sum(total_tokens)::bigint AS total_tokens,
+           sum(input_tokens)::bigint AS input_tokens,
+           sum(output_tokens)::bigint AS output_tokens,
+           sum(cached_tokens)::bigint AS cached_tokens,
+           sum(reasoning_tokens)::bigint AS reasoning_tokens,
+           sum(spend_usd)::float8 AS spend_usd
+    FROM rows GROUP BY 1
+)
+SELECT json_build_object(
+    'history', coalesce((SELECT json_agg(row_to_json(enriched)) FROM enriched), '[]'::json),
+    'by_month', coalesce((SELECT json_object_agg(period, row_to_json(month_rows)) FROM month_rows), '{{}}'::json),
+    'by_year', coalesce((SELECT json_object_agg(period, row_to_json(year_rows)) FROM year_rows), '{{}}'::json)
+);
+"""
+    data = litellm_psql_json(sql, timeout=30)
+    if not data:
+        return None
+    return data
+
+
+def litellm_usage_by_model_group(days=7):
+    days = max(1, int(days or 7))
+    sql = f"""
+WITH rows AS (
+    SELECT
+        CASE
+            WHEN lower(coalesce(v.metadata->>'model_group', '')) = 'claude' THEN 'claude'
+            WHEN lower(coalesce(v.metadata->>'model_group', '')) = 'deepseek' THEN 'deepseek'
+            WHEN lower(coalesce(v.metadata->>'model_group', '')) = 'gemini' THEN 'gemini'
+            WHEN lower(coalesce(s.model, '')) LIKE 'openai/%' THEN 'gpt'
+            WHEN lower(coalesce(s.model, '')) LIKE '%claude%' THEN 'claude'
+            WHEN lower(coalesce(s.model, '')) LIKE '%deepseek%' THEN 'deepseek'
+            WHEN lower(coalesce(s.model, '')) LIKE '%gemini%' THEN 'gemini'
+            ELSE 'gpt'
+        END AS model_group,
+        count(*)::bigint AS requests,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE s."endTime" >= now() - interval '{days} days'
+    GROUP BY 1
+)
+SELECT coalesce(json_agg(row_to_json(rows) ORDER BY tokens DESC), '[]'::json) FROM rows;
+"""
+    return litellm_psql_json(sql, timeout=15) or []
+
+
+def litellm_recent_hours(hours=48):
+    hours = max(1, int(hours or 48))
+    sql = f"""
+WITH bounds AS (
+    SELECT date_trunc('hour', now() + interval '8 hours') - ((g || ' hours')::interval) AS hour_bj
+    FROM generate_series({hours - 1}, 0, -1) AS g
+), report_window AS (
+    SELECT min(hour_bj) - interval '8 hours' AS start_utc,
+           max(hour_bj) + interval '1 hour' - interval '8 hours' AS end_utc
+    FROM bounds
+), agg AS (
+    SELECT
+        date_trunc('hour', s."endTime" + interval '8 hours') AS hour_bj,
+        count(*)::bigint AS total_requests,
+        count(*)::bigint AS requests,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.total_tokens), 0)::bigint AS tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        coalesce(avg(extract(epoch FROM (s."endTime" - s."startTime")) * 1000), 0)::float8 AS avg_latency_ms
+    FROM "LiteLLM_SpendLogs" s, report_window
+    WHERE s."endTime" >= report_window.start_utc
+      AND s."endTime" < report_window.end_utc
+    GROUP BY 1
+), rows AS (
+    SELECT
+        to_char(bounds.hour_bj, 'YYYY-MM-DD HH24:00') AS hour,
+        to_char(bounds.hour_bj, 'MM-DD HH24:00') AS label,
+        to_char(bounds.hour_bj, 'YYYY-MM-DD HH24:00') AS "utcKey",
+        coalesce(agg.total_requests, 0)::bigint AS total_requests,
+        coalesce(agg.requests, 0)::bigint AS requests,
+        coalesce(agg.success_count, 0)::bigint AS success_count,
+        coalesce(agg.failure_count, 0)::bigint AS failure_count,
+        coalesce(agg.total_tokens, 0)::bigint AS total_tokens,
+        coalesce(agg.tokens, 0)::bigint AS tokens,
+        coalesce(agg.input_tokens, 0)::bigint AS input_tokens,
+        coalesce(agg.output_tokens, 0)::bigint AS output_tokens,
+        coalesce(agg.cached_tokens, 0)::bigint AS cached_tokens,
+        coalesce(agg.spend_usd, 0)::float8 AS spend_usd,
+        coalesce(agg.avg_latency_ms, 0)::float8 AS avg_latency_ms
+    FROM bounds
+    LEFT JOIN agg ON agg.hour_bj = bounds.hour_bj
+    ORDER BY bounds.hour_bj
+)
+SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json) FROM rows;
+"""
+    return litellm_psql_json(sql, timeout=15) or []
+
+
+def litellm_user_stats(period="month"):
+    if period not in ("day", "month", "year", "total"):
+        period = "month"
+    period_expr = {
+        "day": "((s.\"endTime\" + interval '8 hours')::date)::text",
+        "month": "to_char(s.\"endTime\" + interval '8 hours', 'YYYY-MM')",
+        "year": "to_char(s.\"endTime\" + interval '8 hours', 'YYYY')",
+        "total": "'total'",
+    }[period]
+    identity = litellm_spend_identity_sql()
+    sql = f"""
+WITH rows AS (
+    SELECT
+        {period_expr} AS period,
+        {identity} AS user_email,
+        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label,
+        count(*)::bigint AS total_requests,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    GROUP BY 1, 2, 3
+), user_rows AS (
+    SELECT
+        period,
+        user_email,
+        count(distinct key_label)::bigint AS num_keys,
+        array_agg(distinct key_label ORDER BY key_label) AS api_keys,
+        sum(total_requests)::bigint AS total_requests,
+        sum(success_count)::bigint AS success_count,
+        sum(failure_count)::bigint AS failure_count,
+        sum(total_tokens)::bigint AS total_tokens,
+        sum(input_tokens)::bigint AS input_tokens,
+        sum(output_tokens)::bigint AS output_tokens,
+        sum(cached_tokens)::bigint AS cached_tokens,
+        sum(reasoning_tokens)::bigint AS reasoning_tokens,
+        sum(spend_usd)::float8 AS spend_usd
+    FROM rows
+    GROUP BY 1, 2
+)
+SELECT coalesce(json_agg(row_to_json(user_rows) ORDER BY total_tokens DESC), '[]'::json) FROM user_rows;
+"""
+    return litellm_psql_json(sql, timeout=30) or []
+
+
+def litellm_user_key_totals(email, keys=None):
+    clauses = []
+    identity = litellm_spend_identity_sql()
+    if email:
+        clauses.append(f"lower({identity}) = lower({_sql_literal(email)})")
+    if keys:
+        key_values = ",".join(_sql_literal(k) for k in keys if k)
+        if key_values:
+            clauses.append(f"(s.api_key IN ({key_values}) OR v.key_alias IN ({key_values}))")
+    where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
+    today = _sql_literal(beijing_today())
+    sql = f"""
+WITH rows AS (
+    SELECT
+        s.api_key,
+        coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
+        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label,
+        {identity} AS user_email,
+        count(*)::bigint AS total_requests,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours'))::bigint AS today_requests,
+        coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_tokens,
+        coalesce(sum(s.prompt_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_input_tokens,
+        coalesce(sum(s.completion_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_cached_tokens,
+        coalesce(sum(s.spend) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8 AS today_spend_usd,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_reasoning_tokens
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    {where_sql}
+    GROUP BY 1, 2, 3, 4
+)
+SELECT coalesce(json_agg(row_to_json(rows) ORDER BY total_tokens DESC), '[]'::json) FROM rows;
+"""
+    return litellm_psql_json(sql, timeout=30) or []
+
+
+def litellm_user_usage_summary(email, keys=None):
+    email = _normalize_email(email)
+    if not email:
+        return {}
+    identity = litellm_spend_identity_sql()
+    clauses = [f"lower({identity}) = lower({_sql_literal(email)})"]
+    key_values = ",".join(_sql_literal(k) for k in (keys or []) if k)
+    if key_values:
+        clauses.append(f"s.api_key IN ({key_values}) OR v.key_alias IN ({key_values})")
+    where_sql = " OR ".join(f"({clause})" for clause in clauses)
+    today = _sql_literal(beijing_today())
+    sql = f"""
+SELECT json_build_object(
+    'today', {today},
+    'total_requests', count(*)::bigint,
+    'success_count', count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint,
+    'failure_count', count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint,
+    'total_tokens', coalesce(sum(s.total_tokens), 0)::bigint,
+    'input_tokens', coalesce(sum(s.prompt_tokens), 0)::bigint,
+    'output_tokens', coalesce(sum(s.completion_tokens), 0)::bigint,
+    'cached_tokens', coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint,
+    'reasoning_tokens', coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint,
+    'spend_usd', coalesce(sum(s.spend), 0)::float8,
+    'today_requests', count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours'))::bigint,
+    'today_success_count', count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours') AND coalesce(s.status, 'success') != 'failure')::bigint,
+    'today_failure_count', count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours') AND coalesce(s.status, 'success') = 'failure')::bigint,
+    'today_tokens', coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
+    'today_input_tokens', coalesce(sum(s.prompt_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
+    'today_output_tokens', coalesce(sum(s.completion_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
+    'today_cached_tokens', coalesce(sum({litellm_cached_tokens_sql()}) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
+    'today_reasoning_tokens', coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
+    'today_spend_usd', coalesce(sum(s.spend) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8
+)
+FROM "LiteLLM_SpendLogs" s
+LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+WHERE {where_sql};
+"""
+    return litellm_psql_json(sql, timeout=15) or {}
+
+
+def attach_user_usage_breakdown(summary):
+    summary = dict(summary or {})
+    for key in (
+        "today_requests",
+        "today_success_count",
+        "today_failure_count",
+        "today_tokens",
+        "today_input_tokens",
+        "today_output_tokens",
+        "today_cached_tokens",
+        "today_reasoning_tokens",
+        "today_spend_usd",
+        "total_requests",
+        "success_count",
+        "failure_count",
+        "total_tokens",
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "reasoning_tokens",
+        "spend_usd",
+    ):
+        summary[key] = _float_usage_value(summary.get(key)) if key.endswith("_usd") or key == "spend_usd" else _int_usage_value(summary.get(key))
+    summary["today"] = summary.get("today") or beijing_today()
+    today_breakdown = build_litellm_token_breakdown(
+        summary.get("today_tokens", 0),
+        summary.get("today_input_tokens", 0),
+        summary.get("today_output_tokens", 0),
+        summary.get("today_cached_tokens", 0),
+        summary.get("today_reasoning_tokens", 0),
+        summary.get("today_spend_usd", 0),
+    )
+    total_breakdown = build_litellm_token_breakdown(
+        summary.get("total_tokens", 0),
+        summary.get("input_tokens", 0),
+        summary.get("output_tokens", 0),
+        summary.get("cached_tokens", 0),
+        summary.get("reasoning_tokens", 0),
+        summary.get("spend_usd", 0),
+    )
+    summary["token_breakdown"] = {"today": today_breakdown, "total": total_breakdown}
+    summary["today_estimated_cost_usd"] = today_breakdown["cost_usd"]
+    summary["estimated_cost_usd"] = total_breakdown["cost_usd"]
+    summary["failed_requests"] = _int_usage_value(summary.get("failure_count"))
+    summary["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return summary
+
+
+def get_user_usage_summary_cached(email, keys=None):
+    email = _normalize_email(email)
+    key_hash = hashlib.sha1("\0".join(sorted(keys or [])).encode("utf-8")).hexdigest()
+    cache_key = f"{email}:{key_hash}"
+    now = time.time()
+    with _user_usage_summary_cache_lock:
+        cached = _user_usage_summary_cache["data"].get(cache_key)
+        if cached and (now - cached["last_update"]) < _user_usage_summary_cache["ttl"]:
+            return {**cached["data"], "cache_age_seconds": round(now - cached["last_update"], 3)}
+
+    summary = attach_user_usage_breakdown(litellm_user_usage_summary(email, keys))
+    summary["email"] = email
+    summary["cache_status"] = "postgres"
+    with _user_usage_summary_cache_lock:
+        _user_usage_summary_cache["data"][cache_key] = {
+            "data": summary,
+            "last_update": time.time(),
+        }
+    return {**summary, "cache_age_seconds": 0}
+
+
+def litellm_key_timeseries(api_key, date_from, date_to):
+    key_literal = _sql_literal(api_key)
+    sql = f"""
+WITH days AS (
+    SELECT generate_series({_sql_literal(date_from)}::date, {_sql_literal(date_to)}::date, interval '1 day')::date AS day
+), rows AS (
+    SELECT
+        days.day::text AS date,
+        coalesce(count(s.*), 0)::bigint AS requests,
+        coalesce(count(s.*) FILTER (WHERE coalesce(s.status, 'success') != 'failure'), 0)::bigint AS success_count,
+        coalesce(count(s.*) FILTER (WHERE coalesce(s.status, 'success') = 'failure'), 0)::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        coalesce(avg(extract(epoch FROM (s."endTime" - s."startTime")) * 1000), 0)::float8 AS avg_latency_ms
+    FROM days
+    LEFT JOIN "LiteLLM_SpendLogs" s
+      ON s."endTime" >= days.day::timestamp - interval '8 hours'
+     AND s."endTime" < days.day::timestamp + interval '16 hours'
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE s.api_key IS NULL OR s.api_key = {key_literal} OR v.key_alias = {key_literal}
+    GROUP BY days.day
+    ORDER BY days.day
+)
+SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json) FROM rows;
+"""
+    return litellm_psql_json(sql, timeout=30) or []
+
+
+def litellm_recent_requests(api_key="", email="", hours=24, limit=100):
+    clauses = []
+    identity = litellm_spend_identity_sql()
+    if api_key:
+        key_literal = _sql_literal(api_key)
+        clauses.append(f"(s.api_key = {key_literal} OR v.key_alias = {key_literal})")
+    if email:
+        clauses.append(f"lower({identity}) = lower({_sql_literal(email)})")
+    where_sql = " AND ".join(clauses) if clauses else "true"
+    hours = max(1, min(int(hours or 24), 168))
+    limit = max(1, min(int(limit or 100), 500))
+    sql = f"""
+WITH rows AS (
+    SELECT
+        s."startTime" AS start_time,
+        s."endTime" AS end_time,
+        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label,
+        {identity} AS user_email,
+        s.model,
+        coalesce(s.status, 'success') AS status,
+        coalesce(s.total_tokens, 0)::bigint AS total_tokens,
+        coalesce(s.prompt_tokens, 0)::bigint AS input_tokens,
+        coalesce(s.completion_tokens, 0)::bigint AS output_tokens,
+        coalesce({litellm_cached_tokens_sql()}, 0)::bigint AS cached_tokens,
+        coalesce((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint, 0)::bigint AS reasoning_tokens,
+        coalesce(s.spend, 0)::float8 AS spend_usd,
+        coalesce(extract(epoch FROM (s."endTime" - s."startTime")) * 1000, 0)::float8 AS latency_ms,
+        s.metadata->>'call_type' AS call_type,
+        s.metadata->>'request_id' AS request_id,
+        s.metadata->>'user_api_base' AS user_api_base
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE s."endTime" >= now() - interval '{hours} hours'
+      AND {where_sql}
+    ORDER BY s."endTime" DESC
+    LIMIT {limit}
+)
+SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json) FROM rows;
+"""
+    return litellm_psql_json(sql, timeout=30) or []
+
+
+def monitor_log_recent_entries(api_key, hours=24, limit=500, log_dir=None):
+    api_key = str(api_key or "").strip()
+    if not api_key:
+        return []
+    hours = max(1, min(int(hours or 24), 168))
+    limit = max(1, min(int(limit or 500), 5000))
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    root = os.path.abspath(log_dir or MONITOR_LOG_DIR)
+    if not os.path.isdir(root):
+        return []
+
+    entries = []
+    for name in sorted(os.listdir(root), reverse=True):
+        if not name.endswith(".log"):
+            continue
+        path = os.path.abspath(os.path.join(root, name))
+        if not path.startswith(root + os.sep):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                current = None
+                in_body = False
+                for raw_line in handle:
+                    line = raw_line.rstrip("\n")
+                    if line.startswith("========== ") and line.endswith(" ==========") and "END" not in line:
+                        if current and current.get("key") == api_key:
+                            entries.append(current)
+                        timestamp = line.removeprefix("========== ").removesuffix(" ==========").strip()
+                        current = {"timestamp": timestamp, "file": name}
+                        in_body = False
+                        continue
+                    if current is None:
+                        continue
+                    if line.startswith("--- REQUEST BODY ---") or line.startswith("--- RESPONSE ---"):
+                        in_body = True
+                        continue
+                    if line.startswith("========== END =========="):
+                        if current.get("key") == api_key:
+                            entries.append(current)
+                        current = None
+                        in_body = False
+                        if len(entries) >= limit:
+                            break
+                        continue
+                    if in_body or ": " not in line:
+                        continue
+                    field, value = line.split(": ", 1)
+                    field_key = field.strip().lower().replace("-", "_")
+                    if field_key in {"key", "method", "url", "remote", "status", "request_size", "response_size", "user_agent", "content_type", "originator"}:
+                        current[field_key] = value.strip()
+                if current and current.get("key") == api_key:
+                    entries.append(current)
+        except OSError:
+            continue
+        filtered = []
+        for entry in entries:
+            try:
+                ts = datetime.strptime(str(entry.get("timestamp") or ""), "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                continue
+            if ts >= cutoff:
+                safe = dict(entry)
+                safe["key"] = mask_api_key(safe.get("key", ""))
+                filtered.append(safe)
+        entries = filtered[:limit]
+        if len(entries) >= limit:
+            break
+    return entries[:limit]
+
+
+def litellm_usage_rows_for_dates(dates):
+    dates = sorted({str(date) for date in dates if date})
+    if not dates:
+        return []
+    date_values = ",".join(f"('{date.replace(chr(39), chr(39) + chr(39))}')" for date in dates)
+    sql = f"""
+WITH days(day) AS (
+    VALUES {date_values}
+), bounds AS (
+    SELECT
+        day::date AS day,
+        (day::date::timestamp - interval '8 hours') AS start_utc,
+        (day::date::timestamp + interval '16 hours') AS end_utc
+    FROM days
+), rows AS (
+    SELECT
+        bounds.day::text AS date,
+        coalesce(nullif(v.metadata->>'email', ''), nullif(v.user_id, ''), nullif(s.user, ''), 'unknown') AS user_email,
+        concat('litellm:', coalesce(nullif(v.key_alias, ''), left(s.api_key, 16))) AS api_key,
+        count(*)::bigint AS total_requests,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        0::bigint AS cached_tokens,
+        0::bigint AS reasoning_tokens
+    FROM bounds
+    JOIN "LiteLLM_SpendLogs" s
+      ON s."endTime" >= bounds.start_utc
+     AND s."endTime" < bounds.end_utc
+    LEFT JOIN "LiteLLM_VerificationToken" v
+      ON s.api_key = v.token
+    GROUP BY 1, 2, 3
+)
+SELECT coalesce(json_agg(row_to_json(rows) ORDER BY date, total_tokens DESC), '[]'::json)
+FROM rows;
+"""
+    data = litellm_psql_json(sql, timeout=30)
+    return data or []
+
+
+def sync_litellm_usage_to_database(dates):
+    rows = litellm_usage_rows_for_dates(dates)
+    stats = db.replace_litellm_usage_for_dates(rows)
+    rebuild_stats = db.rebuild_daily_usage_from_user_usage(dates)
+    clear_persistent_floor_cache()
+    with _litellm_usage_cache_lock:
+        _litellm_usage_cache["data"] = None
+        _litellm_usage_cache["last_update"] = 0
+    return {
+        **stats,
+        "rebuilt_dates": rebuild_stats.get("dates", 0),
+        "tokens": sum(_int_usage_value(row.get("total_tokens")) for row in rows),
+        "requests": sum(_int_usage_value(row.get("total_requests")) for row in rows),
+    }
+
+
+def query_litellm_spendlogs_aggregate():
+    database_url = litellm_database_url()
+    if not database_url:
+        return None
+
+    now = time.time()
+    with _litellm_usage_cache_lock:
+        cached = _litellm_usage_cache["data"]
+        if cached and (now - _litellm_usage_cache["last_update"]) < _litellm_usage_cache["ttl"]:
+            return dict(cached)
+
+    today = beijing_today()
+    today_sql = today.replace("'", "''")
+    cached_sql = litellm_cached_tokens_sql()
+    sql = f"""
+WITH bounds AS (
+    SELECT
+        ('{today_sql}'::date::timestamp - interval '8 hours') AS today_start_utc,
+        ('{today_sql}'::date::timestamp + interval '16 hours') AS tomorrow_start_utc
+), totals AS (
+    SELECT
+        count(*)::bigint AS total_requests,
+        count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({cached_sql}), 0)::bigint AS cached_tokens,
+        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(spend), 0)::float8 AS spend_usd,
+        max("endTime") AS last_end_time
+    FROM "LiteLLM_SpendLogs" s
+), today_totals AS (
+    SELECT
+        count(*)::bigint AS today_requests,
+        count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS today_success_count,
+        count(*) FILTER (WHERE coalesce(status, 'success') = 'failure')::bigint AS today_failure_count,
+        coalesce(sum(total_tokens), 0)::bigint AS today_tokens,
+        coalesce(sum(prompt_tokens), 0)::bigint AS today_input_tokens,
+        coalesce(sum(completion_tokens), 0)::bigint AS today_output_tokens,
+        coalesce(sum({cached_sql}), 0)::bigint AS today_cached_tokens,
+        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS today_reasoning_tokens,
+        coalesce(sum(spend), 0)::float8 AS today_spend_usd,
+        max("endTime") AS today_last_end_time
+    FROM "LiteLLM_SpendLogs" s, bounds
+    WHERE "endTime" >= bounds.today_start_utc
+      AND "endTime" < bounds.tomorrow_start_utc
+)
+SELECT json_build_object(
+    'today', '{today_sql}',
+    'today_requests', today_totals.today_requests,
+    'today_success_count', today_totals.today_success_count,
+    'today_failure_count', today_totals.today_failure_count,
+    'today_tokens', today_totals.today_tokens,
+    'today_input_tokens', today_totals.today_input_tokens,
+    'today_output_tokens', today_totals.today_output_tokens,
+    'today_cached_tokens', today_totals.today_cached_tokens,
+    'today_reasoning_tokens', today_totals.today_reasoning_tokens,
+    'today_spend_usd', today_totals.today_spend_usd,
+    'today_last_end_time', today_totals.today_last_end_time,
+    'total_requests', totals.total_requests,
+    'success_count', totals.success_count,
+    'failure_count', totals.failure_count,
+    'total_tokens', totals.total_tokens,
+    'input_tokens', totals.input_tokens,
+    'output_tokens', totals.output_tokens,
+    'cached_tokens', totals.cached_tokens,
+    'reasoning_tokens', totals.reasoning_tokens,
+    'spend_usd', totals.spend_usd,
+    'last_end_time', totals.last_end_time
+)
+FROM totals, today_totals;
+"""
+    try:
+        payload = litellm_psql_json(sql, timeout=5)
+        if not payload:
+            print("[UsageSummary] LiteLLM aggregate query failed")
+            return None
+        aggregate = {
+            "today": today,
+            "today_requests": _int_usage_value(payload.get("today_requests")),
+            "today_success_count": _int_usage_value(payload.get("today_success_count")),
+            "today_failure_count": _int_usage_value(payload.get("today_failure_count")),
+            "today_tokens": _int_usage_value(payload.get("today_tokens")),
+            "today_input_tokens": _int_usage_value(payload.get("today_input_tokens")),
+            "today_output_tokens": _int_usage_value(payload.get("today_output_tokens")),
+            "today_cached_tokens": _int_usage_value(payload.get("today_cached_tokens")),
+            "today_reasoning_tokens": _int_usage_value(payload.get("today_reasoning_tokens")),
+            "today_spend_usd": round(_float_usage_value(payload.get("today_spend_usd")), 6),
+            "today_last_end_time": payload.get("today_last_end_time"),
+            "total_requests": _int_usage_value(payload.get("total_requests")),
+            "success_count": _int_usage_value(payload.get("success_count")),
+            "failure_count": _int_usage_value(payload.get("failure_count")),
+            "total_tokens": _int_usage_value(payload.get("total_tokens")),
+            "input_tokens": _int_usage_value(payload.get("input_tokens")),
+            "output_tokens": _int_usage_value(payload.get("output_tokens")),
+            "cached_tokens": _int_usage_value(payload.get("cached_tokens")),
+            "reasoning_tokens": _int_usage_value(payload.get("reasoning_tokens")),
+            "spend_usd": round(_float_usage_value(payload.get("spend_usd")), 6),
+            "last_end_time": payload.get("last_end_time"),
+        }
+        with _litellm_usage_cache_lock:
+            _litellm_usage_cache["data"] = dict(aggregate)
+            _litellm_usage_cache["last_update"] = time.time()
+        return aggregate
+    except Exception as e:
+        print(f"[UsageSummary] LiteLLM aggregate unavailable: {e}")
+        return None
+
+
+def persisted_usage_summary():
+    summary = persistent_usage_summary_floor() or {
+        "today": beijing_today(),
+        "today_tokens": 0,
+        "today_requests": 0,
+        "total_tokens": 0,
+        "total_requests": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "failed_requests": 0,
+    }
+    summary = dict(summary)
+    summary["summary_sources"] = ["key_portal_sqlite"]
+
+    litellm = query_litellm_spendlogs_aggregate()
+    if litellm:
+        summary["litellm_included"] = True
+        summary["litellm_usage"] = litellm
+        summary["summary_sources"].append("litellm_spendlogs")
+        if litellm.get("today") == summary.get("today"):
+            summary["today_tokens"] = max(_int_usage_value(summary.get("today_tokens")), litellm["today_tokens"])
+            summary["today_requests"] = max(_int_usage_value(summary.get("today_requests")), litellm["today_requests"])
+        summary["total_tokens"] = max(_int_usage_value(summary.get("total_tokens")), litellm["total_tokens"])
+        summary["total_requests"] = max(_int_usage_value(summary.get("total_requests")), litellm["total_requests"])
+    else:
+        summary["litellm_included"] = False
+
+    summary["failed_requests"] = _int_usage_value(summary.get("failure_count"))
+    return summary
+
+
+def attach_live_node_metadata(summary, cluster_summary):
+    summary["cluster_partial"] = bool((cluster_summary or {}).get("node_errors"))
+    summary["node_errors"] = (cluster_summary or {}).get("node_errors", [])
+    summary["nodes"] = (cluster_summary or {}).get("nodes", [])
+    summary["summary_sources"].append("cliproxy_usage_summary_nodes")
+    live_summary = build_usage_summary_response(cluster_summary or {})
+    summary["live_usage_summary"] = {
+        "today_tokens": live_summary.get("today_tokens", 0),
+        "today_requests": live_summary.get("today_requests", 0),
+        "total_tokens": live_summary.get("total_tokens", 0),
+        "total_requests": live_summary.get("total_requests", 0),
+    }
+    return summary
 
 
 def clear_persistent_floor_cache():
@@ -1686,20 +2713,311 @@ def get_usage_summary_cached():
         cached = _usage_summary_cache["data"]
         if cached and (now - _usage_summary_cache["last_update"]) < _usage_summary_cache["ttl"]:
             return dict(cached, cache_age_seconds=round(now - _usage_summary_cache["last_update"], 3)), None
+    redis_cached = portal_state.cache_get_json("usage_summary")
+    if redis_cached:
+        with _usage_summary_cache_lock:
+            _usage_summary_cache["data"] = redis_cached
+            _usage_summary_cache["last_update"] = now
+        return dict(redis_cached, cache_age_seconds=0, cache_status="redis"), None
 
-    if _stats_cache["data"] and (now - _stats_cache["last_update"]) < _stats_cache["ttl"]:
-        summary = build_usage_summary_response(_stats_cache["data"])
+    cluster_summary = get_cluster_usage_summary()
+    litellm = query_litellm_spendlogs_aggregate()
+    if litellm:
+        summary = {
+            **litellm,
+            "failed_requests": _int_usage_value(litellm.get("failure_count")),
+            "summary_sources": ["litellm_spendlogs"],
+            "litellm_included": True,
+            "litellm_usage": litellm,
+        }
     else:
-        data = get_cluster_usage_summary()
-        summary = build_usage_summary_response(data)
-    summary = apply_persistent_usage_floor(summary)
+        summary = build_usage_summary_response(cluster_summary)
+        summary = apply_persistent_usage_floor(summary)
+        summary["summary_sources"] = ["key_portal_sqlite_fallback"]
+        summary["litellm_included"] = False
+
+    summary = attach_live_node_metadata(summary, cluster_summary)
     summary = attach_token_breakdown(summary)
+    summary["generated_at"] = datetime.now(timezone.utc).isoformat()
 
     now = time.time()
     with _usage_summary_cache_lock:
         _usage_summary_cache["data"] = summary
         _usage_summary_cache["last_update"] = now
+    portal_state.cache_set_json("usage_summary", summary, max(2, int(_usage_summary_cache["ttl"] * 2)))
     return dict(summary, cache_age_seconds=0), None
+
+
+def status_page_url():
+    if getattr(config, "STATUS_PUBLIC_URL", ""):
+        return config.STATUS_PUBLIC_URL.rstrip("/")
+    base = os.environ.get("PUBLIC_BASE_URL", "").strip()
+    if base:
+        return f"{base.rstrip('/')}/status"
+    return "https://token.zasdas.com/status"
+
+
+def portal_home_url():
+    base = os.environ.get("PUBLIC_BASE_URL", "").strip()
+    if base:
+        return f"{base.rstrip('/')}/"
+    return "https://token.zasdas.com/"
+
+
+def format_compact_number(value):
+    value = _int_usage_value(value)
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 10_000:
+        return f"{value / 10_000:.1f}万"
+    return f"{value:,}"
+
+
+def format_event_duration(started_at, resolved_at=None):
+    if not started_at:
+        return "-"
+    try:
+        start = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(resolved_at).replace("Z", "+00:00")) if resolved_at else datetime.now(timezone.utc)
+        seconds = max(0, int((end - start).total_seconds()))
+    except Exception:
+        return "-"
+    if seconds < 60:
+        return f"{seconds} 秒"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} 分钟"
+    hours = minutes // 60
+    return f"{hours} 小时 {minutes % 60} 分钟"
+
+
+def status_event_public(event, include_private=False):
+    item = dict(event or {})
+    if not include_private:
+        item.pop("metadata", None)
+        item.pop("dedupe_key", None)
+    item["duration"] = format_event_duration(item.get("started_at"), item.get("resolved_at"))
+    return item
+
+
+def build_status_payload(include_private=False):
+    events = portal_state.list_status_events(120)
+    active_incidents = [
+        item for item in events
+        if item.get("event_type") == "node_health" and item.get("status") == "open"
+    ]
+    recent_notices = [
+        item for item in events
+        if item.get("event_type") != "node_health" or item.get("status") != "open"
+    ]
+    service_status = "degraded" if active_incidents else "operational"
+    affected_nodes = sorted({
+        node
+        for event in active_incidents
+        for node in (event.get("affected_nodes") or [])
+        if node
+    })
+    return {
+        "status": service_status,
+        "status_text": "部分节点异常" if active_incidents else "全部服务正常",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "active_incidents": [status_event_public(item, include_private) for item in active_incidents],
+        "recent_events": [status_event_public(item, include_private) for item in recent_notices],
+        "affected_nodes": affected_nodes,
+        "active_incident_count": len(active_incidents),
+        "node_count": len(CLIPROXY_NODES),
+        "is_admin": bool(include_private),
+    }
+
+
+def status_event_webhook_content(event, action):
+    title = event.get("title") or "CLIProxyAPI 状态更新"
+    nodes = ", ".join(event.get("affected_nodes") or []) or "-"
+    lines = [
+        f"**事件**: {title}",
+        f"**状态**: {action}",
+        f"**影响节点**: {nodes}",
+        f"**原因**: {event.get('reason') or event.get('summary') or '-'}",
+    ]
+    if event.get("started_at"):
+        lines.append(f"**开始时间**: {event.get('started_at')}")
+    if event.get("resolved_at"):
+        lines.append(f"**恢复时间**: {event.get('resolved_at')}")
+        lines.append(f"**持续时间**: {format_event_duration(event.get('started_at'), event.get('resolved_at'))}")
+    if event.get("summary"):
+        lines.append(f"**说明**: {event.get('summary')}")
+    lines.append(f"**详情**: {status_page_url()}")
+    return "\n".join(lines)
+
+
+def send_status_webhook(event, action, template="orange"):
+    if not event:
+        return False
+    sent = feishu.send_feishu_webhook(
+        getattr(config, "STATUS_FEISHU_WEBHOOK_URL", ""),
+        f"{event.get('title') or 'CLIProxyAPI 状态更新'}",
+        status_event_webhook_content(event, action),
+        template=template,
+    )
+    if sent:
+        portal_state.mark_status_event_notified(event.get("id"))
+    return sent
+
+
+def normalize_monitor_result(result):
+    result = dict(result or {})
+    payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
+    checks = payload.get("checks") if isinstance(payload.get("checks"), dict) else {}
+    return {
+        "url": result.get("url") or "",
+        "status_code": result.get("status_code") or 0,
+        "reason": result.get("reason") or "",
+        "payload_status": payload.get("status") or "",
+        "checks": checks,
+    }
+
+
+def record_nlb_monitor_event(event):
+    node = str((event or {}).get("node") or "").strip()
+    status = str((event or {}).get("status") or "").strip().lower()
+    if not node or status not in {"healthy", "unhealthy"}:
+        return None
+    result = normalize_monitor_result((event or {}).get("result"))
+    reason = str((event or {}).get("reason") or result.get("reason") or "").strip()
+    dedupe_key = f"node_health:{node}"
+
+    if status == "unhealthy":
+        summary = f"{node} 探活失败，NLB 可能已将该节点从服务池摘除。"
+        saved = portal_state.upsert_status_event(
+            event_type="node_health",
+            dedupe_key=dedupe_key,
+            status="open",
+            severity="warning",
+            title=f"{node} 节点异常",
+            summary=summary,
+            reason=reason or "health check failed",
+            affected_nodes=[node],
+            metadata={"monitor_result": result},
+        )
+        if saved.get("created") or saved.get("changed"):
+            send_status_webhook(saved.get("event"), "故障开始", template="red")
+        return saved
+
+    resolved = portal_state.resolve_status_event(
+        dedupe_key,
+        summary=f"{node} 探活恢复，节点已重新处于健康状态。",
+        reason=reason or "ok",
+        metadata={"recovery_result": result, "initial": bool((event or {}).get("initial"))},
+    )
+    if resolved.get("changed"):
+        send_status_webhook(resolved.get("event"), "故障恢复", template="green")
+    return resolved
+
+
+def daily_usage_record_snapshot():
+    today = beijing_today()
+    lookback_days = max(30, _int_usage_value(getattr(config, "STATUS_USAGE_RECORD_LOOKBACK_DAYS", 365)) or 365)
+    today_sql = _sql_literal(today)
+    sql = f"""
+WITH daily AS (
+    SELECT
+        ((s."endTime" + interval '8 hours')::date)::text AS date,
+        count(*)::bigint AS total_requests,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens
+    FROM "LiteLLM_SpendLogs" s
+    WHERE s."endTime" >= ({today_sql}::date::timestamp - interval '8 hours' - interval '{lookback_days} days')
+    GROUP BY 1
+), record_row AS (
+    SELECT date, total_tokens, total_requests
+    FROM daily
+    WHERE date <> {today_sql}
+    ORDER BY total_tokens DESC, date DESC
+    LIMIT 1
+), today_row AS (
+    SELECT date, total_tokens, total_requests
+    FROM daily
+    WHERE date = {today_sql}
+)
+SELECT json_build_object(
+    'today', {today_sql},
+    'today_tokens', coalesce((SELECT total_tokens FROM today_row), 0),
+    'today_requests', coalesce((SELECT total_requests FROM today_row), 0),
+    'previous_record_date', (SELECT date FROM record_row),
+    'previous_record_tokens', coalesce((SELECT total_tokens FROM record_row), 0),
+    'previous_record_requests', coalesce((SELECT total_requests FROM record_row), 0),
+    'source', 'litellm_spendlogs'
+);
+"""
+    payload = litellm_psql_json(sql, timeout=15)
+    if not payload:
+        rows = db.get_daily_usage_history()
+        record = None
+        today_row = None
+        for row in rows:
+            if row.get("date") == today:
+                today_row = row
+            elif record is None or _int_usage_value(row.get("total_tokens")) > _int_usage_value(record.get("total_tokens")):
+                record = row
+        payload = {
+            "today": today,
+            "today_tokens": _int_usage_value((today_row or {}).get("total_tokens")),
+            "today_requests": _int_usage_value((today_row or {}).get("total_requests")),
+            "previous_record_date": (record or {}).get("date"),
+            "previous_record_tokens": _int_usage_value((record or {}).get("total_tokens")),
+            "previous_record_requests": _int_usage_value((record or {}).get("total_requests")),
+            "source": "key_portal_sqlite_fallback",
+        }
+
+    summary, err = get_usage_summary_cached()
+    if not err and summary and summary.get("today") == today:
+        payload["today_tokens"] = max(_int_usage_value(payload.get("today_tokens")), _int_usage_value(summary.get("today_tokens")))
+        payload["today_requests"] = max(_int_usage_value(payload.get("today_requests")), _int_usage_value(summary.get("today_requests")))
+    return payload
+
+
+def check_daily_usage_record():
+    if not getattr(config, "STATUS_USAGE_RECORD_ENABLED", True):
+        return None
+    snapshot = daily_usage_record_snapshot()
+    today_tokens = _int_usage_value(snapshot.get("today_tokens"))
+    record_tokens = _int_usage_value(snapshot.get("previous_record_tokens"))
+    if record_tokens <= 0 or today_tokens <= record_tokens:
+        return None
+
+    today = snapshot.get("today") or beijing_today()
+    previous_date = snapshot.get("previous_record_date") or "-"
+    diff = today_tokens - record_tokens
+    saved = portal_state.upsert_status_event(
+        event_type="usage_record",
+        dedupe_key=f"usage_record:{today}:tokens",
+        status="notice",
+        severity="info",
+        title="今日用量突破历史新高",
+        summary=f"今日 Tokens {format_compact_number(today_tokens)}，超过 {previous_date} 的历史最高 {format_compact_number(record_tokens)}。",
+        reason="daily token record",
+        affected_nodes=[],
+        metadata={**snapshot, "delta_tokens": diff},
+    )
+    if saved.get("created"):
+        event = saved.get("event") or {}
+        content = "\n".join([
+            "**事件**: 今日用量突破历史新高",
+            f"**今日 Tokens**: {format_compact_number(today_tokens)}",
+            f"**历史最高**: {format_compact_number(record_tokens)} ({previous_date})",
+            f"**突破幅度**: +{format_compact_number(diff)}",
+            f"**入口**: {portal_home_url()}",
+        ])
+        sent = feishu.send_feishu_webhook(
+            getattr(config, "STATUS_FEISHU_WEBHOOK_URL", ""),
+            "今日用量突破历史新高",
+            content,
+            template="blue",
+        )
+        if sent:
+            portal_state.mark_status_event_notified(event.get("id"))
+    return saved
 
 
 def get_cluster_auth_files():
@@ -1754,12 +3072,15 @@ def beijing_date_hour(value):
     parsed = parse_detail_time_utc(value)
     if not parsed:
         return None, None
-    beijing_time = parsed + timedelta(hours=8)
-    return beijing_time.strftime("%Y-%m-%d"), beijing_time.hour
+    return parsed.strftime("%Y-%m-%d"), parsed.hour
+
+
+def beijing_now():
+    return datetime.now(BEIJING_TZ).replace(tzinfo=None)
 
 
 def beijing_today():
-    return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+    return beijing_now().strftime("%Y-%m-%d")
 
 
 def key_usage_for_date(api_stats, date):
@@ -1797,8 +3118,7 @@ def key_usage_for_date(api_stats, date):
 
 
 def recent_hour_empty_buckets(hours=48):
-    now_beijing = datetime.utcnow() + timedelta(hours=8)
-    end_hour = now_beijing.replace(minute=0, second=0, microsecond=0)
+    end_hour = beijing_now().replace(minute=0, second=0, microsecond=0)
     start_hour = end_hour - timedelta(hours=hours - 1)
     buckets = {}
     for index in range(hours):
@@ -1871,14 +3191,8 @@ def normalize_recent_days(buckets, usage):
             tokens_by_day = usage.get("tokens_by_day", {}) or {}
             requests_by_day = usage.get("requests_by_day", {}) or {}
             daily = dict(daily or {})
-            daily["total_tokens"] = max(
-                int(daily.get("total_tokens", 0) or 0),
-                int(tokens_by_day.get(today, 0) or 0),
-            )
-            daily["total_requests"] = max(
-                int(daily.get("total_requests", 0) or 0),
-                int(requests_by_day.get(today, 0) or 0),
-            )
+            daily["total_tokens"] = int(tokens_by_day.get(today, 0) or 0)
+            daily["total_requests"] = int(requests_by_day.get(today, 0) or 0)
         elif len(items) != 24:
             continue
         if not daily:
@@ -1925,8 +3239,7 @@ def recent_hour_fallback_from_summary(usage, hours=48):
     for bucket in buckets.values():
         if bucket["key"][:10] != today:
             continue
-        utc_hour = (int(bucket["key"][-2:]) - 8) % 24
-        hour_key = f"{utc_hour:02d}"
+        hour_key = bucket["key"][-2:]
         tokens = int(tokens_by_hour.get(hour_key, 0) or 0)
         requests = int(requests_by_hour.get(hour_key, 0) or 0)
         success_count = int(success_by_hour.get(hour_key, 0) or 0)
@@ -1964,8 +3277,7 @@ def build_recent_hour_usage(payload, hours=48):
                 parsed = parse_detail_time_utc(timestamp)
                 if not parsed:
                     continue
-                beijing_time = parsed + timedelta(hours=8)
-                hour_value = beijing_time.replace(minute=0, second=0, microsecond=0)
+                hour_value = (parsed + timedelta(hours=8)).replace(minute=0, second=0, microsecond=0)
                 if hour_value < start_hour or hour_value > end_hour:
                     continue
                 bucket = buckets.get(hour_value.strftime("%Y-%m-%d %H"))
@@ -2244,7 +3556,21 @@ def build_auth_stats():
                     stat["last_error_message"] = detail_error_message(detail)
                     stat["last_error_status"] = detail_error_status(detail)
 
-    node_summary = {}
+    node_summary = {
+        node["name"]: {
+            "auth_files": 0,
+            "active": 0,
+            "warning": 0,
+            "unavailable": 0,
+            "management_path": node_management_path(node.get("name", ""), index),
+            "management_url": node.get("url", ""),
+        }
+        for index, node in enumerate(CLIPROXY_NODES)
+    }
+    for summary in node_summary.values():
+        for window_name in window_names:
+            summary.setdefault(window_name, empty_window())
+
     for stat in stats.values():
         for window_name in window_names:
             enrich_window(stat[window_name])
@@ -2257,6 +3583,8 @@ def build_auth_stats():
             "active": 0,
             "warning": 0,
             "unavailable": 0,
+            "management_path": node_management_path(node, len(node_summary)),
+            "management_url": "",
         })
         for window_name in window_names:
             summary.setdefault(window_name, empty_window())
@@ -2299,6 +3627,7 @@ def build_auth_stats():
     return {
         "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),
         "nodes": node_summary,
+        "configured_nodes": configured_auth_stat_nodes(),
         "today_quota_usage": today_quota_usage,
         "errors": usage_payload.get("node_errors", []) + auth_errors,
         "generated_at": datetime.utcnow().isoformat() + "Z",
@@ -2312,7 +3641,10 @@ def get_auth_files():
 
 def get_auth_file_detail(path):
     """Get auth file detail including expiry time."""
-    data, err = call_management_api("GET", f"/v0/management/auth-files/download?path={path}")
+    name = os.path.basename(path or "")
+    if not name:
+        return None
+    data, err = call_management_api("GET", f"/v0/management/auth-files/download?name={quote(name)}")
     if err:
         return None
     return data
@@ -2440,47 +3772,25 @@ def save_usage_history():
 
 
 def sync_usage_from_api():
-    """Sync usage data from CLIProxyAPI to database and CSV."""
+    """Refresh reporting caches without pulling full CLIProxyAPI usage payloads."""
     try:
-        # 1. Fetch data from all Management APIs
-        data = get_cluster_usage()
-
-        # 2. Build key-to-user mapping
-        user_keys_data = load_user_keys()
-        key_to_user = usage_sync.build_key_to_user_mapping(user_keys_data)
-
-        # 3. Sync to database
-        success, stats = usage_sync.sync_usage_to_database(data, key_to_user)
-        if not success:
-            print(f"[UsageSync] Database sync failed: {stats.get('error', 'unknown error')}")
-            return False
-
-        # 4. Also update CSV cache for backward compatibility
-        usage = data.get("usage", {})
-        tokens_by_day = usage.get("tokens_by_day", {})
-        requests_by_day = usage.get("requests_by_day", {})
-
-        load_usage_history()
-        for date in set(list(tokens_by_day.keys()) + list(requests_by_day.keys())):
-            _usage_history_cache["data"][date] = {
-                "total_requests": requests_by_day.get(date, 0),
-                "success_count": requests_by_day.get(date, 0),
-                "failure_count": 0,
-                "total_tokens": tokens_by_day.get(date, 0),
-                "input_tokens": 0,
-                "output_tokens": 0,
-            }
-
-        save_usage_history()
-        clear_persistent_floor_cache()
-
-        print(f"[UsageSync] Synced successfully: {stats.get('user_records', 0)} user records, "
-              f"{stats.get('daily_records', 0)} days, "
-              f"{stats.get('total_tokens', 0):,} tokens")
-
+        with _litellm_usage_cache_lock:
+            _litellm_usage_cache["data"] = None
+            _litellm_usage_cache["last_update"] = 0
+        with _recent_hours_cache_lock:
+            _recent_hours_cache["data"] = None
+            _recent_hours_cache["last_update"] = 0
+            _recent_hours_cache["refreshing"] = False
+        with _usage_history_response_cache_lock:
+            _usage_history_response_cache["data"] = None
+            _usage_history_response_cache["last_update"] = 0
+            _usage_history_response_cache["refreshing"] = False
+        query_litellm_spendlogs_aggregate()
+        litellm_usage_history_aggregated(days=2)
+        print("[UsageSync] Refreshed LiteLLM SpendLogs reporting caches")
         return True
     except Exception as e:
-        print(f"[UsageSync] Sync error: {e}")
+        print(f"[UsageSync] LiteLLM cache refresh error: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -2527,24 +3837,30 @@ def git_sync_usage_csv():
 
 def get_usage_history_aggregated():
     """Get usage history with daily, monthly, and yearly aggregations."""
-    # Use database instead of CSV cache
-    return db.get_usage_aggregated()
+    data = litellm_usage_history_aggregated()
+    if data:
+        data["source"] = "litellm_spendlogs"
+        return data
+    data = db.get_usage_aggregated()
+    data["source"] = "key_portal_sqlite_fallback"
+    return data
 
 
 def enrich_usage_breakdowns(data):
     for row in data.get("history", []) or []:
-        breakdown = build_token_breakdown(row.get("total_tokens", 0), row.get("input_tokens", 0), row.get("output_tokens", 0), row.get("cached_tokens", 0), row.get("reasoning_tokens", 0))
+        spend_usd = _float_usage_value(row.get("spend_usd"))
+        breakdown = build_litellm_token_breakdown(row.get("total_tokens", 0), row.get("input_tokens", 0), row.get("output_tokens", 0), row.get("cached_tokens", 0), row.get("reasoning_tokens", 0), spend_usd)
         row["token_breakdown"] = breakdown
         row["estimated_cost_usd"] = breakdown["cost_usd"]
+        row["spend_usd"] = round(spend_usd, 6)
     for bucket_name in ("by_month", "by_year"):
         for bucket in (data.get(bucket_name, {}) or {}).values():
-            breakdown = build_token_breakdown(bucket.get("total_tokens", 0), bucket.get("input_tokens", 0), bucket.get("output_tokens", 0), bucket.get("cached_tokens", 0), bucket.get("reasoning_tokens", 0))
+            spend_usd = _float_usage_value(bucket.get("spend_usd"))
+            breakdown = build_litellm_token_breakdown(bucket.get("total_tokens", 0), bucket.get("input_tokens", 0), bucket.get("output_tokens", 0), bucket.get("cached_tokens", 0), bucket.get("reasoning_tokens", 0), spend_usd)
             bucket["token_breakdown"] = breakdown
             bucket["estimated_cost_usd"] = breakdown["cost_usd"]
-    data["token_pricing"] = {
-        "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
-        "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
-    }
+            bucket["spend_usd"] = round(spend_usd, 6)
+    data["token_pricing"] = litellm_spend_pricing_metadata()
     return data
 
 
@@ -2569,6 +3885,8 @@ def apply_live_today_usage(data, usage):
             "total_tokens": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
         }
         history.append(row)
         history.sort(key=lambda item: item.get("date", ""))
@@ -2578,16 +3896,16 @@ def apply_live_today_usage(data, usage):
     old_success = int(row.get("success_count", 0) or 0)
     old_failure = int(row.get("failure_count", 0) or 0)
 
-    row["total_tokens"] = max(old_tokens, live_tokens)
-    row["total_requests"] = max(old_requests, live_requests)
+    row["total_tokens"] = live_tokens
+    row["total_requests"] = live_requests
 
     success_by_hour = usage.get("success_by_hour", {}) or {}
     failure_by_hour = usage.get("failure_by_hour", {}) or {}
     live_success = sum(int(value or 0) for value in success_by_hour.values())
     live_failure = sum(int(value or 0) for value in failure_by_hour.values())
     if live_success + live_failure == live_requests:
-        row["success_count"] = max(old_success, live_success)
-        row["failure_count"] = max(old_failure, live_failure)
+        row["success_count"] = live_success
+        row["failure_count"] = live_failure
 
     token_delta = int(row.get("total_tokens", 0) or 0) - old_tokens
     request_delta = int(row.get("total_requests", 0) or 0) - old_requests
@@ -2844,8 +4162,8 @@ def index():
 
 @app.route("/register")
 def register_page():
-    """User registration page."""
-    return render_template("register.html")
+    """Deprecated standalone registration page."""
+    return redirect("/")
 
 
 @app.route("/my-keys")
@@ -2854,6 +4172,18 @@ def my_keys_page():
     service_info = dict(config.SERVICE_INFO)
     service_info["base_url"] = _api_base_url()
     return render_template("my_keys.html", service_info=service_info)
+
+
+@app.route("/guide")
+def guide_page():
+    """Beginner guide for Key Portal users."""
+    service_info = dict(config.SERVICE_INFO)
+    service_info["base_url"] = _api_base_url()
+    return render_template(
+        "guide.html",
+        service_info=service_info,
+        guide=portal_docs.guide_context(service_info["base_url"]),
+    )
 
 
 @app.route("/admin/users")
@@ -2870,14 +4200,44 @@ def admin_auth_stats_page():
 
 @app.route("/login")
 def login():
-    """OAuth login page for contributing keys."""
-    return render_template("login.html")
+    """Feishu login page for Key Portal."""
+    if current_portal_session():
+        return redirect(_safe_next_url(request.args.get("next"), "/"))
+    return render_template(
+        "portal_login.html",
+        next_url=_safe_next_url(request.args.get("next"), "/"),
+        login_error=request.args.get("login_error", ""),
+    )
+
+
+@app.route("/contribute")
+def contribute_page():
+    """Deprecated standalone key contribution page."""
+    return redirect("/")
 
 
 @app.route("/status")
 def status():
-    """Key status page showing all registered keys."""
+    """Service status and incident announcement page."""
     return render_template("status.html")
+
+
+@app.route("/api/status")
+def api_status():
+    """Return current service status, active incidents, and recent announcements."""
+    return jsonify(build_status_payload(include_private=is_current_admin()))
+
+
+@app.route("/api/status/events/<int:event_id>", methods=["PATCH"])
+def api_update_status_event(event_id):
+    """Update admin notes for one status event."""
+    if not is_current_admin():
+        return jsonify({"error": "需要管理员权限"}), 403
+    body = request.get_json(silent=True) or {}
+    event = portal_state.update_status_event_note(event_id, body.get("admin_note", ""))
+    if not event:
+        return jsonify({"error": "事件不存在"}), 404
+    return jsonify({"event": status_event_public(event, include_private=True)})
 
 
 @app.route("/api/auth-url")
@@ -2969,6 +4329,19 @@ def get_usage_summary():
     return jsonify(data)
 
 
+@app.route("/api/my-usage-summary")
+def get_my_usage_summary():
+    """Get lightweight usage counters for the current Feishu user."""
+    session_data = current_portal_user()
+    if not session_data:
+        return jsonify({"error": "未登录"}), 401
+    email = _normalize_email(session_data.get("email"))
+    user_data = load_user_keys()
+    user = user_data.get("users", {}).get(email, {})
+    keys = list(user.get("api_keys", []) or [])
+    return jsonify(get_user_usage_summary_cached(email, keys))
+
+
 @app.route("/api/auth-stats")
 def get_auth_stats():
     """Get per-auth-file usage windows across all nodes."""
@@ -3039,27 +4412,115 @@ def get_keys():
     return jsonify({"keys": keys})
 
 
+def build_usage_history_response():
+    data = get_usage_history_aggregated()
+    enrich_usage_breakdowns(data)
+
+    recent_hours = litellm_recent_hours(48)
+    data["tokens_by_hour"] = {row.get("utcKey", row.get("hour", "")): row.get("tokens", row.get("total_tokens", 0)) for row in recent_hours}
+    data["requests_by_hour"] = {row.get("utcKey", row.get("hour", "")): row.get("requests", row.get("total_requests", 0)) for row in recent_hours}
+    data["success_by_hour"] = {row.get("utcKey", row.get("hour", "")): row.get("success_count", 0) for row in recent_hours}
+    data["failure_by_hour"] = {row.get("utcKey", row.get("hour", "")): row.get("failure_count", 0) for row in recent_hours}
+    data["avg_latency_ms_by_hour"] = {row.get("utcKey", row.get("hour", "")): row.get("avg_latency_ms") for row in recent_hours}
+    data["recent_hours"] = recent_hours
+    data["model_groups"] = litellm_usage_by_model_group(7)
+    data["recent_hours_refreshing"] = False
+    data["generated_at"] = beijing_now().isoformat()
+    return data
+
+
+def usage_history_empty_response(refreshing=False):
+    now = beijing_now()
+    return {
+        "history": [],
+        "by_month": {},
+        "by_year": {},
+        "tokens_by_hour": {},
+        "requests_by_hour": {},
+        "success_by_hour": {},
+        "failure_by_hour": {},
+        "avg_latency_ms_by_hour": {},
+        "recent_hours": [],
+        "model_groups": [],
+        "recent_hours_refreshing": bool(refreshing),
+        "generated_at": now.isoformat(),
+        "refreshing": bool(refreshing),
+        "cache_status": "warming",
+    }
+
+
+def load_usage_history_response_cache_from_disk():
+    try:
+        redis_cached = portal_state.cache_get_json("usage_history_response")
+        if redis_cached:
+            return redis_cached, time.time()
+        if not os.path.exists(USAGE_HISTORY_RESPONSE_CACHE_FILE):
+            return None, 0
+        with open(USAGE_HISTORY_RESPONSE_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data, os.path.getmtime(USAGE_HISTORY_RESPONSE_CACHE_FILE)
+    except Exception as e:
+        print(f"[UsageHistory] Failed to read disk cache: {e}")
+        return None, 0
+
+
+def save_usage_history_response_cache_to_disk(data):
+    try:
+        portal_state.cache_set_json("usage_history_response", data, _usage_history_response_cache["ttl"] * 5)
+        tmp_path = USAGE_HISTORY_RESPONSE_CACHE_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp_path, USAGE_HISTORY_RESPONSE_CACHE_FILE)
+    except Exception as e:
+        print(f"[UsageHistory] Failed to write disk cache: {e}")
+
+
+def refresh_usage_history_response_cache():
+    try:
+        data = build_usage_history_response()
+        save_usage_history_response_cache_to_disk(data)
+        with _usage_history_response_cache_lock:
+            _usage_history_response_cache["data"] = data
+            _usage_history_response_cache["last_update"] = time.time()
+    finally:
+        with _usage_history_response_cache_lock:
+            _usage_history_response_cache["refreshing"] = False
+
+
+def start_usage_history_response_refresh():
+    with _usage_history_response_cache_lock:
+        if _usage_history_response_cache["refreshing"]:
+            return False
+        _usage_history_response_cache["refreshing"] = True
+    threading.Thread(target=refresh_usage_history_response_cache, daemon=True).start()
+    return True
+
+
 @app.route("/api/usage-history")
 def get_usage_history():
     """Get historical usage data with aggregations."""
-    data = get_usage_history_aggregated()
+    now = time.time()
+    with _usage_history_response_cache_lock:
+        cached = _usage_history_response_cache["data"]
+        last_update = _usage_history_response_cache["last_update"]
+        ttl = _usage_history_response_cache["ttl"]
 
-    # Also get current-day and hourly data from the lightweight live summary.
-    api_data = get_cluster_usage_summary()
-    usage = api_data.get("usage", {})
-    apply_live_today_usage(data, usage)
-    enrich_usage_breakdowns(data)
-    data["tokens_by_hour"] = usage.get("tokens_by_hour", {})
-    data["requests_by_hour"] = usage.get("requests_by_hour", {})
-    data["success_by_hour"] = usage.get("success_by_hour", {})
-    data["failure_by_hour"] = usage.get("failure_by_hour", {})
-    data["avg_latency_ms_by_hour"] = usage.get("avg_latency_ms_by_hour", {})
+    if cached and (now - last_update) < ttl:
+        return jsonify({**cached, "cache_age_seconds": round(now - last_update, 3), "cache_status": "memory"})
+    if cached:
+        start_usage_history_response_refresh()
+        return jsonify({**cached, "cache_age_seconds": round(now - last_update, 3), "refreshing": True, "cache_status": "stale_memory"})
 
-    recent_hours, recent_hours_refreshing = get_recent_hours_cached(usage)
-    data["recent_hours"] = recent_hours
-    data["recent_hours_refreshing"] = recent_hours_refreshing
+    disk_cached, disk_mtime = load_usage_history_response_cache_from_disk()
+    if disk_cached:
+        with _usage_history_response_cache_lock:
+            _usage_history_response_cache["data"] = disk_cached
+            _usage_history_response_cache["last_update"] = disk_mtime
+        start_usage_history_response_refresh()
+        return jsonify({**disk_cached, "cache_age_seconds": round(now - disk_mtime, 3), "refreshing": True, "cache_status": "disk"})
 
-    return jsonify(data)
+    start_usage_history_response_refresh()
+    return jsonify(usage_history_empty_response(refreshing=True))
 
 
 # ============================================================================
@@ -3115,14 +4576,367 @@ def reassign_key_email(api_key, new_email):
     return True, None, {"old_email": old_email, "new_email": new_email, "migrated_rows": migrated_rows}
 
 
+def current_portal_session():
+    return portal_state.get_session(request.cookies.get(SESSION_COOKIE_NAME, ""))
+
+
+def _normalize_email(value):
+    return portal_auth.normalize_email(value)
+
+
+def portal_admin_emails():
+    return portal_auth.admin_emails(config)
+
+
+def is_admin_email(email):
+    return portal_auth.is_admin_email(email, config)
+
+
+def current_portal_user():
+    return portal_auth.session_context(current_portal_session(), config)
+
+
+def current_user_email():
+    session_data = current_portal_user()
+    return _normalize_email((session_data or {}).get("email"))
+
+
+def current_user_name():
+    session_data = current_portal_user() or {}
+    user = session_data.get("user") or {}
+    return str(user.get("name") or user.get("email") or session_data.get("email") or "").strip()
+
+
+def is_current_admin():
+    session_data = current_portal_user()
+    return bool(session_data and session_data.get("is_admin"))
+
+
+def user_can_access_email(email):
+    return portal_auth.can_access_email(current_portal_user(), email)
+
+
+def find_key_owner(api_key, user_data=None):
+    if not api_key:
+        return ""
+    data = user_data or load_user_keys()
+    key_info = data.get("keys", {}).get(api_key) or {}
+    return _normalize_email(key_info.get("email"))
+
+
+def user_can_access_key(api_key, user_data=None):
+    owner = find_key_owner(api_key, user_data)
+    current = current_user_email()
+    return bool(current and owner and (is_current_admin() or owner == current))
+
+
+PUBLIC_PATHS = {
+    "/register",
+    "/contribute",
+    "/login",
+    "/api/feishu/login-url",
+    "/feishu/callback",
+    "/api/session",
+    "/api/logout",
+    "/api/feishu/approval-callback",
+    "/callback",
+    "/favicon.ico",
+}
+PUBLIC_PREFIXES = ("/static/",)
+
+ADMIN_PAGE_PREFIXES = ("/admin/",)
+ADMIN_PAGE_PATHS = set()
+ADMIN_API_PATHS = {
+    "/api/accounts",
+    "/api/all-users-stats",
+    "/api/auth-stats",
+    "/api/auth-stats/toggle-auth",
+    "/api/check-expiry",
+    "/api/keys",
+    "/api/send-notification",
+    "/api/sync-usage",
+    "/api/update-key-email",
+}
+
+
+def is_public_request():
+    if request.method == "OPTIONS":
+        return True
+    path = request.path or "/"
+    if path in PUBLIC_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES)
+
+
+def is_admin_request():
+    path = request.path or "/"
+    if path in ADMIN_PAGE_PATHS or any(path.startswith(prefix) for prefix in ADMIN_PAGE_PREFIXES):
+        return True
+    return path in ADMIN_API_PATHS
+
+
+@app.before_request
+def require_portal_login():
+    if is_public_request():
+        return None
+    session_data = current_portal_user()
+    if session_data:
+        if is_admin_request() and not session_data.get("is_admin"):
+            if (request.path or "").startswith("/api/"):
+                return jsonify({"error": "需要管理员权限"}), 403
+            return "需要管理员权限", 403
+        return None
+    if (request.path or "").startswith("/api/"):
+        return jsonify({"error": "未登录", "login_url": "/login"}), 401
+    next_url = request.full_path if request.query_string else request.path
+    return redirect("/login?" + urlencode({"next": _safe_next_url(next_url, "/")}))
+
+
+def upsert_feishu_user(user_info):
+    email = str(user_info.get("email") or "").strip().lower()
+    if not email:
+        return None
+
+    user_data = load_user_keys()
+    users = user_data.setdefault("users", {})
+    existing = users.get(email, {})
+    now = datetime.utcnow().isoformat() + "Z"
+    users[email] = {
+        **existing,
+        "email": email,
+        "name": user_info.get("name") or user_info.get("en_name") or existing.get("name") or email,
+        "api_keys": existing.get("api_keys", []),
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "last_login_at": now,
+        "feishu_open_id": user_info.get("open_id") or existing.get("feishu_open_id", ""),
+        "feishu_user_id": user_info.get("user_id") or existing.get("feishu_user_id", ""),
+        "feishu_union_id": user_info.get("union_id") or existing.get("feishu_union_id", ""),
+        "avatar_url": user_info.get("avatar_url") or existing.get("avatar_url", ""),
+    }
+    if save_user_keys(user_data):
+        return users[email]
+    return None
+
+
+def claim_api_keys_for_user(email, name, api_keys):
+    email = str(email or "").strip().lower()
+    if not email:
+        return {"claimed": 0, "moved": 0, "created": 0, "keys": []}
+
+    cleaned = []
+    seen = set()
+    for api_key in api_keys or []:
+        text = str(api_key or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+        if len(cleaned) >= 50:
+            break
+
+    if not cleaned:
+        return {"claimed": 0, "moved": 0, "created": 0, "keys": []}
+
+    user_data = load_user_keys()
+    users = user_data.setdefault("users", {})
+    keys_index = user_data.setdefault("keys", {})
+    now = datetime.utcnow().isoformat() + "Z"
+    user = users.setdefault(email, {
+        "email": email,
+        "name": name or email,
+        "api_keys": [],
+        "created_at": now,
+    })
+    user["name"] = user.get("name") or name or email
+    user.setdefault("api_keys", [])
+
+    moved = 0
+    created = 0
+    claimed = []
+    for api_key in cleaned:
+        key_info = keys_index.get(api_key)
+        old_email = str((key_info or {}).get("email", "")).strip().lower()
+        if key_info is None:
+            key_info = {
+                "email": email,
+                "label": "浏览器导入",
+                "model_group": "common",
+                "source": "browser_claim",
+                "created_at": now,
+            }
+            keys_index[api_key] = key_info
+            created += 1
+        else:
+            if old_email and old_email != email:
+                old_user = users.get(old_email)
+                if old_user:
+                    old_user["api_keys"] = [key for key in old_user.get("api_keys", []) if key != api_key]
+                db.reassign_user_usage_key(api_key, email)
+                moved += 1
+            key_info["email"] = email
+            key_info["updated_at"] = now
+        if api_key not in user["api_keys"]:
+            user["api_keys"].append(api_key)
+        claimed.append(api_key)
+
+    pool = load_key_pool()
+    for api_key in claimed:
+        if api_key in pool.get("assigned", {}):
+            pool["assigned"][api_key] = email
+    saved = save_user_keys(user_data)
+    if saved:
+        save_key_pool(pool)
+    return {"claimed": len(claimed), "moved": moved, "created": created, "keys": claimed}
+
+
+def feishu_oauth_redirect_uri():
+    return f"{_public_base_url()}/feishu/callback"
+
+
+def build_feishu_login_url(next_url="/"):
+    state = portal_state.create_oauth_state({"next": _safe_next_url(next_url, "/")})
+    query = urlencode({
+        "client_id": config.FEISHU_APP_ID,
+        "response_type": "code",
+        "redirect_uri": feishu_oauth_redirect_uri(),
+        "state": state,
+    })
+    return f"https://accounts.feishu.cn/open-apis/authen/v1/authorize?{query}"
+
+
+def exchange_feishu_login_code(code):
+    try:
+        token_resp = requests.post(
+            "https://open.feishu.cn/open-apis/authen/v2/oauth/token",
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            json={
+                "grant_type": "authorization_code",
+                "client_id": config.FEISHU_APP_ID,
+                "client_secret": config.FEISHU_APP_SECRET,
+                "code": code,
+                "redirect_uri": feishu_oauth_redirect_uri(),
+            },
+            timeout=10,
+        )
+        token_data = token_resp.json()
+        if token_data.get("code") != 0:
+            err = token_data.get("error_description") or token_data.get("msg") or token_data.get("error") or "飞书授权换 token 失败"
+            print(f"[FeishuLogin] token exchange failed: code={token_data.get('code')} error={err}")
+            return None, err
+        access_token = token_data.get("access_token") or (token_data.get("data") or {}).get("access_token")
+        if not access_token:
+            print(f"[FeishuLogin] token exchange missing access_token: keys={list(token_data.keys())}")
+            return None, "飞书授权响应缺少 access_token"
+
+        info_resp = requests.get(
+            "https://open.feishu.cn/open-apis/authen/v1/user_info",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        info_data = info_resp.json()
+        if info_data.get("code") != 0:
+            err = info_data.get("error_description") or info_data.get("msg") or info_data.get("error") or "获取飞书用户信息失败"
+            print(f"[FeishuLogin] user info failed: code={info_data.get('code')} error={err}")
+            return None, err
+        user = info_data.get("data") or {}
+        if not user.get("email") and user.get("enterprise_email"):
+            user["email"] = user["enterprise_email"]
+        if not user.get("email"):
+            return None, "飞书用户信息没有返回邮箱，请检查应用权限"
+        return user, None
+    except Exception as exc:
+        return None, f"飞书登录失败: {exc}"
+
+
+@app.route("/api/feishu/login-url")
+def feishu_login_url():
+    next_url = _safe_next_url(request.args.get("next", "/"), "/")
+    if not config.FEISHU_APP_ID or not config.FEISHU_APP_SECRET:
+        return jsonify({"error": "Feishu app credentials are not configured"}), 500
+    return jsonify({"url": build_feishu_login_url(next_url), "redirect_uri": feishu_oauth_redirect_uri()})
+
+
+@app.route("/feishu/callback")
+def feishu_login_callback():
+    code = request.args.get("code", "").strip()
+    state = request.args.get("state", "").strip()
+    state_payload = portal_state.consume_oauth_state(state)
+    if not code or state_payload is None:
+        return redirect("/login?login_error=invalid_state")
+
+    user_info, error = exchange_feishu_login_code(code)
+    if error:
+        return redirect(f"/login?login_error={quote(error)}")
+
+    user = upsert_feishu_user(user_info)
+    if not user:
+        return redirect("/login?login_error=save_failed")
+
+    ttl = max(1, int(getattr(config, "KEY_PORTAL_SESSION_DAYS", 30) or 30)) * 24 * 3600
+    session_id = portal_state.create_session(
+        user["email"],
+        user,
+        ttl_seconds=ttl,
+        request_meta={"ip": request.remote_addr or "", "user_agent": request.headers.get("User-Agent", "")[:300]},
+    )
+    response = redirect(_safe_next_url(state_payload.get("next"), "/"))
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_id,
+        max_age=ttl,
+        httponly=True,
+        secure=request.is_secure,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
+
+@app.route("/api/session")
+def api_session():
+    session_data = current_portal_user()
+    if not session_data:
+        return jsonify({"authenticated": False})
+    return jsonify({"authenticated": True, **session_data})
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    portal_state.destroy_session(request.cookies.get(SESSION_COOKIE_NAME, ""))
+    response = jsonify({"success": True})
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return response
+
+
+@app.route("/api/session/claim-local-keys", methods=["POST"])
+def api_claim_local_keys():
+    session_data = current_portal_session()
+    if not session_data:
+        return jsonify({"error": "未登录"}), 401
+    body = request.get_json(silent=True) or {}
+    raw_keys = body.get("keys", [])
+    if not isinstance(raw_keys, list):
+        return jsonify({"error": "keys must be a list"}), 400
+    user = session_data.get("user") or {}
+    result = claim_api_keys_for_user(session_data["email"], user.get("name") or session_data["email"], raw_keys)
+    return jsonify({"success": True, **result})
+
+
 @app.route("/api/register-key", methods=["POST"])
 def register_key():
     """Register a new user and assign an API key."""
     data = request.get_json() or {}
-    email = data.get("email", "").strip().lower()
-    name = data.get("name", "").strip()
+    session_data = current_portal_user()
+    email = _normalize_email((session_data or {}).get("email"))
+    name = current_user_name() or email
     label = data.get("label", "").strip()
-    model_group = normalize_model_group(data.get("model_group", "common"))
+    raw_model_group = str(data.get("model_group", "common") or "common").strip().lower()
+    if raw_model_group == "gemini":
+        return jsonify({"error": "Gemini Key 暂停申请"}), 400
+    model_group = normalize_model_group(raw_model_group)
+    reason = data.get("reason", "").strip()
+    daily_budget = data.get("daily_budget", "").strip()
 
     if not email:
         return jsonify({"error": "请输入邮箱"}), 400
@@ -3136,7 +4950,26 @@ def register_key():
     if not label:
         label = name or email
 
-    # Assign key
+    if approval.requires_approval(model_group):
+        if not reason:
+            return jsonify({"error": "申请该模型组需要填写申请理由"}), 400
+        if not daily_budget:
+            return jsonify({"error": "请填写额度"}), 400
+        instance_id, error = approval.create_approval_request(
+            email, name, label, model_group, reason, daily_budget
+        )
+        if error:
+            return jsonify({"error": error}), 500
+        return jsonify({
+            "success": True,
+            "pending_approval": True,
+            "instance_id": instance_id,
+            "email": email,
+            "model_group": model_group,
+            "message": "已提交审批，审批通过后将自动生成 Key 并通过飞书通知你。"
+        })
+
+    # No approval needed — issue key directly
     api_key, error = assign_key_to_user(email, name, label, model_group)
 
     if error:
@@ -3150,6 +4983,118 @@ def register_key():
         "model_group": model_group,
         "message": "API Key 申请成功！"
     })
+
+
+@app.route("/api/keys/topup", methods=["POST"])
+def request_key_topup():
+    data = request.get_json() or {}
+    api_key = data.get("api_key", "").strip()
+    reason = data.get("reason", "").strip()
+    additional_budget = _parse_positive_budget(data.get("additional_budget"))
+
+    if not api_key:
+        return jsonify({"error": "请提供 API Key"}), 400
+    if additional_budget is None:
+        return jsonify({"error": "请填写有效的追加额度"}), 400
+    if not reason:
+        return jsonify({"error": "请填写追加额度原因"}), 400
+
+    user_data = load_user_keys()
+    key_info = user_data.get("keys", {}).get(api_key)
+    if not key_info:
+        return jsonify({"error": "Key 不存在"}), 404
+
+    email = str(key_info.get("email", "")).strip().lower()
+    if not user_can_access_email(email):
+        return jsonify({"error": "不能操作其他用户的 Key"}), 403
+    user = user_data.get("users", {}).get(email, {})
+    if api_key not in user.get("api_keys", []):
+        return jsonify({"error": "Key 归属校验失败"}), 403
+
+    model_group = normalize_model_group(key_info.get("model_group", "common"))
+    if not approval.requires_approval(model_group):
+        return jsonify({"error": "该类型 Key 不需要申请追加额度"}), 400
+    if key_info.get("source") != "litellm":
+        return jsonify({"error": "该 Key 不支持自动追加额度"}), 400
+
+    pending = approval.get_pending_approvals(email)
+    for row in pending:
+        if row.get("status") != "pending" or row.get("request_type") != approval.REQUEST_TYPE_QUOTA_TOPUP:
+            continue
+        try:
+            payload = json.loads(row.get("request_payload") or "{}")
+        except Exception:
+            payload = {}
+        if payload.get("api_key") == api_key:
+            return jsonify({"error": "该 Key 已有待审批的追加额度申请"}), 400
+
+    current_budget = _key_budget(key_info, api_key)
+    if current_budget is None:
+        return jsonify({"error": "无法识别该 Key 当前预算"}), 400
+
+    label = key_info.get("label", "")
+    name = user.get("name") or email
+    instance_id, error = approval.create_quota_topup_request(
+        email, name, label, model_group, api_key, current_budget, additional_budget, reason
+    )
+    if error:
+        return jsonify({"error": error}), 500
+
+    return jsonify({
+        "success": True,
+        "pending_approval": True,
+        "instance_id": instance_id,
+        "email": email,
+        "model_group": model_group,
+        "current_budget": current_budget,
+        "additional_budget": additional_budget,
+        "new_budget": round(current_budget + additional_budget, 6),
+        "message": "已提交追加额度审批，审批通过后会自动更新当前 Key。"
+    })
+
+
+@app.route("/api/feishu/approval-callback", methods=["POST"])
+def feishu_approval_callback():
+    """Receive Feishu approval status change webhook."""
+    body_bytes = request.get_data()
+    body_str = body_bytes.decode("utf-8")
+
+    try:
+        payload = json.loads(body_str)
+    except Exception:
+        return jsonify({"code": 1, "msg": "invalid json"}), 400
+
+    # Handle Feishu URL verification challenge
+    if payload.get("type") == "url_verification":
+        return jsonify({"challenge": payload.get("challenge", "")})
+
+    # Verify token if configured
+    header = payload.get("header", {})
+    token = header.get("token", "")
+    if not approval.verify_callback_token(token):
+        return jsonify({"code": 2, "msg": "token mismatch"}), 403
+
+    event_type = header.get("event_type", "") or payload.get("event", {}).get("type", "")
+    if "approval_instance" in event_type or "approval" in event_type:
+        success, msg = approval.handle_approval_callback(payload)
+        return jsonify({"code": 0, "msg": msg})
+
+    return jsonify({"code": 0, "msg": "ignored"})
+
+
+@app.route("/api/my-approvals", methods=["POST"])
+def get_my_approvals():
+    """Get approval history for a user."""
+    data = request.get_json() or {}
+    email = _normalize_email(data.get("email"))
+    if not is_current_admin():
+        email = current_user_email()
+    if not email:
+        return jsonify({"error": "请输入邮箱"}), 400
+    if not user_can_access_email(email):
+        return jsonify({"error": "不能查看其他用户审批记录"}), 403
+    rows = approval.get_pending_approvals(email)
+    return jsonify({"approvals": rows})
 
 
 @app.route("/api/update-key-email", methods=["POST"])
@@ -3175,33 +5120,41 @@ def update_key_email():
 @app.route("/api/my-keys", methods=["POST"])
 def get_my_keys():
     """Get all keys for a user by email."""
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
+    data = request.get_json(silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    if not is_current_admin():
+        email = current_user_email()
 
     if not email:
         return jsonify({"error": "请输入邮箱"}), 400
+    if not user_can_access_email(email):
+        return jsonify({"error": "不能查看其他用户的 Key"}), 403
 
     user_data = load_user_keys()
     user = user_data["users"].get(email)
 
     if not user:
-        return jsonify({"error": "未找到该用户"}), 404
+        return jsonify({"email": email, "name": email, "keys": []})
 
-    # Get stats for each key
-    stats_data, _ = get_usage_stats_cached()
-    apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
+    key_totals = {row.get("key_id"): row for row in litellm_user_key_totals(email, user.get("api_keys", []))}
 
     keys_info = []
     for api_key in user.get("api_keys", []):
         key_meta = user_data["keys"].get(api_key, {})
-        key_stats = apis.get(api_key, {})
+        key_stats = key_totals.get(api_key) or key_totals.get(key_meta.get("label", "")) or {}
 
+        max_budget = _key_budget(key_meta, api_key)
         keys_info.append({
             "key": api_key,
             "label": key_meta.get("label", ""),
+            "model_group": key_meta.get("model_group", "common"),
+            "source": key_meta.get("source", "cliproxy"),
+            "max_budget": max_budget,
+            "can_topup": key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
             "created_at": key_meta.get("created_at", ""),
             "total_requests": key_stats.get("total_requests", 0),
-            "total_tokens": key_stats.get("total_tokens", 0)
+            "total_tokens": key_stats.get("total_tokens", 0),
+            "spend_usd": round(_float_usage_value(key_stats.get("spend_usd", 0)), 6),
         })
 
     return jsonify({
@@ -3214,11 +5167,13 @@ def get_my_keys():
 @app.route("/api/revoke-key", methods=["POST"])
 def revoke_key_api():
     """Revoke a user's API key."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     api_key = data.get("key", "").strip()
 
     if not api_key:
         return jsonify({"error": "请提供 API Key"}), 400
+    if not user_can_access_key(api_key):
+        return jsonify({"error": "不能撤销其他用户的 Key"}), 403
 
     success, error = revoke_key(api_key)
 
@@ -3235,6 +5190,8 @@ def revoke_key_api():
 def api_get_user_stats(email):
     """Get detailed statistics for a specific user."""
     email = email.strip().lower()
+    if not user_can_access_email(email):
+        return jsonify({"error": "不能查看其他用户的统计"}), 403
 
     stats = get_user_stats(email)
 
@@ -3262,7 +5219,8 @@ def build_all_users_stats_response(aggregation, live_today=False):
     output_tokens = sum(s.get("output_tokens", 0) for s in stats)
     cached_tokens = sum(s.get("cached_tokens", 0) for s in stats)
     reasoning_tokens = sum(s.get("reasoning_tokens", 0) for s in stats)
-    token_breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
+    spend_usd = round(sum(_float_usage_value(s.get("spend_usd", 0)) for s in stats), 6)
+    token_breakdown = build_litellm_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
     if aggregation in ("day", "month", "year"):
         unique_keys = {
             api_key
@@ -3294,13 +5252,11 @@ def build_all_users_stats_response(aggregation, live_today=False):
             "reasoning_tokens": reasoning_tokens,
             "token_breakdown": token_breakdown,
             "estimated_cost_usd": token_breakdown["cost_usd"],
+            "spend_usd": spend_usd,
             "total_keys": total_keys,
         },
         "aggregation": aggregation,
-        "token_pricing": {
-            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
-            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
-        },
+        "token_pricing": litellm_spend_pricing_metadata(),
     }
 
 
@@ -3329,7 +5285,7 @@ def key_pool_status():
 @app.route("/api/query-by-key", methods=["POST"])
 def query_by_key():
     """Query user info by API key."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     api_key = data.get("api_key", "").strip()
 
     if not api_key:
@@ -3341,6 +5297,8 @@ def query_by_key():
     key_info = user_data["keys"].get(api_key)
     if not key_info:
         return jsonify({"error": "Key 不存在"}), 404
+    if not user_can_access_key(api_key, user_data):
+        return jsonify({"error": "不能查看其他用户的 Key"}), 403
 
     identifier = key_info["email"]
     user = user_data["users"].get(identifier)
@@ -3348,67 +5306,47 @@ def query_by_key():
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
-    # Get stats for all keys of this user.
-    # Keep top-level totals scoped to the queried key so older cached pages
-    # still show per-key usage in the "My keys" history cards.
-    stats_data, _ = get_usage_stats_cached()
-    apis = stats_data.get("usage", {}).get("apis", {}) if stats_data else {}
-
     today = beijing_today()
+    key_rows = litellm_user_key_totals(identifier, user.get("api_keys", []))
+    key_totals = {row.get("key_id"): row for row in key_rows}
+
     user_total_requests = 0
     user_total_tokens = 0
     user_total_input_tokens = 0
     user_total_output_tokens = 0
     user_total_cached_tokens = 0
     user_total_reasoning_tokens = 0
+    user_spend_usd = 0.0
     user_today_requests = 0
     user_today_tokens = 0
     user_today_input_tokens = 0
     user_today_output_tokens = 0
     user_today_cached_tokens = 0
     user_today_reasoning_tokens = 0
-    queried_key_requests = 0
-    queried_key_tokens = 0
-    queried_key_input_tokens = 0
-    queried_key_output_tokens = 0
-    queried_key_cached_tokens = 0
-    queried_key_reasoning_tokens = 0
-    queried_key_today_requests = 0
-    queried_key_today_tokens = 0
-    queried_key_today_input_tokens = 0
-    queried_key_today_output_tokens = 0
-    queried_key_today_cached_tokens = 0
-    queried_key_today_reasoning_tokens = 0
+    user_today_spend_usd = 0.0
+    queried_key = {}
     all_keys = []
-    today_key_db_stats = db.get_user_key_usage_for_date(identifier, today)
 
     for key in user.get("api_keys", []):
         key_meta = user_data["keys"].get(key, {})
-        key_stats = apis.get(key, {})
-        today_stats = key_usage_for_date(key_stats, today)
-
-        key_db_rows = db.get_user_key_usage_range(identifier, key, "1970-01-01", today)
-        db_total_requests = sum(int(row.get("requests", 0) or 0) for row in key_db_rows)
-        db_total_tokens = sum(int(row.get("total_tokens", 0) or 0) for row in key_db_rows)
-        db_input_tokens = sum(int(row.get("input_tokens", 0) or 0) for row in key_db_rows)
-        db_output_tokens = sum(int(row.get("output_tokens", 0) or 0) for row in key_db_rows)
-        db_cached_tokens = sum(int(row.get("cached_tokens", 0) or 0) for row in key_db_rows)
-        db_reasoning_tokens = sum(int(row.get("reasoning_tokens", 0) or 0) for row in key_db_rows)
-        today_db_stats = today_key_db_stats.get(key, {})
-
-        requests = max(int(key_stats.get("total_requests", 0) or 0), db_total_requests)
-        tokens = max(int(key_stats.get("total_tokens", 0) or 0), db_total_tokens)
-        input_tokens = db_input_tokens
-        output_tokens = db_output_tokens
-        cached_tokens = db_cached_tokens
-        reasoning_tokens = db_reasoning_tokens
-        today_requests = max(int(today_stats.get("total_requests", 0) or 0), int(today_db_stats.get("total_requests", 0) or 0))
-        today_tokens = max(int(today_stats.get("total_tokens", 0) or 0), int(today_db_stats.get("total_tokens", 0) or 0))
-        today_input_tokens = max(int(today_stats.get("input_tokens", 0) or 0), int(today_db_stats.get("input_tokens", 0) or 0))
-        today_output_tokens = max(int(today_stats.get("output_tokens", 0) or 0), int(today_db_stats.get("output_tokens", 0) or 0))
-        today_cached_tokens = max(int(today_stats.get("cached_tokens", 0) or 0), int(today_db_stats.get("cached_tokens", 0) or 0))
-        today_reasoning_tokens = max(int(today_stats.get("reasoning_tokens", 0) or 0), int(today_db_stats.get("reasoning_tokens", 0) or 0))
-        breakdown = build_token_breakdown(tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
+        key_stats = key_totals.get(key) or key_totals.get(key_meta.get("label", "")) or {}
+        max_budget = _key_budget(key_meta, key)
+        requests = _int_usage_value(key_stats.get("total_requests"))
+        tokens = _int_usage_value(key_stats.get("total_tokens"))
+        input_tokens = _int_usage_value(key_stats.get("input_tokens"))
+        output_tokens = _int_usage_value(key_stats.get("output_tokens"))
+        cached_tokens = _int_usage_value(key_stats.get("cached_tokens"))
+        reasoning_tokens = _int_usage_value(key_stats.get("reasoning_tokens"))
+        spend_usd = round(_float_usage_value(key_stats.get("spend_usd")), 6)
+        today_requests = _int_usage_value(key_stats.get("today_requests"))
+        today_tokens = _int_usage_value(key_stats.get("today_tokens"))
+        today_input_tokens = _int_usage_value(key_stats.get("today_input_tokens"))
+        today_output_tokens = _int_usage_value(key_stats.get("today_output_tokens"))
+        today_cached_tokens = _int_usage_value(key_stats.get("today_cached_tokens"))
+        today_reasoning_tokens = _int_usage_value(key_stats.get("today_reasoning_tokens"))
+        today_spend_usd = round(_float_usage_value(key_stats.get("today_spend_usd")), 6)
+        breakdown = build_litellm_token_breakdown(tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
+        today_breakdown = build_litellm_token_breakdown(today_tokens, today_input_tokens, today_output_tokens, today_cached_tokens, today_reasoning_tokens, today_spend_usd)
 
         user_total_requests += requests
         user_total_tokens += tokens
@@ -3416,30 +5354,22 @@ def query_by_key():
         user_total_output_tokens += output_tokens
         user_total_cached_tokens += cached_tokens
         user_total_reasoning_tokens += reasoning_tokens
+        user_spend_usd += spend_usd
         user_today_requests += today_requests
         user_today_tokens += today_tokens
         user_today_input_tokens += today_input_tokens
         user_today_output_tokens += today_output_tokens
         user_today_cached_tokens += today_cached_tokens
         user_today_reasoning_tokens += today_reasoning_tokens
-        if key == api_key:
-            queried_key_requests = requests
-            queried_key_tokens = tokens
-            queried_key_input_tokens = input_tokens
-            queried_key_output_tokens = output_tokens
-            queried_key_cached_tokens = cached_tokens
-            queried_key_reasoning_tokens = reasoning_tokens
-            queried_key_today_requests = today_requests
-            queried_key_today_tokens = today_tokens
-            queried_key_today_input_tokens = today_input_tokens
-            queried_key_today_output_tokens = today_output_tokens
-            queried_key_today_cached_tokens = today_cached_tokens
-            queried_key_today_reasoning_tokens = today_reasoning_tokens
+        user_today_spend_usd += today_spend_usd
 
-        all_keys.append({
+        item = {
             "key": key,
             "label": key_meta.get("label", ""),
             "model_group": key_meta.get("model_group", "common"),
+            "source": key_meta.get("source", "cliproxy"),
+            "max_budget": max_budget,
+            "can_topup": key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
             "created_at": key_meta.get("created_at", ""),
             "total_requests": requests,
             "total_tokens": tokens,
@@ -3447,6 +5377,7 @@ def query_by_key():
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "spend_usd": spend_usd,
             "token_breakdown": breakdown,
             "estimated_cost_usd": breakdown["cost_usd"],
             "today_requests": today_requests,
@@ -3455,35 +5386,43 @@ def query_by_key():
             "today_output_tokens": today_output_tokens,
             "today_cached_tokens": today_cached_tokens,
             "today_reasoning_tokens": today_reasoning_tokens,
-            "today_token_breakdown": build_token_breakdown(today_tokens, today_input_tokens, today_output_tokens, today_cached_tokens, today_reasoning_tokens),
-        })
+            "today_spend_usd": today_spend_usd,
+            "today_token_breakdown": today_breakdown,
+        }
+        if key == api_key:
+            queried_key = item
+        all_keys.append(item)
 
-    queried_breakdown = build_token_breakdown(queried_key_tokens, queried_key_input_tokens, queried_key_output_tokens, queried_key_cached_tokens, queried_key_reasoning_tokens)
-    user_breakdown = build_token_breakdown(user_total_tokens, user_total_input_tokens, user_total_output_tokens, user_total_cached_tokens, user_total_reasoning_tokens)
+    queried_breakdown = queried_key.get("token_breakdown") or build_litellm_token_breakdown(0, 0, 0, 0, 0, 0)
+    user_breakdown = build_litellm_token_breakdown(user_total_tokens, user_total_input_tokens, user_total_output_tokens, user_total_cached_tokens, user_total_reasoning_tokens, user_spend_usd)
+    user_today_breakdown = build_litellm_token_breakdown(user_today_tokens, user_today_input_tokens, user_today_output_tokens, user_today_cached_tokens, user_today_reasoning_tokens, user_today_spend_usd)
     return jsonify({
         "identifier": identifier,
         "date": today,
-        "total_requests": queried_key_requests,
-        "total_tokens": queried_key_tokens,
-        "input_tokens": queried_key_input_tokens,
-        "output_tokens": queried_key_output_tokens,
-        "cached_tokens": queried_key_cached_tokens,
-        "reasoning_tokens": queried_key_reasoning_tokens,
+        "total_requests": queried_key.get("total_requests", 0),
+        "total_tokens": queried_key.get("total_tokens", 0),
+        "input_tokens": queried_key.get("input_tokens", 0),
+        "output_tokens": queried_key.get("output_tokens", 0),
+        "cached_tokens": queried_key.get("cached_tokens", 0),
+        "reasoning_tokens": queried_key.get("reasoning_tokens", 0),
+        "spend_usd": queried_key.get("spend_usd", 0),
         "token_breakdown": queried_breakdown,
         "estimated_cost_usd": queried_breakdown["cost_usd"],
-        "today_requests": queried_key_today_requests,
-        "today_tokens": queried_key_today_tokens,
-        "today_input_tokens": queried_key_today_input_tokens,
-        "today_output_tokens": queried_key_today_output_tokens,
-        "today_cached_tokens": queried_key_today_cached_tokens,
-        "today_reasoning_tokens": queried_key_today_reasoning_tokens,
-        "today_token_breakdown": build_token_breakdown(queried_key_today_tokens, queried_key_today_input_tokens, queried_key_today_output_tokens, queried_key_today_cached_tokens, queried_key_today_reasoning_tokens),
+        "today_requests": queried_key.get("today_requests", 0),
+        "today_tokens": queried_key.get("today_tokens", 0),
+        "today_input_tokens": queried_key.get("today_input_tokens", 0),
+        "today_output_tokens": queried_key.get("today_output_tokens", 0),
+        "today_cached_tokens": queried_key.get("today_cached_tokens", 0),
+        "today_reasoning_tokens": queried_key.get("today_reasoning_tokens", 0),
+        "today_spend_usd": queried_key.get("today_spend_usd", 0),
+        "today_token_breakdown": queried_key.get("today_token_breakdown") or build_litellm_token_breakdown(0, 0, 0, 0, 0, 0),
         "user_total_requests": user_total_requests,
         "user_total_tokens": user_total_tokens,
         "user_input_tokens": user_total_input_tokens,
         "user_output_tokens": user_total_output_tokens,
         "user_cached_tokens": user_total_cached_tokens,
         "user_reasoning_tokens": user_total_reasoning_tokens,
+        "user_spend_usd": round(user_spend_usd, 6),
         "user_token_breakdown": user_breakdown,
         "user_estimated_cost_usd": user_breakdown["cost_usd"],
         "user_today_requests": user_today_requests,
@@ -3492,19 +5431,22 @@ def query_by_key():
         "user_today_output_tokens": user_today_output_tokens,
         "user_today_cached_tokens": user_today_cached_tokens,
         "user_today_reasoning_tokens": user_today_reasoning_tokens,
-        "user_today_token_breakdown": build_token_breakdown(user_today_tokens, user_today_input_tokens, user_today_output_tokens, user_today_cached_tokens, user_today_reasoning_tokens),
+        "user_today_spend_usd": round(user_today_spend_usd, 6),
+        "user_today_token_breakdown": user_today_breakdown,
         "all_keys": all_keys,
-        "token_pricing": {
-            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
-            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
-        },
+        "token_pricing": litellm_spend_pricing_metadata(),
     })
 
 
 @app.route("/api/user-keys")
 def api_get_user_keys():
-    email = request.args.get("email", "").strip()
+    email = _normalize_email(request.args.get("email", ""))
     date = request.args.get("date", "").strip()
+
+    if not is_current_admin():
+        if email and email != current_user_email():
+            return jsonify({"error": "不能查看其他用户的 Key"}), 403
+        email = current_user_email()
 
     if not email:
         return jsonify({"error": "请提供用户标识"}), 400
@@ -3513,28 +5455,44 @@ def api_get_user_keys():
 
     user_data = load_user_keys()
     user = user_data.get("users", {}).get(email)
-    date_stats = db.get_user_key_usage_for_date(email, date) if date else {}
     key_entries = find_user_key_entries(user_data, email)
 
-    if not user and not date_stats and not key_entries:
+    if not user and not key_entries:
         return jsonify({"error": "用户不存在"}), 404
 
-    api_keys = [entry.get("key", "") for entry in key_entries] or list(date_stats.keys())
-    if date:
-        stats_by_key = date_stats
-    else:
-        stats_data, _ = get_usage_stats_cached()
-        stats_by_key = (stats_data.get("usage", {}).get("apis", {}) if stats_data else {})
+    api_keys = [entry.get("key", "") for entry in key_entries if entry.get("key", "")]
+    stats_rows = litellm_user_key_totals(email, api_keys)
+    stats_by_key = {row.get("key_id"): row for row in stats_rows}
 
     keys_info = []
     for api_key in api_keys:
         key_meta = user_data.get("keys", {}).get(api_key, {})
-        key_stats = stats_by_key.get(api_key, {})
-        breakdown = build_token_breakdown(key_stats.get("total_tokens", 0), key_stats.get("input_tokens", 0), key_stats.get("output_tokens", 0), key_stats.get("cached_tokens", 0), key_stats.get("reasoning_tokens", 0))
+        key_stats = stats_by_key.get(api_key) or stats_by_key.get(key_meta.get("label", "")) or {}
+        if date:
+            series = {row.get("date"): row for row in litellm_key_timeseries(api_key, date, date)}
+            day_stats = series.get(date, {})
+            key_stats = {
+                **key_stats,
+                "total_requests": day_stats.get("requests", 0),
+                "success_count": day_stats.get("success_count", 0),
+                "failure_count": day_stats.get("failure_count", 0),
+                "total_tokens": day_stats.get("total_tokens", 0),
+                "input_tokens": day_stats.get("input_tokens", 0),
+                "output_tokens": day_stats.get("output_tokens", 0),
+                "cached_tokens": day_stats.get("cached_tokens", 0),
+                "reasoning_tokens": day_stats.get("reasoning_tokens", 0),
+                "spend_usd": day_stats.get("spend_usd", 0),
+            }
+        spend_usd = round(_float_usage_value(key_stats.get("spend_usd", 0)), 6)
+        breakdown = build_litellm_token_breakdown(key_stats.get("total_tokens", 0), key_stats.get("input_tokens", 0), key_stats.get("output_tokens", 0), key_stats.get("cached_tokens", 0), key_stats.get("reasoning_tokens", 0), spend_usd)
+        max_budget = _key_budget(key_meta, api_key)
         keys_info.append({
             "key": api_key,
             "label": key_meta.get("label", ""),
             "model_group": key_meta.get("model_group", "common"),
+            "source": key_meta.get("source", "cliproxy"),
+            "max_budget": max_budget,
+            "can_topup": key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
             "created_at": key_meta.get("created_at", ""),
             "total_requests": key_stats.get("total_requests", 0),
             "success_count": key_stats.get("success_count", 0),
@@ -3544,6 +5502,7 @@ def api_get_user_keys():
             "output_tokens": key_stats.get("output_tokens", 0),
             "cached_tokens": key_stats.get("cached_tokens", 0),
             "reasoning_tokens": key_stats.get("reasoning_tokens", 0),
+            "spend_usd": spend_usd,
             "token_breakdown": breakdown,
             "estimated_cost_usd": breakdown["cost_usd"],
         })
@@ -3554,12 +5513,144 @@ def api_get_user_keys():
         "name": (user or {}).get("name", email),
         "date": date,
         "keys": keys_info,
+        "token_pricing": litellm_spend_pricing_metadata(),
+    })
+
+
+@app.route("/api/user-monitor/recent-requests")
+def api_user_monitor_recent_requests():
+    email = _normalize_email(request.args.get("email", ""))
+    api_key = request.args.get("api_key", "").strip()
+    try:
+        hours = int(request.args.get("hours", "24") or "24")
+    except ValueError:
+        hours = 24
+    try:
+        limit = int(request.args.get("limit", "100") or "100")
+    except ValueError:
+        limit = 100
+
+    if not email and not api_key:
+        return jsonify({"error": "请提供 email 或 API Key"}), 400
+
+    user_data = load_user_keys()
+    owner = ""
+    if api_key:
+        key_info = user_data.get("keys", {}).get(api_key)
+        if not key_info:
+            return jsonify({"error": "Key 不存在"}), 404
+        owner = _normalize_email(key_info.get("email"))
+        if not user_can_access_key(api_key, user_data):
+            return jsonify({"error": "不能查看其他用户的 Key"}), 403
+        if email and owner and owner != email:
+            return jsonify({"error": "该 Key 不属于该用户"}), 403
+    else:
+        if not user_can_access_email(email):
+            return jsonify({"error": "不能查看其他用户的监控"}), 403
+        owner = email
+
+    rows = []
+    for row in litellm_recent_requests(api_key=api_key, email=owner if not api_key else "", hours=hours, limit=limit):
+        spend_usd = round(_float_usage_value(row.get("spend_usd", 0)), 6)
+        total_tokens = int(row.get("total_tokens", 0) or 0)
+        input_tokens = int(row.get("input_tokens", 0) or 0)
+        output_tokens = int(row.get("output_tokens", 0) or 0)
+        cached_tokens = int(row.get("cached_tokens", 0) or 0)
+        reasoning_tokens = int(row.get("reasoning_tokens", 0) or 0)
+        breakdown = build_litellm_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
+        rows.append({
+            "start_time": row.get("start_time"),
+            "end_time": row.get("end_time"),
+            "key_label": row.get("key_label"),
+            "user_email": row.get("user_email"),
+            "model": row.get("model"),
+            "status": row.get("status"),
+            "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "spend_usd": spend_usd,
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
+            "latency_ms": round(_float_usage_value(row.get("latency_ms", 0)), 2),
+            "call_type": row.get("call_type") or "",
+            "request_id": row.get("request_id") or "",
+            "user_api_base": row.get("user_api_base") or "",
+        })
+
+    return jsonify({
+        "email": owner,
+        "api_key": mask_api_key(api_key) if api_key else "",
+        "hours": max(1, min(hours, 168)),
+        "limit": max(1, min(limit, 500)),
+        "requests": rows,
+        "source": "litellm_spendlogs",
+        "note": "仅返回 LiteLLM 元数据，不包含请求体或响应体。",
+    })
+
+
+@app.route("/api/user-monitor/reconcile")
+def api_user_monitor_reconcile():
+    api_key = request.args.get("api_key", "").strip()
+    try:
+        hours = int(request.args.get("hours", "24") or "24")
+    except ValueError:
+        hours = 24
+    try:
+        limit = int(request.args.get("limit", "500") or "500")
+    except ValueError:
+        limit = 500
+
+    if not api_key:
+        return jsonify({"error": "请提供 API Key"}), 400
+
+    user_data = load_user_keys()
+    key_info = user_data.get("keys", {}).get(api_key)
+    if not key_info:
+        return jsonify({"error": "Key 不存在"}), 404
+    if not user_can_access_key(api_key, user_data):
+        return jsonify({"error": "不能查看其他用户的 Key"}), 403
+
+    litellm_rows = litellm_recent_requests(api_key=api_key, hours=hours, limit=limit)
+    monitor_rows = monitor_log_recent_entries(api_key, hours=hours, limit=limit)
+    litellm_failures = sum(1 for row in litellm_rows if str(row.get("status") or "success").lower() == "failure")
+    monitor_failures = sum(1 for row in monitor_rows if str(row.get("status") or "").startswith(("4", "5")))
+    litellm_models = sorted({str(row.get("model") or "") for row in litellm_rows if row.get("model")})
+    monitor_paths = sorted({str(row.get("url") or "").split("?", 1)[0] for row in monitor_rows if row.get("url")})
+    litellm_count = len(litellm_rows)
+    monitor_count = len(monitor_rows)
+    difference = litellm_count - monitor_count
+    denominator = max(litellm_count, monitor_count, 1)
+
+    return jsonify({
+        "api_key": mask_api_key(api_key),
+        "email": _normalize_email(key_info.get("email")),
+        "hours": max(1, min(hours, 168)),
+        "limit": max(1, min(limit, 5000)),
+        "litellm": {
+            "source": "litellm_spendlogs",
+            "requests": litellm_count,
+            "failures": litellm_failures,
+            "models": litellm_models,
+        },
+        "monitor_logs": {
+            "source": "core_monitor_logs_metadata",
+            "requests": monitor_count,
+            "failures": monitor_failures,
+            "paths": monitor_paths,
+            "log_dir_exists": os.path.isdir(os.path.abspath(MONITOR_LOG_DIR)),
+        },
+        "difference": difference,
+        "difference_ratio": round(abs(difference) / denominator, 6),
+        "within_one_percent": abs(difference) / denominator < 0.01,
+        "note": "monitor_logs 只解析旧日志元数据，不返回请求体或响应体。",
     })
 
 
 @app.route("/api/user-key-timeseries")
 def api_get_user_key_timeseries():
-    email = request.args.get("email", "").strip()
+    email = _normalize_email(request.args.get("email", ""))
     api_key = request.args.get("api_key", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
@@ -3591,7 +5682,9 @@ def api_get_user_key_timeseries():
 
     user_data = load_user_keys()
     key_info = user_data.get("keys", {}).get(api_key, {})
-    owner = key_info.get("email", email)
+    owner = _normalize_email(key_info.get("email", email))
+    if not is_current_admin() and owner != current_user_email():
+        return jsonify({"error": "不能查看其他用户的 Key"}), 403
     if email and owner and owner != email and owner.lower() != email.lower():
         return jsonify({"error": "该 Key 不属于该用户"}), 403
 
@@ -3605,23 +5698,17 @@ def api_get_user_key_timeseries():
     if not key_info:
         return jsonify({"error": "Key 不存在"}), 404
 
-    rows_by_date = {
-        row["date"]: row
-        for row in db.get_user_key_usage_range(owner, api_key, date_from, date_to)
-    }
     buckets = []
-    d = dt_from
-    while d <= dt_to:
-        ds = d.strftime("%Y-%m-%d")
-        row = rows_by_date.get(ds, {})
+    for row in litellm_key_timeseries(api_key, date_from, date_to):
         total_tokens = int(row.get("total_tokens", 0) or 0)
         input_tokens = int(row.get("input_tokens", 0) or 0)
         output_tokens = int(row.get("output_tokens", 0) or 0)
         cached_tokens = int(row.get("cached_tokens", 0) or 0)
         reasoning_tokens = int(row.get("reasoning_tokens", 0) or 0)
-        breakdown = build_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens)
+        spend_usd = round(_float_usage_value(row.get("spend_usd", 0)), 6)
+        breakdown = build_litellm_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
         buckets.append({
-            "date": ds,
+            "date": row.get("date"),
             "requests": int(row.get("requests", 0) or 0),
             "success_count": int(row.get("success_count", 0) or 0),
             "failure_count": int(row.get("failure_count", 0) or 0),
@@ -3630,10 +5717,10 @@ def api_get_user_key_timeseries():
             "output_tokens": output_tokens,
             "cached_tokens": cached_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "spend_usd": spend_usd,
             "token_breakdown": breakdown,
             "estimated_cost_usd": breakdown["cost_usd"],
         })
-        d += timedelta(days=1)
     mode = "daily"
 
     totals = {
@@ -3645,8 +5732,9 @@ def api_get_user_key_timeseries():
         "output_tokens": sum(b["output_tokens"] for b in buckets),
         "cached_tokens": sum(b["cached_tokens"] for b in buckets),
         "reasoning_tokens": sum(b["reasoning_tokens"] for b in buckets),
+        "spend_usd": round(sum(_float_usage_value(b.get("spend_usd", 0)) for b in buckets), 6),
     }
-    totals_breakdown = build_token_breakdown(totals["total_tokens"], totals["input_tokens"], totals["output_tokens"], totals["cached_tokens"], totals["reasoning_tokens"])
+    totals_breakdown = build_litellm_token_breakdown(totals["total_tokens"], totals["input_tokens"], totals["output_tokens"], totals["cached_tokens"], totals["reasoning_tokens"], totals["spend_usd"])
     totals["token_breakdown"] = totals_breakdown
     totals["estimated_cost_usd"] = totals_breakdown["cost_usd"]
 
@@ -3661,10 +5749,7 @@ def api_get_user_key_timeseries():
         "timezone": "Asia/Shanghai",
         "buckets": buckets,
         "totals": totals,
-        "token_pricing": {
-            "usd_per_1m": TOKEN_PRICING_USD_PER_1M,
-            "note": "按 GPT-5.5 API 标准价估算：input $5/1M，cached input $0.5/1M，output $30/1M；reasoning token 通常包含在 output 中，不单独计价。",
-        },
+        "token_pricing": litellm_spend_pricing_metadata(),
     }
     with _user_key_timeseries_cache_lock:
         _user_key_timeseries_cache["data"][cache_key] = {
@@ -3940,7 +6025,7 @@ def broadcast_usage_update():
 
 
 def scheduled_usage_sync():
-    """Scheduled task to sync usage data to CSV and broadcast updates."""
+    """Sync precise LiteLLM usage and broadcast lightweight updates."""
     with app.app_context():
         print(f"[Scheduler] Running usage sync at {datetime.now().isoformat()}")
         sync_usage_from_api()
@@ -3954,10 +6039,39 @@ def scheduled_git_sync():
         git_sync_usage_csv()
 
 
+def scheduled_nlb_health_monitor():
+    """Check NLB node readiness and notify on state changes."""
+    with app.app_context():
+        try:
+            events = nlb_monitor.monitor_once(CLIPROXY_NODES)
+            for event in events:
+                record_nlb_monitor_event(event)
+                print(f"[NLBMonitor] {event.get('node')} -> {event.get('status')}: {event.get('reason')}")
+        except Exception as e:
+            print(f"[NLBMonitor] Error: {e}")
+
+
+def scheduled_usage_record_monitor():
+    """Publish an announcement when today's usage crosses the historical daily record."""
+    with app.app_context():
+        try:
+            saved = check_daily_usage_record()
+            if saved and saved.get("created"):
+                print(f"[Status] Usage record announced: {(saved.get('event') or {}).get('summary')}")
+        except Exception as e:
+            print(f"[Status] Usage record monitor error: {e}")
+
+
 if __name__ == "__main__":
     # Load data on startup
+    print("[Startup] Initializing Key Portal state backend...")
+    portal_state.ensure_schema()
+
     print("[Startup] Initializing database...")
     db.init_database()
+
+    print("[Startup] Initializing approval table...")
+    approval.init_approval_table()
 
     print("[Startup] Loading user keys database...")
     load_user_keys()
@@ -3976,12 +6090,12 @@ if __name__ == "__main__":
         id="expiry_check"
     )
 
-    # Sync usage every 5 minutes
+    # Sync precise LiteLLM aggregates every 5 minutes without full CLIProxyAPI payload pulls.
     scheduler.add_job(
         scheduled_usage_sync,
         "interval",
         minutes=5,
-        id="usage_sync"
+        id="usage_refresh"
     )
 
     # Git sync daily at 00:05
@@ -3993,13 +6107,15 @@ if __name__ == "__main__":
         id="git_sync"
     )
 
-    # Export full CLIProxyAPI snapshots infrequently; the payloads are large.
-    scheduler.add_job(
-        scheduled_snapshot_export,
-        "interval",
-        minutes=60,
-        id="snapshot_export"
-    )
+    # Export full CLIProxyAPI snapshots only when explicitly enabled; these
+    # payloads can be hundreds of MB and are not needed for LiteLLM-backed usage.
+    if config.KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED:
+        scheduler.add_job(
+            scheduled_snapshot_export,
+            "interval",
+            minutes=60,
+            id="snapshot_export"
+        )
 
     # Real-time usage broadcast. Keep this modest: management usage payloads
     # grow with traffic and can create large short-lived objects.
@@ -4012,16 +6128,47 @@ if __name__ == "__main__":
         coalesce=True
     )
 
+    scheduler.add_job(
+        lambda: approval.poll_pending_approvals(),
+        "interval",
+        seconds=30,
+        id="approval_poll",
+        max_instances=1,
+        coalesce=True
+    )
+
+    if config.NLB_MONITOR_ENABLED:
+        scheduler.add_job(
+            scheduled_nlb_health_monitor,
+            "interval",
+            seconds=config.NLB_MONITOR_INTERVAL_SECONDS,
+            id="nlb_health_monitor",
+            max_instances=1,
+            coalesce=True
+        )
+
+    if config.STATUS_USAGE_RECORD_ENABLED:
+        scheduler.add_job(
+            scheduled_usage_record_monitor,
+            "interval",
+            minutes=5,
+            id="usage_record_monitor",
+            max_instances=1,
+            coalesce=True
+        )
+
     scheduler.start()
     print(f"[Scheduler] Started:")
     print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
-    print(f"  - Usage sync:   every 5 min")
+    print(f"  - Usage refresh: every 5 min")
     print(f"  - Git sync:     daily at 00:05")
-    print(f"  - Snapshot:     every 60 min")
+    print(f"  - Snapshot:     {'every 60 min' if config.KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED else 'disabled'}")
     print(f"  - Broadcast:    every 15 sec")
+    print(f"  - Approval poll: every 30 sec")
+    print(f"  - NLB monitor:  {'every ' + str(config.NLB_MONITOR_INTERVAL_SECONDS) + ' sec' if config.NLB_MONITOR_ENABLED else 'disabled'}")
+    print(f"  - Usage record: {'every 5 min' if config.STATUS_USAGE_RECORD_ENABLED else 'disabled'}")
 
-    # Initial sync
-    sync_usage_from_api()
+    # Initial usage sync is manual-only because the full usage payload is large.
 
     # Run Flask app with SocketIO
     print(f"Starting Key Portal on {config.HOST}:{config.PORT} (WebSocket enabled)")
