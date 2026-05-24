@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from urllib.parse import urlparse, parse_qs, quote, urlencode
+from urllib.parse import urlparse, parse_qs, quote, urlencode, parse_qsl, urlsplit, urlunsplit
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_socketio import SocketIO, emit
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -1405,8 +1405,22 @@ def litellm_database_url():
     return str(url or "").strip()
 
 
+def litellm_psycopg_database_url():
+    text = litellm_database_url()
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+    except Exception:
+        return text
+    if not parts.query:
+        return text
+    filtered = [(key, val) for key, val in parse_qsl(parts.query, keep_blank_values=True) if key.lower() != "pgbouncer"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(filtered), parts.fragment))
+
+
 def litellm_psql_json(sql, timeout=15):
-    database_url = litellm_database_url()
+    database_url = litellm_psycopg_database_url()
     if not database_url:
         return None
     try:
@@ -1825,6 +1839,116 @@ def get_user_usage_summary_cached(email, keys=None):
             "last_update": time.time(),
         }
     return {**summary, "cache_age_seconds": 0}
+
+
+def mask_speed_identity(email):
+    prefix = str(email or "").split("@", 1)[0].strip()
+    segment = prefix.split(".", 1)[0].strip() or prefix
+    source = re.sub(r"[^A-Za-z0-9_-]+", "", segment) or "?"
+    return source[:10].upper()
+
+
+def speed_level_for(rate, metric):
+    request_thresholds = [
+        ("步行", 0),
+        ("跑步", 0.2),
+        ("自行车", 0.6),
+        ("电动车", 1.5),
+        ("汽车", 3),
+        ("高铁", 8),
+        ("飞机", 18),
+        ("火箭", 40),
+    ]
+    token_thresholds = [(label, int(threshold * 100000)) for label, threshold in request_thresholds]
+    thresholds = token_thresholds if metric == "tokens" else request_thresholds
+    level_index = 0
+    for idx, (_, threshold) in enumerate(thresholds):
+        if rate >= threshold:
+            level_index = idx
+    next_threshold = thresholds[min(level_index + 1, len(thresholds) - 1)][1]
+    current_threshold = thresholds[level_index][1]
+    if level_index >= len(thresholds) - 1:
+        progress = 100
+    elif next_threshold <= current_threshold:
+        progress = 0
+    else:
+        progress = max(0, min(100, int((rate - current_threshold) * 100 / (next_threshold - current_threshold))))
+    return {"label": thresholds[level_index][0], "index": level_index, "progress": progress}
+
+
+def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
+    email = _normalize_email(email)
+    window_seconds = max(30, min(int(window_seconds or 60), 600))
+    limit = max(3, min(int(limit or 8), 20))
+    identity = litellm_spend_identity_sql()
+    sql = f"""
+WITH rows AS (
+    SELECT
+        lower({identity}) AS email,
+        count(*)::bigint AS requests,
+        coalesce(sum(s.total_tokens), 0)::bigint AS tokens,
+        max(s."endTime") AS last_seen
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE s."endTime" >= now() - ({window_seconds} * interval '1 second')
+    GROUP BY 1
+), ranked AS (
+    SELECT
+        email,
+        requests,
+        tokens,
+        last_seen,
+        row_number() OVER (ORDER BY tokens DESC, requests DESC, email ASC) AS token_rank,
+        row_number() OVER (ORDER BY requests DESC, tokens DESC, email ASC) AS request_rank
+    FROM rows
+    WHERE email IS NOT NULL AND email != '' AND email != 'unknown'
+)
+SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) FROM ranked;
+"""
+    rows = litellm_psql_json(sql, timeout=10) or []
+    built = []
+    current = None
+    for row in rows:
+        row_email = _normalize_email(row.get("email"))
+        tokens = _int_usage_value(row.get("tokens"))
+        requests = _int_usage_value(row.get("requests"))
+        item = {
+            "email_mask": mask_speed_identity(row_email),
+            "is_current_user": row_email == email,
+            "tokens": tokens,
+            "requests": requests,
+            "tokens_per_minute": round(tokens * 60 / window_seconds, 2),
+            "requests_per_minute": round(requests * 60 / window_seconds, 2),
+            "token_rank": _int_usage_value(row.get("token_rank")),
+            "request_rank": _int_usage_value(row.get("request_rank")),
+            "last_seen": row.get("last_seen"),
+        }
+        item["token_level"] = speed_level_for(item["tokens_per_minute"], "tokens")
+        item["request_level"] = speed_level_for(item["requests_per_minute"], "requests")
+        built.append(item)
+        if item["is_current_user"]:
+            current = item
+    if email and not current:
+        current = {
+            "email_mask": mask_speed_identity(email),
+            "is_current_user": True,
+            "tokens": 0,
+            "requests": 0,
+            "tokens_per_minute": 0,
+            "requests_per_minute": 0,
+            "token_rank": None,
+            "request_rank": None,
+            "last_seen": None,
+            "token_level": speed_level_for(0, "tokens"),
+            "request_level": speed_level_for(0, "requests"),
+        }
+    return {
+        "window_seconds": window_seconds,
+        "window_minutes": round(window_seconds / 60, 2),
+        "top": built[:limit],
+        "current_user": current,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def litellm_key_timeseries(api_key, date_from, date_to, email="", hourly=False):
@@ -3411,6 +3535,19 @@ def get_my_usage_summary():
     user = user_data.get("users", {}).get(email, {})
     keys = list(user.get("api_keys", []) or [])
     return jsonify(get_user_usage_summary_cached(email, keys))
+
+
+@app.route("/api/realtime-speed-leaderboard")
+def get_realtime_speed_leaderboard():
+    session_data = current_portal_user()
+    if not session_data:
+        return jsonify({"error": "未登录"}), 401
+    email = _normalize_email(session_data.get("email"))
+    try:
+        window_seconds = int(request.args.get("window_seconds") or 60)
+    except Exception:
+        window_seconds = 60
+    return jsonify(litellm_realtime_speed_leaderboard(email, window_seconds=window_seconds, limit=8))
 
 
 @app.route("/api/auth-stats")

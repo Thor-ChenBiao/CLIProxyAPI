@@ -12,6 +12,7 @@ import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 try:
     import psycopg
@@ -50,6 +51,20 @@ def current():
     if _state is None:
         _state = PortalState()
     return _state
+
+
+def psycopg_database_url(value):
+    text = (value or "").strip()
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+    except Exception:
+        return text
+    if not parts.query:
+        return text
+    filtered = [(key, val) for key, val in parse_qsl(parts.query, keep_blank_values=True) if key.lower() != "pgbouncer"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(filtered), parts.fragment))
 
 
 def is_pg_enabled():
@@ -204,7 +219,7 @@ def _memory_status_event_payload(item):
 
 class PortalState:
     def __init__(self, database_url="", redis_url=""):
-        self.database_url = (database_url or "").strip()
+        self.database_url = psycopg_database_url(database_url)
         self.redis_url = (redis_url or "").strip()
         self.pg_enabled = bool(self.database_url and psycopg)
         self.redis_enabled = False

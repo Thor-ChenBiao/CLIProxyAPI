@@ -305,7 +305,7 @@
             <div>
                 <div class="eyebrow">Key Portal Operations</div>
                 <h1>认证文件整体统计</h1>
-                <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；限额来自 provider 原生接口，后端会缓存读取结果以减少上游请求。</p>
+                <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度。</p>
             </div>
             <div class="actions" id="authStatsActions">
                 <a class="btn secondary" href="/">返回首页</a>
@@ -396,6 +396,7 @@
 
         function quotaStatusText(quota) {
             if (!quota) return '未获取';
+            if (quota.status === 'not_polled') return quota.message || 'Key Portal 不主动查询 provider 原生额度';
             if (quota.status === 'error') return quota.error ? `获取失败：${quota.error}` : '获取失败';
             if (quota.status === 'unsupported') return '暂未接入';
             return '暂无窗口';
@@ -774,10 +775,10 @@
             const percentClass = configured && percent >= 90 ? 'danger' : (configured && percent >= 70 ? 'warn' : '');
             const sourceText = configured
                 ? `${formatNumberFull(accountCount)} 个认证文件 · 单号日额度 ${formatCompactNumber(dailyLimit)}`
-                : `${formatNumberFull(accountCount)} 个认证文件 · 等待 7d 额度数据`;
+                : `${formatNumberFull(accountCount)} 个认证文件 · 不主动查询 provider 额度`;
             const inferredText = configured
-                ? `基于 ${formatNumberFull(inferredCount)} 个账号服务端 7d 窗口推算${minLimit && maxLimit ? ` · 范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
-                : '暂无可用 7d used_percent，先只展示今日已用 Tokens';
+                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${minLimit && maxLimit ? ` · 范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
+                : 'Key Portal 不主动查询 provider 原生额度，先只展示今日已用 Tokens';
             return `<div class="node-card">
                 <h3>今日预估额度消耗 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
                 <div class="node-overview">
@@ -1168,9 +1169,7 @@
                 const summaryEl = document.getElementById('authStatsSummary');
                 const metaEl = document.getElementById('authStatsMeta');
                 const generated = formatDateTime(data.generated_at);
-                const cacheAge = Number(data.cache_age_seconds || 0).toFixed(1);
-                const refreshingText = data.refreshing ? '，后台刷新中' : '';
-                metaEl.textContent = `生成时间：${generated} 北京时间，统计缓存年龄：${cacheAge}s${refreshingText}；认证文件用量来自节点管理接口，页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 低频刷新`;
+                metaEl.textContent = `生成时间：${generated} 北京时间；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度；页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 刷新`;
                 renderWarnings(data.errors || []);
 
                 const rows = sortAuthRows(data.auth_files || []);

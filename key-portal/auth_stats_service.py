@@ -1,12 +1,9 @@
 """Auth-file usage and quota reporting for Key Portal."""
 
-import json
 import math
 import re
 import threading
 import time
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 
@@ -34,8 +31,6 @@ class AuthStatsService:
         self.build_token_breakdown = build_token_breakdown
         self.stats_cache = {"data": None, "last_update": 0, "ttl": 15, "refreshing": False}
         self.stats_cache_lock = threading.Lock()
-        self.quota_cache = {"data": {}, "ttl": 300, "error_ttl": 60}
-        self.quota_cache_lock = threading.Lock()
 
     def node_management_path(self, node_name, index):
         name = str(node_name or "").strip().lower()
@@ -80,12 +75,6 @@ class AuthStatsService:
         return None
 
     @staticmethod
-    def _clamp_percent(value):
-        if value is None:
-            return None
-        return max(0, min(100, round(float(value), 2)))
-
-    @staticmethod
     def _camel_or_snake(data, snake, camel):
         if not isinstance(data, dict):
             return None
@@ -125,95 +114,13 @@ class AuthStatsService:
             used = 100
         if used is None:
             return None
-        remaining = self._clamp_percent(100 - used)
+        remaining = max(0, min(100, round(100 - used, 2)))
         return {
             "limit_label": limit_label,
-            "used_percent": self._clamp_percent(used),
+            "used_percent": max(0, min(100, round(used, 2))),
             "remaining_percent": remaining,
             "reset_at": self._reset_at_iso(window),
             "limit_window_seconds": self._number_or_none(self._camel_or_snake(window, "limit_window_seconds", "limitWindowSeconds")),
-        }
-
-    @staticmethod
-    def _parse_json_body(body):
-        if isinstance(body, dict):
-            return body
-        if not isinstance(body, str):
-            return None
-        text = body.strip()
-        if not text:
-            return None
-        try:
-            return json.loads(text)
-        except Exception:
-            return None
-
-    def _api_call_node(self, node, auth_index, method, url, headers, body=""):
-        payload = {
-            "auth_index": auth_index,
-            "method": method,
-            "url": url,
-            "header": headers,
-        }
-        if body:
-            payload["data"] = body
-        data, err = self.call_management_api_node(node, "POST", "/v0/management/api-call", data=payload, timeout=30)
-        if err:
-            raise RuntimeError(err)
-        status_code = int(data.get("status_code", 0) or 0)
-        if status_code < 200 or status_code >= 300:
-            response_body = str(data.get("body", "") or "").strip()
-            if len(response_body) > 200:
-                response_body = response_body[:200] + "..."
-            raise RuntimeError(f"provider quota API returned {status_code}: {response_body}")
-        return self._parse_json_body(data.get("body"))
-
-    @staticmethod
-    def _auth_chatgpt_account_id(auth_file):
-        id_token = auth_file.get("id_token")
-        if isinstance(id_token, dict):
-            account_id = id_token.get("chatgpt_account_id") or id_token.get("chatgptAccountId")
-            if isinstance(account_id, str) and account_id.strip():
-                return account_id.strip()
-        return ""
-
-    @staticmethod
-    def _build_error_quota(provider, message):
-        return {
-            "status": "error",
-            "provider": provider,
-            "error": message,
-            "fetched_at": datetime.utcnow().isoformat() + "Z",
-            "windows": {},
-        }
-
-    def _fetch_codex_quota(self, node, auth_file):
-        auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
-        account_id = self._auth_chatgpt_account_id(auth_file)
-        if not auth_index:
-            return self._build_error_quota("codex", "auth_index missing")
-        if not account_id:
-            return self._build_error_quota("codex", "chatgpt account id missing")
-        payload = self._api_call_node(node, auth_index, "GET", "https://chatgpt.com/backend-api/wham/usage", {
-            "Authorization": "Bearer $TOKEN$",
-            "Content-Type": "application/json",
-            "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
-            "Chatgpt-Account-Id": account_id,
-        })
-        if not payload:
-            return self._build_error_quota("codex", "empty quota response")
-        rate_limit = payload.get("rate_limit") or payload.get("rateLimit") or {}
-        primary = rate_limit.get("primary_window") or rate_limit.get("primaryWindow")
-        secondary = rate_limit.get("secondary_window") or rate_limit.get("secondaryWindow")
-        return {
-            "status": "success",
-            "provider": "codex",
-            "plan_type": (payload.get("plan_type") or payload.get("planType") or auth_file.get("plan_type") or ""),
-            "fetched_at": datetime.utcnow().isoformat() + "Z",
-            "windows": {
-                "last_5h": self._quota_window_from_used_percent(primary, "5h 原生窗口"),
-                "last_7d": self._quota_window_from_used_percent(secondary, "7d 原生窗口"),
-            },
         }
 
     def _pick_claude_seven_day_window(self, payload):
@@ -233,64 +140,52 @@ class AuthStatsService:
             return None
         return sorted(parsed, key=lambda item: item.get("remaining_percent", 101))[0]
 
-    def _fetch_claude_quota(self, node, auth_file):
-        auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
-        if not auth_index:
-            return self._build_error_quota("claude", "auth_index missing")
-        payload = self._api_call_node(node, auth_index, "GET", "https://api.anthropic.com/api/oauth/usage", {
-            "Authorization": "Bearer $TOKEN$",
-            "Content-Type": "application/json",
-            "anthropic-beta": "oauth-2025-04-20",
-        })
-        if not payload:
-            return self._build_error_quota("claude", "empty quota response")
-        return {
-            "status": "success",
-            "provider": "claude",
-            "fetched_at": datetime.utcnow().isoformat() + "Z",
-            "windows": {
-                "last_5h": self._quota_window_from_used_percent(payload.get("five_hour"), "5h 原生窗口"),
-                "last_7d": self._pick_claude_seven_day_window(payload),
-            },
-            "extra_usage": payload.get("extra_usage"),
-        }
-
-    def fetch_auth_quota(self, node, auth_file):
+    def quota_from_snapshot(self, auth_file):
         provider = str(auth_file.get("provider") or auth_file.get("type") or "").strip().lower()
-        try:
-            if provider == "codex":
-                return self._fetch_codex_quota(node, auth_file)
-            if provider == "claude":
-                return self._fetch_claude_quota(node, auth_file)
+        snapshot = auth_file.get("quota_snapshot") if isinstance(auth_file, dict) else None
+        if not isinstance(snapshot, dict):
+            return self.quota_not_polled(provider)
+        payload = snapshot.get("payload")
+        if not isinstance(payload, dict):
+            return self.quota_not_polled(provider)
+        quota_type = str(snapshot.get("type") or provider).strip().lower()
+        if quota_type == "codex":
+            rate_limit = payload.get("rate_limit") or payload.get("rateLimit") or {}
+            primary = rate_limit.get("primary_window") or rate_limit.get("primaryWindow")
+            secondary = rate_limit.get("secondary_window") or rate_limit.get("secondaryWindow")
             return {
-                "status": "unsupported",
-                "provider": provider,
-                "fetched_at": datetime.utcnow().isoformat() + "Z",
-                "windows": {},
+                "status": "success",
+                "provider": "codex",
+                "plan_type": payload.get("plan_type") or payload.get("planType") or auth_file.get("plan_type") or "",
+                "fetched_at": snapshot.get("fetched_at") or "",
+                "source": "proxy_snapshot",
+                "windows": {
+                    "last_5h": self._quota_window_from_used_percent(primary, "5h 原生窗口"),
+                    "last_7d": self._quota_window_from_used_percent(secondary, "7d 原生窗口"),
+                },
             }
-        except Exception as e:
-            return self._build_error_quota(provider, str(e))
+        if quota_type == "claude":
+            return {
+                "status": "success",
+                "provider": "claude",
+                "fetched_at": snapshot.get("fetched_at") or "",
+                "source": "proxy_snapshot",
+                "windows": {
+                    "last_5h": self._quota_window_from_used_percent(payload.get("five_hour"), "5h 原生窗口"),
+                    "last_7d": self._pick_claude_seven_day_window(payload),
+                },
+                "extra_usage": payload.get("extra_usage"),
+            }
+        return self.quota_not_polled(provider)
 
-    def get_auth_quota_cached(self, node, auth_file):
-        auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
-        provider = str(auth_file.get("provider") or auth_file.get("type") or "").strip().lower()
-        if not auth_index:
-            return self._build_error_quota(provider, "auth_index missing")
-        cache_key = f"{node.get('name', '')}:{auth_index}:{provider}"
-        now = time.time()
-        with self.quota_cache_lock:
-            cached = self.quota_cache["data"].get(cache_key)
-            if cached:
-                ttl = self.quota_cache["error_ttl"] if cached.get("quota", {}).get("status") == "error" else self.quota_cache["ttl"]
-                if (now - cached.get("updated_at", 0)) < ttl:
-                    return dict(cached["quota"], cache_age_seconds=round(now - cached.get("updated_at", now), 3))
-        quota = self.fetch_auth_quota(node, auth_file)
-        with self.quota_cache_lock:
-            self.quota_cache["data"][cache_key] = {
-                "updated_at": now,
-                "quota": quota,
-            }
-        return dict(quota, cache_age_seconds=0)
+    @staticmethod
+    def quota_not_polled(provider):
+        return {
+            "status": "not_polled",
+            "provider": provider,
+            "message": "Key Portal 不主动查询 provider 原生额度；如需额度快照，请以 proxy 暴露的数据为准。",
+            "windows": {},
+        }
 
     @staticmethod
     def _median(values):
@@ -415,33 +310,12 @@ class AuthStatsService:
         return True
 
     def get_cached(self):
-        now = time.time()
-        with self.stats_cache_lock:
-            cached = self.stats_cache["data"]
-            last_update = self.stats_cache["last_update"]
-            ttl = self.stats_cache["ttl"]
-            refreshing = self.stats_cache["refreshing"]
-        if cached and (now - last_update) < ttl:
-            return self._with_cache_metadata(cached, now, refreshing)
-        if cached:
-            self.start_refresh()
-            return self._with_cache_metadata(cached, now, True)
-        redis_cached = self.portal_state.cache_get_json("auth_stats")
-        if redis_cached:
-            with self.stats_cache_lock:
-                self.stats_cache["data"] = redis_cached
-                self.stats_cache["last_update"] = now
-                self.stats_cache["refreshing"] = False
-            self.start_refresh()
-            return self._with_cache_metadata(redis_cached, now, True)
         data = self.build()
-        now = time.time()
-        self.portal_state.cache_set_json("auth_stats", data, self.stats_cache["ttl"] * 4)
         with self.stats_cache_lock:
             self.stats_cache["data"] = data
-            self.stats_cache["last_update"] = now
+            self.stats_cache["last_update"] = time.time()
             self.stats_cache["refreshing"] = False
-        return self._with_cache_metadata(data, now, False)
+        return self._with_cache_metadata(data, self.stats_cache["last_update"], False)
 
     def build(self):
         try:
@@ -469,8 +343,6 @@ class AuthStatsService:
         }
 
         stats = {}
-        quota_sources = {}
-
         def empty_window():
             return {
                 "requests": 0,
@@ -611,11 +483,7 @@ class AuthStatsService:
                 },
                 "history": empty_history(),
                 "_quota_usage_details": [],
-                "quota": {
-                    "status": "unsupported",
-                    "provider": f.get("provider") or f.get("type", ""),
-                    "windows": {},
-                },
+                "quota": self.quota_from_snapshot(f),
             }
             for window_name in window_names:
                 stats[stats_key][window_name] = empty_window()
@@ -623,11 +491,6 @@ class AuthStatsService:
                 auth_index_map[stats[stats_key]["auth_index"]] = stats[stats_key]
             if account:
                 account_map[account] = stats[stats_key]
-            provider = str(stats[stats_key]["provider"] or "").strip().lower()
-            if provider in ("codex", "claude"):
-                node_cfg = node_by_name.get(node)
-                if node_cfg:
-                    quota_sources[stats_key] = (node_cfg, f)
 
         def find_stat(detail):
             auth_index = detail.get("auth_index")
@@ -751,21 +614,6 @@ class AuthStatsService:
         for summary in node_summary.values():
             for window_name in window_names:
                 enrich_window(summary[window_name])
-
-        if quota_sources:
-            workers = min(6, len(quota_sources))
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_map = {
-                    executor.submit(self.get_auth_quota_cached, node_cfg, auth_file): stats_key
-                    for stats_key, (node_cfg, auth_file) in quota_sources.items()
-                    if stats_key in stats
-                }
-                for future in as_completed(future_map):
-                    stats_key = future_map[future]
-                    try:
-                        stats[stats_key]["quota"] = future.result()
-                    except Exception as e:
-                        stats[stats_key]["quota"] = self._build_error_quota(stats[stats_key].get("provider", ""), str(e))
 
         self.apply_quota_window_usage(stats)
         today_used_tokens = int(((usage_payload.get("usage") or {}).get("tokens_by_day") or {}).get(today, 0) or 0)

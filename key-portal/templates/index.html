@@ -35,6 +35,74 @@
         .personal-token-counter .label { color: #486072; font-size: 12px; opacity: 0.9; margin-top: 3px; font-weight: 650; }
         .personal-token-counter .token-detail { color: #5f7486; font-size: 10px; opacity: 0.95; margin-top: 2px; min-height: 28px; line-height: 1.35; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
         .personal-token-counter .token-cost { color: #0f766e; font-size: 11px; font-weight: 700; margin-top: 1px; min-height: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .speed-panel { margin: 12px 0 24px; padding: 18px; border: 3px solid #2d315f; border-radius: 14px; background: #101633; box-shadow: 0 8px 0 #202448, 0 16px 28px rgba(16,22,51,0.22); image-rendering: pixelated; }
+        .speed-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+        .speed-panel h3 { margin: 0; color: #ffe66d; font-family: 'Courier New', monospace; letter-spacing: 0.04em; text-shadow: 2px 2px 0 #5f3dc4; }
+        .speed-panel-subtitle { font-size: 12px; color: #9fb1ff; margin-top: 3px; font-family: 'Courier New', monospace; }
+        .pixel-toggle { display: flex; gap: 8px; margin-bottom: 0; }
+        .pixel-toggle .view-btn { margin: 0; padding: 8px 12px; border: 3px solid #7dd3fc; border-radius: 0; background: #182047; color: #dbeafe; font: 800 12px 'Courier New', monospace; box-shadow: 3px 3px 0 rgba(0,0,0,0.35); text-shadow: 2px 2px 0 #101633; }
+        .pixel-toggle .view-btn:hover { background: #24306b; transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(0,0,0,0.35); }
+        .pixel-toggle .view-btn.active { background: #ffe66d; color: #101633; border-color: #ffe66d; text-shadow: none; box-shadow: 3px 3px 0 #5f3dc4; }
+        .pixel-track { position: relative; min-height: 360px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 26%, #b7f4ff 26% 34%, #7fd06a 34% 44%, #575b7a 44% 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; }
+        .pixel-track::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 72px, rgba(255,255,255,0.5) 72px 110px, transparent 110px 180px); opacity: 0.18; animation: pixelClouds var(--world-speed) linear infinite; }
+        .pixel-track::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: repeating-linear-gradient(90deg, #2f344d 0 18px, #252a42 18px 36px); animation: pixelRoad calc(var(--world-speed) * 0.55) linear infinite; }
+        .pixel-sun { position: absolute; right: 26px; top: 20px; width: 38px; height: 38px; background: #ffe66d; box-shadow: 0 0 0 6px rgba(255,230,109,0.25); }
+        .pixel-cloud { position: absolute; top: 30px; width: 64px; height: 18px; background: white; box-shadow: 18px -10px 0 white, 36px 0 0 white; opacity: 0.75; animation: pixelClouds 24s linear infinite; }
+        .pixel-cloud.c2 { top: 82px; animation-duration: 31s; animation-delay: -12s; opacity: 0.55; }
+        .pixel-scenery { position: absolute; left: 0; right: 0; top: 0; height: 170px; overflow: hidden; pointer-events: none; }
+        .pixel-scenery-strip { position: absolute; left: 0; top: 0; width: 200%; height: 100%; animation: sceneryScroll calc(var(--world-speed) * 1.35) linear infinite; }
+        .pixel-scenery-copy { position: absolute; left: 0; top: 0; width: 50%; height: 100%; }
+        .pixel-scenery-copy.repeat { left: 50%; }
+        .pixel-mountain { position: absolute; top: 92px; width: 0; height: 0; border-left: 52px solid transparent; border-right: 52px solid transparent; border-bottom: 74px solid #6b8e8f; opacity: 0.8; }
+        .pixel-mountain::after { content: ''; position: absolute; left: -18px; top: 18px; width: 0; height: 0; border-left: 18px solid transparent; border-right: 18px solid transparent; border-bottom: 26px solid #f8fbff; }
+        .pixel-mountain.m1 { left: 18px; }
+        .pixel-mountain.m2 { left: 58%; transform: scale(0.78); opacity: 0.62; }
+        .pixel-house { position: absolute; top: 122px; width: 42px; height: 30px; background: #ffd166; border: 3px solid #7c3f2c; box-shadow: inset 12px 12px 0 #f97316; }
+        .pixel-house::before { content: ''; position: absolute; left: -8px; top: -20px; width: 0; height: 0; border-left: 26px solid transparent; border-right: 26px solid transparent; border-bottom: 20px solid #ef4444; }
+        .pixel-house.h1 { left: 78%; }
+        .pixel-house.h2 { left: 155px; transform: scale(0.8); opacity: 0.85; }
+        .pixel-house.h3 { left: 43%; transform: scale(0.7); opacity: 0.75; }
+        .pixel-tree { position: absolute; top: 128px; width: 14px; height: 28px; background: #8b5a2b; }
+        .pixel-tree::before { content: ''; position: absolute; left: -14px; top: -30px; width: 42px; height: 34px; background: #15803d; box-shadow: 8px -12px 0 #16a34a, 20px 0 0 #166534; }
+        .pixel-tree.t1 { left: 90px; }
+        .pixel-tree.t2 { left: 90%; transform: scale(0.9); }
+        .pixel-tree.t3 { left: 46%; transform: scale(0.75); opacity: 0.9; }
+        .pixel-tree.t4 { left: 67%; transform: scale(0.65); opacity: 0.82; }
+        .race-lane { position: absolute; left: 0; right: 0; height: 44px; border-top: 2px dashed rgba(255,255,255,0.36); }
+        .race-lane:nth-child(odd) { background: rgba(255,255,255,0.04); }
+        .race-lane.me { background: rgba(52,211,153,0.18); box-shadow: inset 0 0 0 2px rgba(52,211,153,0.45); }
+        .race-finish { position: absolute; right: 16px; top: 130px; bottom: 22px; width: 18px; background: repeating-conic-gradient(#fff 0 25%, #111827 0 50%) 0 0/12px 12px; opacity: 0.8; }
+        .pixel-racer { position: absolute; left: 12px; top: 0; transform: translateX(var(--race-x, 0px)); transition: transform 1.35s cubic-bezier(.16,.84,.2,1), top 1.1s cubic-bezier(.16,.84,.2,1); z-index: 3; }
+        .pixel-racer-sprite { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 28px; font-size: 24px; filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.35)); animation: racerBob 0.75s steps(2) infinite; }
+        .pixel-racer-sprite.flip { transform: scaleX(-1); }
+        .pixel-racer.fast .pixel-racer-sprite { animation-duration: 0.28s; }
+        .pixel-racer.turbo .pixel-racer-sprite { animation: racerBob 0.22s steps(2) infinite, turboShake 0.18s steps(2) infinite; }
+        .pixel-trail { position: absolute; left: -26px; top: 12px; width: 26px; height: 8px; background: repeating-linear-gradient(90deg, rgba(255,230,109,0.95) 0 7px, transparent 7px 13px); opacity: 0; }
+        .pixel-racer.fast .pixel-trail { opacity: 0.75; }
+        .pixel-racer.turbo .pixel-trail { opacity: 1; width: 42px; left: -42px; background: repeating-linear-gradient(90deg, #ff6b6b 0 7px, #ffe66d 7px 14px, transparent 14px 21px); }
+        .pixel-racer.me .pixel-racer-sprite { outline: 3px solid #34d399; background: rgba(16,185,129,0.18); }
+        .pixel-name { position: absolute; left: 4px; top: -16px; padding: 1px 5px; background: #101633; color: #ffe66d; border: 2px solid #ffe66d; font: 700 11px 'Courier New', monospace; letter-spacing: 0.08em; }
+        .pixel-speed { position: absolute; left: 50px; top: 5px; min-width: 135px; color: #f8fbff; font: 700 11px 'Courier New', monospace; text-shadow: 2px 2px 0 rgba(0,0,0,0.45); white-space: nowrap; }
+        .pixel-hud { position: absolute; left: 14px; top: 14px; z-index: 8; width: min(300px, calc(100% - 112px)); color: #dbeafe; font: 700 11px 'Courier New', monospace; }
+        .pixel-hud-board { border: 3px solid #ffe66d; background: rgba(8,13,34,0.82); box-shadow: 4px 4px 0 rgba(0,0,0,0.28), inset 0 0 0 2px rgba(70,82,168,0.7); backdrop-filter: blur(1px); }
+        .pixel-hud-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; background: linear-gradient(90deg, #5f3dc4, #2563eb); color: #ffe66d; border-bottom: 3px solid #ffe66d; text-shadow: 2px 2px 0 #101633; }
+        .pixel-hud-live { color: #ff6b6b; animation: liveBlink 1s steps(2) infinite; }
+        .pixel-hud-card { padding: 8px 10px; color: #f8fbff; border-bottom: 2px solid rgba(125,211,252,0.28); }
+        .pixel-hud-card:last-child { border-bottom: 0; }
+        .pixel-hud-title { display: inline-block; margin-right: 8px; color: #7dd3fc; text-shadow: 2px 2px 0 #102044; }
+        .pixel-hud-rank { color: #34d399; }
+        .pixel-hud-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; white-space: nowrap; transition: transform 0.55s ease, color 0.55s ease; }
+        .pixel-hud-row span:first-child { color: #ffe66d; }
+        .pixel-hud-row.up { color: #86efac; transform: translateX(4px); }
+        .pixel-hud-row.down { color: #fca5a5; transform: translateX(-3px); }
+        @keyframes liveBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.35; } }
+        .speed-empty { padding: 16px; color: #9fb1ff; text-align: center; background: #182047; border: 2px solid #4652a8; border-radius: 6px; font-family: 'Courier New', monospace; }
+        @keyframes racerBob { 0%,100% { margin-top: 0; } 50% { margin-top: -4px; } }
+        @keyframes turboShake { 0%,100% { margin-left: 0; } 50% { margin-left: 3px; } }
+        @keyframes pixelClouds { from { background-position-x: 0; transform: translateX(0); } to { background-position-x: -180px; transform: translateX(-60px); } }
+        @keyframes pixelRoad { from { background-position-x: 0; } to { background-position-x: -72px; } }
+        @keyframes sceneryScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        @media (max-width: 820px) { .pixel-track { min-height: 320px; } .pixel-speed { display: none; } }
         .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
         .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
@@ -238,6 +306,59 @@
         <!-- login and status tabs removed -->
 
         <div id="report" class="tab-content">
+            <div class="speed-panel">
+                <div class="speed-panel-head">
+                    <div>
+                        <h3>TOKEN ENERGY RACE</h3>
+                        <div class="speed-panel-subtitle" id="speedLeaderboardSubtitle">最近 5 分钟滚动统计；按人聚合所有 Key，只展示邮箱前两个字母。</div>
+                    </div>
+                    <div class="pixel-toggle">
+                        <button class="view-btn active" onclick="setSpeedMetric('tokens')" id="speedMetricTokens">TOKENS</button>
+                        <button class="view-btn" onclick="setSpeedMetric('requests')" id="speedMetricRequests">REQUESTS</button>
+                    </div>
+                </div>
+                <div class="pixel-track" id="speedRaceTrack">
+                    <div class="pixel-sun"></div>
+                    <div class="pixel-cloud"></div>
+                    <div class="pixel-cloud c2"></div>
+                    <div class="pixel-scenery">
+                        <div class="pixel-scenery-strip">
+                            <div class="pixel-scenery-copy">
+                                <div class="pixel-mountain m1"></div>
+                                <div class="pixel-mountain m2"></div>
+                                <div class="pixel-house h1"></div>
+                                <div class="pixel-house h2"></div>
+                                <div class="pixel-house h3"></div>
+                                <div class="pixel-tree t1"></div>
+                                <div class="pixel-tree t2"></div>
+                                <div class="pixel-tree t3"></div>
+                                <div class="pixel-tree t4"></div>
+                            </div>
+                            <div class="pixel-scenery-copy repeat">
+                                <div class="pixel-mountain m1"></div>
+                                <div class="pixel-mountain m2"></div>
+                                <div class="pixel-house h1"></div>
+                                <div class="pixel-house h2"></div>
+                                <div class="pixel-house h3"></div>
+                                <div class="pixel-tree t1"></div>
+                                <div class="pixel-tree t2"></div>
+                                <div class="pixel-tree t3"></div>
+                                <div class="pixel-tree t4"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="race-finish"></div>
+                    <div class="pixel-hud">
+                        <div class="pixel-hud-board">
+                            <div class="pixel-hud-header"><span>RACE BOARD</span><span class="pixel-hud-live">LIVE</span></div>
+                            <div class="pixel-hud-card" id="mySpeedCard"><span class="pixel-hud-title">MY RACER</span> LOADING...</div>
+                            <div class="pixel-hud-card" id="speedLeaderboardRows"><span class="pixel-hud-title">TOP RACERS</span> LOADING...</div>
+                        </div>
+                    </div>
+                    <div id="speedRaceRows"><div class="speed-empty" style="margin:140px 18px 0;">正在加载赛道...</div></div>
+                </div>
+            </div>
+
             <div style="margin-bottom: 20px;">
                 <h2 style="margin: 0; color: #667eea;">📊 用量报表</h2>
                 <div style="font-size:12px;color:#999;margin-top:4px;">上方展示当前登录用户的个人实时用量；下方图表和表格展示全站聚合数据。</div>
@@ -330,7 +451,9 @@
             document.getElementById(name).classList.add('active');
             if (name === 'report') {
                 loadPersonalUsageSummary();
+                loadSpeedLeaderboard();
                 if (!usageSocketConnected) startPersonalUsageSummaryPolling();
+                startSpeedLeaderboardPolling();
                 loadUsage().then(() => {
                     setTimeout(() => {
                         renderChart();
@@ -339,6 +462,7 @@
                 });
             } else {
                 stopPersonalUsageSummaryPolling();
+                stopSpeedLeaderboardPolling();
             }
         }
 
@@ -544,6 +668,13 @@
         let personalUsagePollTimer = null;
         let personalUsageLoading = false;
         let personalRateSnapshot = null;
+        let speedLeaderboardPollTimer = null;
+        let speedLeaderboardLoading = false;
+        let speedLeaderboardData = null;
+        let speedRacePositions = {};
+        let speedRaceLanes = {};
+        let speedRaceRanks = {};
+        let currentSpeedMetric = 'tokens';
         let usageHistoryRefreshTimer = null;
         let usageSocketConnected = false;
 
@@ -571,6 +702,7 @@
                 applyUsageSummary(data);
                 if (document.getElementById('report')?.classList.contains('active')) {
                     loadPersonalUsageSummary();
+                    loadSpeedLeaderboard();
                 }
             });
 
@@ -592,7 +724,7 @@
 
         function setChartView(view) {
             currentView = view;
-            document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
+            ['Hour', 'Day', 'Month', 'Year'].forEach(key => document.getElementById('view' + key)?.classList.remove('active'));
             document.getElementById('view' + view.charAt(0).toUpperCase() + view.slice(1)).classList.add('active');
             renderChart();
             renderRequestQualityChart();
@@ -708,6 +840,197 @@
             if (!personalUsagePollTimer) return;
             clearInterval(personalUsagePollTimer);
             personalUsagePollTimer = null;
+        }
+
+        function raceMetricParts(row, metric) {
+            const rank = metric === 'requests' ? row.request_rank : row.token_rank;
+            const rate = Number(metric === 'requests' ? row.requests_per_minute : row.tokens_per_minute || 0);
+            const level = metric === 'requests' ? row.request_level : row.token_level;
+            const unit = metric === 'requests' ? 'req/min' : 'tok/min';
+            const value = metric === 'requests' ? row.requests : row.tokens;
+            return { rank, rate, level: level || { label: '步行', index: 0, progress: 0 }, unit, value };
+        }
+
+        function raceSprite(levelLabel) {
+            if (levelLabel === '跑步') return { icon: '🏃', flip: true };
+            if (levelLabel === '自行车') return { icon: '🚲', flip: true };
+            if (levelLabel === '电动车') return { icon: '🛵', flip: true };
+            if (levelLabel === '汽车') return { icon: '🏎️', flip: true };
+            if (levelLabel === '高铁') return { icon: '🚄', flip: false };
+            if (levelLabel === '飞机') return { icon: '✈️', flip: false };
+            if (levelLabel === '火箭') return { icon: '🚀', flip: false };
+            return { icon: '🚶', flip: true };
+        }
+
+        function updateWorldSpeed(trackEl, maxRate, metric) {
+            const baseline = metric === 'requests' ? 8 : 800000;
+            const ratio = Math.max(0, Math.min(1, maxRate / baseline));
+            const duration = 22 - ratio * 14;
+            trackEl.style.setProperty('--world-speed', `${duration.toFixed(1)}s`);
+        }
+
+        function targetRaceX(row, metric, trackWidth, maxRate) {
+            const parts = raceMetricParts(row, metric);
+            const maxTravel = Math.max(180, trackWidth - 230);
+            if (!parts.rate || maxRate <= 0) return 8;
+            const rateRatio = Math.max(0, Math.min(1, parts.rate / maxRate));
+            const progress = 0.06 + Math.pow(rateRatio, 0.72) * 0.9;
+            return Math.min(maxTravel, 8 + maxTravel * progress);
+        }
+
+        function raceIdentity(row, metric, fallback) {
+            const parts = raceMetricParts(row, metric);
+            return `${metric}:${row.email_mask || '??'}:${row.is_current_user ? 'me' : parts.rank || fallback}`;
+        }
+
+        function stableLaneIndex(id, preferredIndex, maxLanes) {
+            const previous = speedRaceLanes[id];
+            if (previous == null) {
+                speedRaceLanes[id] = preferredIndex;
+                return preferredIndex;
+            }
+            const next = previous + Math.max(-1, Math.min(1, preferredIndex - previous));
+            const clamped = Math.max(0, Math.min(maxLanes - 1, next));
+            speedRaceLanes[id] = clamped;
+            return clamped;
+        }
+
+        function ensureRaceNode(raceEl, id) {
+            let lane = raceEl.querySelector(`[data-lane-id="${id}"]`);
+            let racer = raceEl.querySelector(`[data-racer-id="${id}"]`);
+            if (!lane) {
+                lane = document.createElement('div');
+                lane.dataset.laneId = id;
+                raceEl.appendChild(lane);
+            }
+            if (!racer) {
+                racer = document.createElement('div');
+                racer.dataset.racerId = id;
+                racer.innerHTML = '<div class="pixel-name"></div><div class="pixel-trail"></div><div class="pixel-racer-sprite"></div><div class="pixel-speed"></div>';
+                raceEl.appendChild(racer);
+            }
+            return { lane, racer };
+        }
+
+        function updateRaceNode(raceEl, row, metric, laneIndex, trackWidth, maxRate, maxLanes, activeIds) {
+            const parts = raceMetricParts(row, metric);
+            const id = raceIdentity(row, metric, laneIndex);
+            activeIds.add(id);
+            const stableLane = stableLaneIndex(id, laneIndex, maxLanes);
+            const laneTop = 156 + stableLane * 38;
+            const targetX = targetRaceX(row, metric, trackWidth, maxRate);
+            const previous = speedRacePositions[id];
+            const x = previous == null ? targetX : previous + (targetX - previous) * 0.42;
+            speedRacePositions[id] = Math.max(8, Math.min(trackWidth - 190, x));
+            const levelIndex = Number(parts.level.index || 0);
+            const speedDelta = previous == null ? 0 : speedRacePositions[id] - previous;
+            const fastClass = parts.rate > 0 && (levelIndex >= 4 || speedDelta > 24) ? ' fast' : '';
+            const turboClass = parts.rate > 0 && (levelIndex >= 7 || speedDelta > 48) ? ' turbo' : '';
+            const meClass = row.is_current_user ? ' me' : '';
+            const sprite = raceSprite(parts.level.label);
+            const { lane, racer } = ensureRaceNode(raceEl, id);
+            lane.className = `race-lane${meClass}`;
+            lane.style.top = `${laneTop}px`;
+            racer.className = `pixel-racer${fastClass}${turboClass}${meClass}`;
+            racer.style.top = `${laneTop + 10}px`;
+            racer.style.setProperty('--race-x', `${speedRacePositions[id]}px`);
+            racer.querySelector('.pixel-name').textContent = `${row.email_mask || '??'}${row.is_current_user ? ' YOU' : ''}`;
+            const spriteEl = racer.querySelector('.pixel-racer-sprite');
+            spriteEl.className = `pixel-racer-sprite${sprite.flip ? ' flip' : ''}`;
+            spriteEl.textContent = sprite.icon;
+            racer.querySelector('.pixel-speed').textContent = `#${parts.rank || '-'} ${parts.level.label} · ${formatNumber(Math.round(parts.rate))} ${parts.unit}`;
+        }
+
+        function pruneRaceNodes(raceEl, activeIds) {
+            raceEl.querySelectorAll('[data-racer-id]').forEach(node => {
+                if (!activeIds.has(node.dataset.racerId)) node.remove();
+            });
+            raceEl.querySelectorAll('[data-lane-id]').forEach(node => {
+                if (!activeIds.has(node.dataset.laneId)) node.remove();
+            });
+        }
+
+        function renderSpeedLeaderboard() {
+            const hudEl = document.getElementById('speedLeaderboardRows');
+            const myEl = document.getElementById('mySpeedCard');
+            const raceEl = document.getElementById('speedRaceRows');
+            const trackEl = document.getElementById('speedRaceTrack');
+            const subtitle = document.getElementById('speedLeaderboardSubtitle');
+            if (!hudEl || !myEl || !raceEl || !trackEl) return;
+            const metric = currentSpeedMetric;
+            const data = speedLeaderboardData || {};
+            if (subtitle) subtitle.textContent = 'READY · STEADY · TOKEN!';
+            document.getElementById('speedMetricTokens')?.classList.toggle('active', metric === 'tokens');
+            document.getElementById('speedMetricRequests')?.classList.toggle('active', metric === 'requests');
+            const top = Array.isArray(data.top) ? [...data.top] : [];
+            top.sort((a, b) => metric === 'requests'
+                ? Number(a.request_rank || 999999) - Number(b.request_rank || 999999)
+                : Number(a.token_rank || 999999) - Number(b.token_rank || 999999));
+            const racers = top.slice(0, 6);
+            if (data.current_user && !racers.some(row => row.is_current_user)) racers.push(data.current_user);
+            const maxRate = racers.reduce((max, row) => Math.max(max, raceMetricParts(row, metric).rate), 0);
+            updateWorldSpeed(trackEl, maxRate, metric);
+            const activeIds = new Set();
+            const emptyEl = raceEl.querySelector('.speed-empty');
+            if (emptyEl && racers.length) emptyEl.remove();
+            if (racers.length) {
+                racers.forEach((row, idx) => updateRaceNode(raceEl, row, metric, idx, trackEl.clientWidth || 900, maxRate, racers.length, activeIds));
+                pruneRaceNodes(raceEl, activeIds);
+            } else if (!emptyEl) {
+                raceEl.innerHTML = '<div class="speed-empty" style="margin:140px 18px 0;">最近窗口还没有赛车出发。</div>';
+            }
+            const current = data.current_user;
+            if (current) {
+                const mine = raceMetricParts(current, metric);
+                myEl.innerHTML = `<span class="pixel-hud-title">MY RACER</span><span class="pixel-hud-rank">${current.email_mask || '??'} · #${mine.rank || '-'}</span> · ${mine.level.label} · ${formatNumber(Math.round(mine.rate))} ${mine.unit}`;
+            } else {
+                myEl.innerHTML = '<span class="pixel-hud-title">MY RACER</span> WAITING...';
+            }
+            hudEl.innerHTML = racers.length
+                ? '<span class="pixel-hud-title">TOP RACERS</span>' + racers.slice(0, 4).map(row => {
+                    const p = raceMetricParts(row, metric);
+                    const id = raceIdentity(row, metric, 0);
+                    const prevRank = speedRaceRanks[id];
+                    const moveClass = prevRank && p.rank ? (p.rank < prevRank ? ' up' : (p.rank > prevRank ? ' down' : '')) : '';
+                    speedRaceRanks[id] = p.rank || prevRank || 999;
+                    return `<div class="pixel-hud-row${moveClass}"><span>#${p.rank || '-'} ${row.email_mask || '??'}</span><span>${p.level.label} · ${formatNumber(Math.round(p.rate))}${p.unit}</span></div>`;
+                }).join('')
+                : '<span class="pixel-hud-title">TOP RACERS</span> WAITING...';
+        }
+
+        function setSpeedMetric(metric) {
+            currentSpeedMetric = metric === 'requests' ? 'requests' : 'tokens';
+            renderSpeedLeaderboard();
+        }
+
+        async function loadSpeedLeaderboard() {
+            if (speedLeaderboardLoading) return;
+            speedLeaderboardLoading = true;
+            try {
+                const resp = await fetch('/api/realtime-speed-leaderboard?window_seconds=60', { cache: 'no-store' });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || '速度榜加载失败');
+                speedLeaderboardData = data;
+                renderSpeedLeaderboard();
+            } catch (e) {
+                console.error('Load speed leaderboard error:', e);
+                const rowsEl = document.getElementById('speedLeaderboardRows');
+                if (rowsEl) rowsEl.innerHTML = '<div class="speed-empty">速度榜加载失败</div>';
+            } finally {
+                speedLeaderboardLoading = false;
+            }
+        }
+
+        function startSpeedLeaderboardPolling() {
+            if (speedLeaderboardPollTimer) return;
+            loadSpeedLeaderboard();
+            speedLeaderboardPollTimer = setInterval(loadSpeedLeaderboard, 5000);
+        }
+
+        function stopSpeedLeaderboardPolling() {
+            if (!speedLeaderboardPollTimer) return;
+            clearInterval(speedLeaderboardPollTimer);
+            speedLeaderboardPollTimer = null;
         }
 
         async function loadUsageSummary() {
