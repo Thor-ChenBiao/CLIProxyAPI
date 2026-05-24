@@ -44,7 +44,7 @@ class AuthStatsService:
                 slug = chr(ord("a") + index)
             else:
                 slug = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-") or str(index + 1)
-        return f"/{slug}/management.html#/auth-files"
+        return f"/{slug}/management.html#/"
 
     def configured_nodes(self):
         return [

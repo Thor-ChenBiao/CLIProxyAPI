@@ -1916,12 +1916,16 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
     rows = litellm_psql_json(sql, timeout=10) or []
     built = []
     current = None
+    data_as_of = None
     for row in rows:
         row_email = _normalize_email(row.get("email"))
         tokens = _int_usage_value(row.get("tokens"))
         requests = _int_usage_value(row.get("requests"))
         active_tokens = _int_usage_value(row.get("active_tokens"))
         active_requests = _int_usage_value(row.get("active_requests"))
+        last_seen = row.get("last_seen")
+        if last_seen and (data_as_of is None or str(last_seen) > str(data_as_of)):
+            data_as_of = last_seen
         item = {
             "email_mask": mask_speed_identity(row_email),
             "is_current_user": row_email == email,
@@ -1933,7 +1937,7 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
             "requests_per_minute": round(active_requests * 60 / active_seconds, 2),
             "token_rank": _int_usage_value(row.get("token_rank")),
             "request_rank": _int_usage_value(row.get("request_rank")),
-            "last_seen": row.get("last_seen"),
+            "last_seen": last_seen,
         }
         item["token_level"] = speed_level_for(item["tokens_per_minute"], "tokens")
         item["request_level"] = speed_level_for(item["requests_per_minute"], "requests")
@@ -1960,6 +1964,7 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
         "active_seconds": active_seconds,
         "top": built[:limit],
         "current_user": current,
+        "data_as_of": data_as_of,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

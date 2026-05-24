@@ -44,9 +44,9 @@
         .pixel-toggle .view-btn:hover, .pixel-toggle .pixel-select:hover { background: #24306b; transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(0,0,0,0.35); }
         .pixel-toggle .view-btn.active { background: #ffe66d; color: #101633; border-color: #ffe66d; text-shadow: none; box-shadow: 3px 3px 0 #5f3dc4; }
         .pixel-toggle .pixel-select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, #ffe66d 50%), linear-gradient(135deg, #ffe66d 50%, transparent 50%); background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; cursor: pointer; }
-        .pixel-track { position: relative; min-height: 360px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #575b7a 156px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; }
+        .pixel-track { position: relative; min-height: 390px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #5fb657 156px 184px, #4f9d4a 184px 196px, #565b7a 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; }
         .pixel-track::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 72px, rgba(255,255,255,0.5) 72px 110px, transparent 110px 180px); background-position-x: var(--cloud-x, 0px); opacity: 0.18; }
-        .pixel-track::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: repeating-linear-gradient(90deg, #2f344d 0 18px, #252a42 18px 36px); background-position-x: var(--road-x, 0px); }
+        .pixel-track::after { content: ''; position: absolute; left: 0; right: 0; top: 196px; bottom: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,0.14) 0 2px, transparent 2px 44px), repeating-linear-gradient(90deg, rgba(255,255,255,0.22) 0 34px, transparent 34px 70px), linear-gradient(180deg, rgba(86,91,122,0.88), rgba(47,52,77,0.92)); background-position: 0 0, var(--road-x, 0px) 0, 0 0; opacity: 0.92; }
         .pixel-sun { position: absolute; right: 26px; top: 20px; width: 38px; height: 38px; background: #ffe66d; box-shadow: 0 0 0 6px rgba(255,230,109,0.25); }
         .pixel-cloud { position: absolute; top: 30px; width: 64px; height: 18px; background: white; box-shadow: 18px -10px 0 white, 36px 0 0 white; opacity: 0.75; animation: pixelClouds 24s linear infinite; }
         .pixel-cloud.c2 { top: 82px; animation-duration: 31s; animation-delay: -12s; opacity: 0.55; }
@@ -81,16 +81,18 @@
         .pixel-racer.fast .pixel-trail { opacity: 0.75; }
         .pixel-racer.turbo .pixel-trail { opacity: 1; width: 42px; left: -42px; background: repeating-linear-gradient(90deg, #ff6b6b 0 7px, #ffe66d 7px 14px, transparent 14px 21px); }
         .pixel-name { position: absolute; left: 4px; top: -16px; padding: 1px 5px; background: #101633; color: #ffe66d; border: 2px solid #ffe66d; font: 700 11px 'Courier New', monospace; letter-spacing: 0.08em; }
+        .pixel-racer.me .pixel-name { background: #052e26; color: #5eead4; border-color: #34d399; box-shadow: 0 0 0 2px rgba(52,211,153,0.22); }
+        .pixel-racer.me .pixel-speed { color: #a7f3d0; text-shadow: 2px 2px 0 rgba(5,46,38,0.75); }
         .pixel-speed { position: absolute; left: 50px; top: 5px; min-width: 135px; color: #f8fbff; font: 700 11px 'Courier New', monospace; text-shadow: 2px 2px 0 rgba(0,0,0,0.45); white-space: nowrap; }
-        .pixel-hud { position: absolute; left: 14px; top: 14px; z-index: 8; width: min(300px, calc(100% - 112px)); color: #dbeafe; font: 700 11px 'Courier New', monospace; }
-        .pixel-hud-board { border: 3px solid #ffe66d; background: rgba(8,13,34,0.82); box-shadow: 4px 4px 0 rgba(0,0,0,0.28), inset 0 0 0 2px rgba(70,82,168,0.7); backdrop-filter: blur(1px); }
-        .pixel-hud-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; background: linear-gradient(90deg, #5f3dc4, #2563eb); color: #ffe66d; border-bottom: 3px solid #ffe66d; text-shadow: 2px 2px 0 #101633; }
+        .pixel-hud { position: absolute; left: 14px; top: 14px; z-index: 8; width: min(260px, calc(100% - 112px)); color: #dbeafe; font: 700 10px 'Courier New', monospace; }
+        .pixel-hud-board { border: 2px solid rgba(255,230,109,0.72); background: rgba(8,13,34,0.46); box-shadow: 3px 3px 0 rgba(0,0,0,0.16), inset 0 0 0 1px rgba(70,82,168,0.38); backdrop-filter: blur(0.5px); }
+        .pixel-hud-header { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; background: linear-gradient(90deg, rgba(95,61,196,0.62), rgba(37,99,235,0.56)); color: #ffe66d; border-bottom: 2px solid rgba(255,230,109,0.62); text-shadow: 2px 2px 0 #101633; }
         .pixel-hud-live { color: #ff6b6b; animation: liveBlink 1s steps(2) infinite; }
-        .pixel-hud-card { padding: 8px 10px; color: #f8fbff; border-bottom: 2px solid rgba(125,211,252,0.28); }
+        .pixel-hud-card { padding: 6px 8px; color: #f8fbff; border-bottom: 1px solid rgba(125,211,252,0.18); }
         .pixel-hud-card:last-child { border-bottom: 0; }
-        .pixel-hud-title { display: inline-block; margin-right: 8px; color: #7dd3fc; text-shadow: 2px 2px 0 #102044; }
+        .pixel-hud-title { display: inline-block; margin-right: 6px; color: #7dd3fc; text-shadow: 2px 2px 0 #102044; }
         .pixel-hud-rank { color: #34d399; }
-        .pixel-hud-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; white-space: nowrap; transition: transform 0.55s ease, color 0.55s ease; }
+        .pixel-hud-row { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; white-space: nowrap; transition: transform 0.55s ease, color 0.55s ease; }
         .pixel-hud-row span:first-child { color: #ffe66d; }
         .pixel-hud-row.up { color: #86efac; transform: translateX(4px); }
         .pixel-hud-row.down { color: #fca5a5; transform: translateX(-3px); }
@@ -316,10 +318,6 @@
                         <button class="view-btn" onclick="setSpeedMetric('requests')" id="speedMetricRequests">REQUESTS</button>
                         <select class="pixel-select" id="raceSizeSelect" onchange="setRaceSize(this.value)" aria-label="选择赛车人数">
                             <option value="5" selected>TOP 5</option>
-                            <option value="10">TOP 10</option>
-                            <option value="20">TOP 20</option>
-                            <option value="50">TOP 50</option>
-                            <option value="100">TOP 100</option>
                         </select>
                     </div>
                 </div>
@@ -676,6 +674,10 @@
         let speedLeaderboardPollTimer = null;
         let speedLeaderboardLoading = false;
         let speedLeaderboardData = null;
+        let speedLeaderboardClockBaseMs = null;
+        let speedLeaderboardClockBaseFrameAt = 0;
+        let speedLeaderboardClockRunning = false;
+        let speedLeaderboardClockRenderedSecond = null;
         let speedRacePositions = {};
         let speedRaceLanes = {};
         let speedRaceRanks = {};
@@ -686,10 +688,10 @@
         let speedRaceLastFrameAt = 0;
         let raceVisibleRacers = 5;
         let raceLaneCountSetting = 5;
-        const RACE_SIZE_LANES = { 5: 5, 10: 7, 20: 9, 50: 12, 100: 15 };
-        const RACE_LANE_TOP = 144;
+        const RACE_SIZE_LANES = { 5: 5 };
+        const RACE_LANE_TOP = 196;
         const RACE_LANE_HEIGHT = 32;
-        const RACE_TRACK_BOTTOM_PAD = 56;
+        const RACE_TRACK_BOTTOM_PAD = 34;
         let currentSpeedMetric = 'tokens';
         let usageHistoryRefreshTimer = null;
         let usageSocketConnected = false;
@@ -858,6 +860,55 @@
             personalUsagePollTimer = null;
         }
 
+        function parseRaceClockMs(value) {
+            const text = String(value || '').trim();
+            const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+            if (match) {
+                return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
+            }
+            const parsed = Date.parse(text);
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+
+        function formatRaceClockMs(ms) {
+            if (ms == null) return '--:--:--';
+            const bj = new Date(ms + 8 * 60 * 60 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function currentRaceClockMs(now = performance.now()) {
+            if (!speedLeaderboardClockRunning || speedLeaderboardClockBaseMs == null) return null;
+            return speedLeaderboardClockBaseMs + Math.max(0, now - speedLeaderboardClockBaseFrameAt);
+        }
+
+        function applyRaceClock(data, now = performance.now()) {
+            const nextMs = parseRaceClockMs(data?.data_as_of || data?.generated_at);
+            if (nextMs == null) return;
+            const currentMs = currentRaceClockMs(now);
+            speedLeaderboardClockBaseMs = currentMs == null ? nextMs : Math.max(nextMs, currentMs);
+            speedLeaderboardClockBaseFrameAt = now;
+            speedLeaderboardClockRunning = true;
+            speedLeaderboardClockRenderedSecond = null;
+        }
+
+        function updateRaceClock(now = performance.now()) {
+            const clockEl = document.getElementById('raceBoardClock');
+            if (!clockEl) return;
+            const currentMs = currentRaceClockMs(now);
+            if (currentMs == null) {
+                if (speedLeaderboardClockRenderedSecond !== -1) {
+                    clockEl.textContent = '--:--:--';
+                    speedLeaderboardClockRenderedSecond = -1;
+                }
+                return;
+            }
+            const currentSecond = Math.floor(currentMs / 1000);
+            if (speedLeaderboardClockRenderedSecond === currentSecond) return;
+            clockEl.textContent = formatRaceClockMs(currentSecond * 1000);
+            speedLeaderboardClockRenderedSecond = currentSecond;
+        }
+
         function raceMetricParts(row, metric) {
             const rank = metric === 'requests' ? row.request_rank : row.token_rank;
             const rate = Number(metric === 'requests' ? row.requests_per_minute : row.tokens_per_minute || 0);
@@ -948,6 +999,18 @@
             return metric === 'requests' ? requestThresholds : requestThresholds.map(value => value * 100000);
         }
 
+        function raceSegmentEdges(maxTravel) {
+            const weights = [0.84, 1.16, 1.56, 2.0, 2.05, 1.8, 1.55, 1.3, 1.1];
+            const total = weights.reduce((sum, value) => sum + value, 0);
+            let cursor = 0;
+            const edges = [0];
+            weights.forEach(weight => {
+                cursor += maxTravel * weight / total;
+                edges.push(cursor);
+            });
+            return edges;
+        }
+
         function segmentTargetX(state, trackWidth) {
             const maxTravel = Math.max(180, trackWidth - 230);
             const rate = Math.max(0, Number(state.displayRate || 0));
@@ -955,14 +1018,16 @@
             const level = levelForDisplayRate(rate, state.metric);
             const thresholds = raceLevelThresholds(state.metric);
             const segmentCount = thresholds.length - 1;
-            const segmentWidth = maxTravel / segmentCount;
             const levelIndex = clamp(Number(level.index || 0), 0, segmentCount);
             const lower = thresholds[levelIndex] || 0;
             const upper = thresholds[levelIndex + 1] || Math.max(lower * 2, lower + 1);
             const local = upper > lower ? clamp((rate - lower) / (upper - lower), 0, 1) : 0;
-            const segmentStart = levelIndex === 0 ? 8 : (levelIndex - 1) * segmentWidth;
-            const segmentProgress = easeOutCubic(local) * segmentWidth * 0.72;
-            const rankNudge = clamp((Number(state.rank || 1) - 1) * 10, 0, segmentWidth * 0.22);
+            const edges = raceSegmentEdges(maxTravel);
+            const segmentStart = edges[Math.max(0, levelIndex - 1)] || 0;
+            const segmentEnd = edges[Math.max(1, levelIndex)] || maxTravel;
+            const segmentWidth = Math.max(1, segmentEnd - segmentStart);
+            const segmentProgress = easeOutCubic(local) * segmentWidth * 0.82;
+            const rankNudge = clamp((Number(state.rank || 1) - 1) * 10, 0, segmentWidth * 0.24);
             return clamp(8 + segmentStart + segmentProgress - rankNudge, 8, maxTravel);
         }
 
@@ -1158,8 +1223,7 @@
 
         function renderSpeedLeaderboard(now = performance.now()) {
             const deltaSeconds = speedRaceLastFrameAt ? Math.min((now - speedRaceLastFrameAt) / 1000, 0.2) : 1 / 60;
-            const clockEl = document.getElementById('raceBoardClock');
-            if (clockEl) clockEl.textContent = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+            updateRaceClock(now);
             const hudEl = document.getElementById('speedLeaderboardRows');
             const myEl = document.getElementById('mySpeedCard');
             const raceEl = document.getElementById('speedRaceRows');
@@ -1245,12 +1309,11 @@
             renderSpeedLeaderboard();
         }
 
-        function setRaceSize(size) {
-            const nextSize = [5, 10, 20, 50, 100].includes(Number(size)) ? Number(size) : 5;
-            raceVisibleRacers = nextSize;
-            raceLaneCountSetting = RACE_SIZE_LANES[nextSize] || RACE_SIZE_LANES[5];
+        function setRaceSize() {
+            raceVisibleRacers = 5;
+            raceLaneCountSetting = RACE_SIZE_LANES[5];
             const selector = document.getElementById('raceSizeSelect');
-            if (selector) selector.value = String(nextSize);
+            if (selector) selector.value = '5';
             speedRacePositions = {};
             speedRaceLanes = {};
             loadSpeedLeaderboard();
@@ -1264,8 +1327,10 @@
                 const resp = await fetch(`/api/realtime-speed-leaderboard?window_seconds=60&limit=${raceVisibleRacers}`, { cache: 'no-store' });
                 const data = await resp.json();
                 if (!resp.ok || data.error) throw new Error(data.error || '速度榜加载失败');
+                const now = performance.now();
                 speedLeaderboardData = data;
-                syncRaceSnapshot(performance.now());
+                applyRaceClock(data, now);
+                syncRaceSnapshot(now);
             } catch (e) {
                 console.error('Load speed leaderboard error:', e);
                 const rowsEl = document.getElementById('speedLeaderboardRows');

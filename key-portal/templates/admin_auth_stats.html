@@ -141,7 +141,8 @@
         .view-tab.active { background: #102044; color: #fff; box-shadow: 0 8px 18px rgba(16, 32, 68, 0.18); }
         .traffic-board { display: grid; gap: 14px; }
         .traffic-rank { border: 1px solid var(--line); border-radius: 18px; background: #fff; overflow: hidden; }
-        .traffic-rank-head, .traffic-rank-row { display: grid; grid-template-columns: minmax(220px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr); gap: 12px; align-items: center; padding: 13px 15px; }
+        .traffic-rank-head, .traffic-rank-row { display: grid; grid-template-columns: minmax(250px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr); gap: 12px; align-items: center; padding: 13px 15px; }
+        .traffic-rank.with-actions .traffic-rank-head, .traffic-rank.with-actions .traffic-rank-row { grid-template-columns: minmax(250px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr) minmax(130px, 0.6fr); }
         .traffic-rank-head { color: var(--muted); background: #f8fbff; font-size: 12px; font-weight: 950; }
         .traffic-rank-row { border-top: 1px solid rgba(223,230,240,0.82); cursor: pointer; }
         .traffic-rank-row:hover { background: #fbfcff; }
@@ -977,6 +978,10 @@
                 const sub = mode === 'node'
                     ? `${formatNumberFull(item.auth_files || 0)} 个认证文件 · 可用 ${formatNumberFull(item.active || 0)} · 不可用 ${formatNumberFull(item.unavailable || 0)}`
                     : `${item.node || '-'} · ${item.provider || 'provider'}${item.auth_index ? ' · ' + item.auth_index : ''}`;
+                const managementPath = mode === 'node' ? (item.management_path || '#') : '#';
+                const managementLink = mode === 'node' && managementPath !== '#'
+                    ? `<a class="node-action-link" href="${escapeHtml(managementPath)}" target="_blank">管理后台</a>`
+                    : '<span class="node-subtext">-</span>';
                 return `<div class="traffic-rank-row ${expanded ? 'is-expanded' : ''}" data-traffic-key="${escapeHtml(key)}" aria-expanded="${expanded ? 'true' : 'false'}">
                     <div class="traffic-identity"><span class="traffic-expand" aria-hidden="true">›</span><div class="traffic-name"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(sub)}</span></div></div>
                     ${trafficWindowCell(item.last_1h || {}, maxRequests)}
@@ -984,11 +989,12 @@
                     ${trafficWindowCell(item.last_24h || {}, maxRequests)}
                     ${trafficWindowCell(item.last_7d || {}, maxRequests)}
                     <div><span class="traffic-status ${status.cls}">${status.text}</span></div>
+                    ${mode === 'node' ? `<div>${managementLink}</div>` : ''}
                 </div>
                 <div class="traffic-history-row ${expanded ? 'is-expanded' : ''}" data-traffic-history="${escapeHtml(key)}">${renderHistoryChart(item)}</div>`;
             }).join('');
             return `<div class="traffic-board">
-                <div class="traffic-rank">
+                <div class="traffic-rank ${mode === 'node' ? 'with-actions' : ''}">
                     <div class="traffic-rank-head">
                         <div>${mode === 'node' ? '节点' : '认证文件'}</div>
                         <div>近 1 小时</div>
@@ -996,6 +1002,7 @@
                         <div>近 24 小时</div>
                         <div>近 7 天</div>
                         <div>状态</div>
+                        ${mode === 'node' ? '<div>管理</div>' : ''}
                     </div>
                     ${rows}
                 </div>
@@ -1013,7 +1020,8 @@
 
         function bindTrafficRows() {
             document.querySelectorAll('.traffic-rank-row').forEach(row => {
-                row.addEventListener('click', () => {
+                row.addEventListener('click', (event) => {
+                    if (event.target.closest('a, button')) return;
                     const key = row.dataset.trafficKey || '';
                     const expanded = !row.classList.contains('is-expanded');
                     row.classList.toggle('is-expanded', expanded);
