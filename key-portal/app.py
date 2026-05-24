@@ -69,6 +69,14 @@ _user_usage_summary_cache = {
 }
 _user_usage_summary_cache_lock = threading.Lock()
 
+_realtime_speed_cache = {
+    "data": {},
+    "refreshing": {},
+    "ttl": 1.0,
+    "stale_ttl": 5.0,
+}
+_realtime_speed_cache_lock = threading.Lock()
+
 _persistent_floor_cache = {
     "data": None,
     "last_update": 0,
@@ -984,7 +992,7 @@ def call_management_api_node(node, method, endpoint, data=None, timeout=30):
 def merge_usage_payloads(results):
     """Merge /v0/management/usage results from all nodes."""
     # Only keep details from the last 7 days to cap memory usage.
-    _cutoff_ts = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%dT")
+    _cutoff_ts = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%dT")
     merged_usage = {
         "total_requests": 0,
         "success_count": 0,
@@ -1132,8 +1140,42 @@ def call_management_api_all(method, endpoint, data=None, timeout=30):
     return [result for result in results if result is not None]
 
 
+def call_usage_management_api_node(node, method, suffix="", data=None, timeout=30):
+    endpoint = f"/v0/management/usage-statistics{suffix}"
+    payload, err = call_management_api_node(node, method, endpoint, data=data, timeout=timeout)
+    if err and "404" in str(err):
+        legacy_endpoint = f"/v0/management/usage{suffix}"
+        return call_management_api_node(node, method, legacy_endpoint, data=data, timeout=timeout)
+    return payload, err
+
+
+def call_usage_management_api_all(method, suffix="", data=None, timeout=30):
+    def fetch(node):
+        payload, err = call_usage_management_api_node(node, method, suffix=suffix, data=data, timeout=timeout)
+        if err:
+            print(f"[Cluster] {node['name']} usage{suffix} failed: {err}")
+        return node["name"], payload, err
+
+    workers = min(max(len(CLIPROXY_NODES), 1), 8)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_by_index = {
+            executor.submit(fetch, node): index
+            for index, node in enumerate(CLIPROXY_NODES)
+        }
+        results = [None] * len(CLIPROXY_NODES)
+        for future in as_completed(future_by_index):
+            index = future_by_index[future]
+            node = CLIPROXY_NODES[index]
+            try:
+                results[index] = future.result()
+            except Exception as e:
+                results[index] = (node["name"], None, str(e))
+                print(f"[Cluster] {node['name']} usage{suffix} failed: {e}")
+    return [result for result in results if result is not None]
+
+
 def get_cluster_usage():
-    return merge_usage_payloads(call_management_api_all("GET", "/v0/management/usage", timeout=30))
+    return merge_usage_payloads(call_usage_management_api_all("GET", timeout=30))
 
 
 def usage_summary_from_payload(payload):
@@ -1194,28 +1236,7 @@ def merge_usage_summary_payloads(results):
 
 
 def get_cluster_usage_summary():
-    def fetch(node):
-        payload, err = call_management_api_node(node, "GET", "/v0/management/usage/summary", timeout=10)
-        if err:
-            print(f"[Cluster] {node['name']} usage summary failed: {err}")
-        return node["name"], payload, err
-
-    workers = min(max(len(CLIPROXY_NODES), 1), 8)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_by_index = {
-            executor.submit(fetch, node): index
-            for index, node in enumerate(CLIPROXY_NODES)
-        }
-        results = [None] * len(CLIPROXY_NODES)
-        for future in as_completed(future_by_index):
-            index = future_by_index[future]
-            node = CLIPROXY_NODES[index]
-            try:
-                results[index] = future.result()
-            except Exception as e:
-                results[index] = (node["name"], None, str(e))
-                print(f"[Cluster] {node['name']} usage summary failed: {e}")
-    return merge_usage_summary_payloads([result for result in results if result is not None])
+    return merge_usage_summary_payloads(call_usage_management_api_all("GET", suffix="/summary", timeout=10))
 
 
 def _sum_beijing_today(usage, today_str):
@@ -1862,7 +1883,17 @@ def speed_level_for(rate, metric):
         ("火箭", 40),
         ("UFO", 80),
     ]
-    token_thresholds = [(label, int(threshold * 100000)) for label, threshold in request_thresholds]
+    token_thresholds = [
+        ("步行", 1),
+        ("跑步", 20000),
+        ("自行车", 60000),
+        ("电动车", 120000),
+        ("汽车", 250000),
+        ("直升机", 500000),
+        ("飞机", 750000),
+        ("火箭", 1100000),
+        ("UFO", 1600000),
+    ]
     thresholds = token_thresholds if metric == "tokens" else request_thresholds
     level_index = 0
     for idx, (_, threshold) in enumerate(thresholds):
@@ -1879,10 +1910,8 @@ def speed_level_for(rate, metric):
     return {"label": thresholds[level_index][0], "index": level_index, "progress": progress}
 
 
-def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
-    email = _normalize_email(email)
+def _litellm_realtime_speed_base(window_seconds=60):
     window_seconds = max(30, min(int(window_seconds or 60), 600))
-    limit = max(3, min(int(limit or 8), 20))
     identity = litellm_spend_identity_sql()
     active_seconds = max(15, min(window_seconds // 3, 30))
     sql = f"""
@@ -1915,7 +1944,6 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
 """
     rows = litellm_psql_json(sql, timeout=10) or []
     built = []
-    current = None
     data_as_of = None
     for row in rows:
         row_email = _normalize_email(row.get("email"))
@@ -1927,8 +1955,8 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
         if last_seen and (data_as_of is None or str(last_seen) > str(data_as_of)):
             data_as_of = last_seen
         item = {
+            "_email": row_email,
             "email_mask": mask_speed_identity(row_email),
-            "is_current_user": row_email == email,
             "tokens": tokens,
             "requests": requests,
             "active_tokens": active_tokens,
@@ -1942,14 +1970,81 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
         item["token_level"] = speed_level_for(item["tokens_per_minute"], "tokens")
         item["request_level"] = speed_level_for(item["requests_per_minute"], "requests")
         built.append(item)
+    return {
+        "window_seconds": window_seconds,
+        "window_minutes": round(window_seconds / 60, 2),
+        "active_seconds": active_seconds,
+        "rows": built,
+        "data_as_of": data_as_of,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _litellm_realtime_speed_base_cached(window_seconds=60):
+    window_seconds = max(30, min(int(window_seconds or 60), 600))
+    key = str(window_seconds)
+    now = time.time()
+    refresh_event = None
+    wait_event = None
+    with _realtime_speed_cache_lock:
+        entry = _realtime_speed_cache["data"].get(key)
+        age = now - entry["last_update"] if entry else None
+        if entry and age <= _realtime_speed_cache["ttl"]:
+            return entry["payload"], "hit", age
+        if key in _realtime_speed_cache["refreshing"]:
+            if entry and age <= _realtime_speed_cache["stale_ttl"]:
+                return entry["payload"], "stale", age
+            wait_event = _realtime_speed_cache["refreshing"][key]
+        else:
+            refresh_event = threading.Event()
+            _realtime_speed_cache["refreshing"][key] = refresh_event
+    if wait_event:
+        wait_event.wait(timeout=11)
+        now = time.time()
+        with _realtime_speed_cache_lock:
+            entry = _realtime_speed_cache["data"].get(key)
+            if entry:
+                age = now - entry["last_update"]
+                status = "hit" if age <= _realtime_speed_cache["ttl"] else "stale"
+                return entry["payload"], status, age
+            refresh_event = threading.Event()
+            _realtime_speed_cache["refreshing"][key] = refresh_event
+    try:
+        payload = _litellm_realtime_speed_base(window_seconds)
+        now = time.time()
+        with _realtime_speed_cache_lock:
+            _realtime_speed_cache["data"][key] = {"payload": payload, "last_update": now}
+        return payload, "miss", 0
+    finally:
+        with _realtime_speed_cache_lock:
+            active_event = _realtime_speed_cache["refreshing"].get(key)
+            if active_event is refresh_event:
+                _realtime_speed_cache["refreshing"].pop(key, None)
+                refresh_event.set()
+
+
+def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
+    email = _normalize_email(email)
+    limit = max(3, min(int(limit or 8), 20))
+    base, cache_status, cache_age = _litellm_realtime_speed_base_cached(window_seconds)
+    current = None
+    top = []
+    for row in base.get("rows", []):
+        item = dict(row)
+        row_email = item.pop("_email", "")
+        item["is_current_user"] = row_email == email
         if item["is_current_user"]:
-            current = item
+            current = dict(item)
+        if len(top) < limit:
+            top.append(item)
     if email and not current:
         current = {
             "email_mask": mask_speed_identity(email),
             "is_current_user": True,
             "tokens": 0,
             "requests": 0,
+            "active_tokens": 0,
+            "active_requests": 0,
             "tokens_per_minute": 0,
             "requests_per_minute": 0,
             "token_rank": None,
@@ -1959,13 +2054,15 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
             "request_level": speed_level_for(0, "requests"),
         }
     return {
-        "window_seconds": window_seconds,
-        "window_minutes": round(window_seconds / 60, 2),
-        "active_seconds": active_seconds,
-        "top": built[:limit],
+        "window_seconds": base.get("window_seconds"),
+        "window_minutes": base.get("window_minutes"),
+        "active_seconds": base.get("active_seconds"),
+        "top": top,
         "current_user": current,
-        "data_as_of": data_as_of,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "data_as_of": base.get("data_as_of"),
+        "generated_at": base.get("generated_at"),
+        "cache_status": cache_status,
+        "cache_age_seconds": round(cache_age or 0, 3),
     }
 
 
@@ -3203,7 +3300,7 @@ def import_snapshot_to_node(node, snapshot_data, label):
     if not snapshot_data:
         return False
     print(f"[Snapshot] Importing {label} into {node['name']}...")
-    data, err = call_management_api_node(node, "POST", "/v0/management/usage/import", snapshot_data, timeout=60)
+    data, err = call_usage_management_api_node(node, "POST", suffix="/import", data=snapshot_data, timeout=60)
     if err:
         print(f"[Snapshot] Import failed for {node['name']}: {err}")
         return False
@@ -3219,7 +3316,7 @@ def export_node_snapshot(node):
     """Export one node snapshot, restoring the last snapshot first if a restart is detected."""
     node_name = node["name"]
     path = snapshot_file_for_node(node_name)
-    data, err = call_management_api_node(node, "GET", "/v0/management/usage/export", timeout=60)
+    data, err = call_usage_management_api_node(node, "GET", suffix="/export", timeout=60)
     if err:
         print(f"[Snapshot] Export failed for {node_name}: {err}")
         return False
@@ -3237,7 +3334,7 @@ def export_node_snapshot(node):
             )
             previous = load_snapshot_file(path)
             if previous and import_snapshot_to_node(node, previous, path):
-                data, err = call_management_api_node(node, "GET", "/v0/management/usage/export", timeout=60)
+                data, err = call_usage_management_api_node(node, "GET", suffix="/export", timeout=60)
                 if err:
                     print(f"[Snapshot] Export after restore failed for {node_name}: {err}")
                     return False

@@ -144,6 +144,10 @@
         .traffic-rank-head, .traffic-rank-row { display: grid; grid-template-columns: minmax(250px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr); gap: 12px; align-items: center; padding: 13px 15px; }
         .traffic-rank.with-actions .traffic-rank-head, .traffic-rank.with-actions .traffic-rank-row { grid-template-columns: minmax(250px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr) minmax(130px, 0.6fr); }
         .traffic-rank-head { color: var(--muted); background: #f8fbff; font-size: 12px; font-weight: 950; }
+        .traffic-sort-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 2px 5px; border-radius: 8px; background: rgba(42, 117, 255, 0.08); color: var(--blue); cursor: pointer; font: inherit; text-align: left; }
+        .traffic-sort-btn:hover { background: rgba(42, 117, 255, 0.16); color: #0f4ec7; }
+        .traffic-sort-btn.is-active { background: rgba(42, 117, 255, 0.18); }
+        .traffic-sort-mark { min-width: 12px; color: var(--blue); font-size: 10px; text-align: center; opacity: 0.78; }
         .traffic-rank-row { border-top: 1px solid rgba(223,230,240,0.82); cursor: pointer; }
         .traffic-rank-row:hover { background: #fbfcff; }
         .traffic-rank-row.is-expanded { background: #f3f7ff; }
@@ -350,6 +354,11 @@
         const authRowOrder = new Map();
         const authRowsByKey = new Map();
         const expandedTrafficRows = new Set();
+        const trafficSortState = { node: { key: 'last_5h', dir: 'desc' }, auth: { key: '', dir: 'desc' } };
+        let lastAuthStatsRows = [];
+        let lastAuthStatsNodeEntries = [];
+        let lastAuthStatsNodeSignals = new Map();
+        let lastAuthStatsGroupedRows = new Map();
 
         function formatNumberFull(num) {
             return Number(num || 0).toLocaleString('zh-CN');
@@ -773,13 +782,26 @@
             const inferredCount = Number(q?.inferred_account_count || 0);
             const minLimit = Number(q?.inferred_daily_token_limit_min || 0);
             const maxLimit = Number(q?.inferred_daily_token_limit_max || 0);
+            const sourceWindows = Array.isArray(q?.inferred_source_windows) ? q.inferred_source_windows : [];
+            const sourceWindowText = sourceWindows.length
+                ? ` · 窗口 ${sourceWindows.map(name => name === 'last_7d' ? '7天' : (name === 'last_5h' ? '5小时' : name)).join('/')}`
+                : '';
+            const quotaSnapshotCount = Number(q?.quota_snapshot_count || 0);
+            const quotaWindowUsageCount = Number(q?.quota_window_usage_count || 0);
             const percentClass = configured && percent >= 90 ? 'danger' : (configured && percent >= 70 ? 'warn' : '');
             const sourceText = configured
                 ? `${formatNumberFull(accountCount)} 个认证文件 · 单号日额度 ${formatCompactNumber(dailyLimit)}`
-                : `${formatNumberFull(accountCount)} 个认证文件 · 不主动查询 provider 额度`;
+                : `${formatNumberFull(accountCount)} 个认证文件 · 额度快照 ${formatNumberFull(quotaSnapshotCount)} 个`;
+            const statusText = q?.inference_status === 'missing_quota_window_usage'
+                ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但本地窗口用量不足`
+                : (q?.inference_status === 'insufficient_quota_window_percent'
+                    ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但缺少有效占用百分比`
+                    : `proxy 认证文件列表未返回额度快照，当前快照样本 ${formatNumberFull(quotaSnapshotCount)} 个`);
             const inferredText = configured
-                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${minLimit && maxLimit ? ` · 范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
-                : 'Key Portal 不主动查询 provider 原生额度，先只展示今日已用 Tokens';
+                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${sourceWindowText}${minLimit && maxLimit ? ` · 单号范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
+                : `${statusText}；不由 Key Portal 主动查询 provider 原生额度`;
+            const totalDisplay = configured ? formatPercent(percent) : `${formatNumberFull(quotaSnapshotCount)} 快照`;
+            const totalHint = configured ? `${formatCompactNumber(used)} / ${formatCompactNumber(total)}` : statusText;
             return `<div class="node-card">
                 <h3>今日预估额度消耗 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
                 <div class="node-overview">
@@ -790,12 +812,13 @@
                     </div>
                     <div class="node-risk">
                         <span>总额度占用</span>
-                        <div class="node-failure ${percentClass}"><strong>${configured ? formatPercent(percent) : '-'}</strong></div>
-                        <small>${configured ? `${formatCompactNumber(used)} / ${formatCompactNumber(total)}` : '无法推算总额度'}</small>
+                        <div class="node-failure ${percentClass}"><strong>${totalDisplay}</strong></div>
+                        <small title="${escapeHtml(totalHint)}">${escapeHtml(totalHint)}</small>
                     </div>
                 </div>
                 <div class="node-mini-grid">
-                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)}</strong></div>
+                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)} / 快照 ${formatNumberFull(quotaSnapshotCount)}</strong></div>
+                    <div class="node-mini"><span>窗口用量</span><strong>${formatNumberFull(quotaWindowUsageCount)}</strong></div>
                     <div class="node-mini"><span>推算说明</span><strong title="${escapeHtml(inferredText)}">${escapeHtml(inferredText)}</strong></div>
                 </div>
             </div>`;
@@ -912,12 +935,15 @@
 
         function trafficWindowCell(bucket, maxRequests) {
             const requests = Number(bucket?.requests || 0);
+            const success = Number(bucket?.success || 0);
+            const failure = Number(bucket?.failure || 0);
             const tokens = Number(bucket?.tokens || 0);
             const fill = maxRequests > 0 ? clampPercent(requests / maxRequests * 100) : 0;
             const failLevel = nodeFailureClass(bucket?.failure_rate);
+            const detailTitle = `${formatNumberFull(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · ${tokenBreakdownText(bucket)}`;
             return `<div class="traffic-window">
                 <strong title="${escapeHtml(formatNumberFull(requests))} 请求">${formatNumberFull(requests)}</strong>
-                <span title="${escapeHtml(formatNumberFull(tokens))} Tokens · ${escapeHtml(tokenBreakdownText(bucket))}">${formatCompactNumber(tokens)} Tokens · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
+                <span title="${escapeHtml(detailTitle)}">${formatCompactNumber(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
                 <div class="traffic-bar"><span class="traffic-bar-fill ${failLevel}" style="--fill:${fill}%"></span></div>
             </div>`;
         }
@@ -967,8 +993,38 @@
             return `auth:${authRowKey(item)}`;
         }
 
+        function trafficSortValue(item, mode, key) {
+            if (key === 'name') return mode === 'node' ? String(item.name || '') : String(item.account || '');
+            if (key === 'status') return trafficStatusFor(item).text;
+            if (['last_1h', 'last_5h', 'last_24h', 'last_7d'].includes(key)) return Number(item[key]?.requests || 0);
+            return 0;
+        }
+
+        function sortTrafficItems(items, mode) {
+            const state = trafficSortState[mode] || {};
+            if (!state.key) return items;
+            const dir = state.dir === 'asc' ? 1 : -1;
+            return [...items].sort((a, b) => {
+                const av = trafficSortValue(a, mode, state.key);
+                const bv = trafficSortValue(b, mode, state.key);
+                if (typeof av === 'string' || typeof bv === 'string') {
+                    return String(av).localeCompare(String(bv), 'zh-CN') * dir;
+                }
+                return (Number(av || 0) - Number(bv || 0)) * dir;
+            });
+        }
+
+        function trafficSortHead(mode, key, label) {
+            const state = trafficSortState[mode] || {};
+            const active = state.key === key;
+            const mark = active ? (state.dir === 'asc' ? '▲' : '▼') : '⇅';
+            const activeClass = active ? ' is-active' : '';
+            return `<button class="traffic-sort-btn${activeClass}" type="button" data-traffic-sort="${escapeHtml(key)}" title="点击按${escapeHtml(label)}排序"><span>${escapeHtml(label)}</span><span class="traffic-sort-mark">${mark}</span></button>`;
+        }
+
         function renderTrafficRank(items, mode) {
             if (!items.length) return '<div class="empty-state">暂无流量数据</div>';
+            items = sortTrafficItems(items, mode);
             const maxRequests = Math.max(1, ...items.flatMap(item => ['last_1h', 'last_5h', 'last_24h', 'last_7d'].map(name => Number(item[name]?.requests || 0))));
             const rows = items.map(item => {
                 const status = trafficStatusFor(item);
@@ -996,12 +1052,12 @@
             return `<div class="traffic-board">
                 <div class="traffic-rank ${mode === 'node' ? 'with-actions' : ''}">
                     <div class="traffic-rank-head">
-                        <div>${mode === 'node' ? '节点' : '认证文件'}</div>
-                        <div>近 1 小时</div>
-                        <div>近 5 小时</div>
-                        <div>近 24 小时</div>
-                        <div>近 7 天</div>
-                        <div>状态</div>
+                        <div>${trafficSortHead(mode, 'name', mode === 'node' ? '节点' : '认证文件')}</div>
+                        <div>${trafficSortHead(mode, 'last_1h', '近 1 小时')}</div>
+                        <div>${trafficSortHead(mode, 'last_5h', '近 5 小时')}</div>
+                        <div>${trafficSortHead(mode, 'last_24h', '近 24 小时')}</div>
+                        <div>${trafficSortHead(mode, 'last_7d', '近 7 天')}</div>
+                        <div>${trafficSortHead(mode, 'status', '状态')}</div>
                         ${mode === 'node' ? '<div>管理</div>' : ''}
                     </div>
                     ${rows}
@@ -1019,6 +1075,19 @@
         }
 
         function bindTrafficRows() {
+            document.querySelectorAll('[data-traffic-sort]').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    const key = button.dataset.trafficSort || '';
+                    const state = trafficSortState[authStatsView];
+                    if (state.key === key) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+                    else {
+                        state.key = key;
+                        state.dir = key === 'name' || key === 'status' ? 'asc' : 'desc';
+                    }
+                    renderView(lastAuthStatsRows, lastAuthStatsNodeEntries, lastAuthStatsNodeSignals, lastAuthStatsGroupedRows);
+                });
+            });
             document.querySelectorAll('.traffic-rank-row').forEach(row => {
                 row.addEventListener('click', (event) => {
                     if (event.target.closest('a, button')) return;
@@ -1196,6 +1265,10 @@
                 });
                 renderNodeManagementActions();
                 const groupedRows = groupAuthRowsByNode(rows);
+                lastAuthStatsRows = rows;
+                lastAuthStatsNodeEntries = nodeEntries;
+                lastAuthStatsNodeSignals = nodeSignals;
+                lastAuthStatsGroupedRows = groupedRows;
                 ensureAuthNodeExpansion(Array.from(groupedRows.entries()), nodeSignals);
                 const quotaCard = renderTodayQuotaCard(data.today_quota_usage || {});
                 summaryEl.innerHTML = quotaCard;

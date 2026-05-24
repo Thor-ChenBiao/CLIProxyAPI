@@ -24,7 +24,7 @@ def export_cliproxy_snapshot(call_management_api):
     """Export complete usage snapshot from CLIProxyAPI."""
     try:
         print(f"[Snapshot] Exporting usage data from CLIProxyAPI...")
-        data, err = call_management_api("GET", "/v0/management/usage/export")
+        data, err = call_management_api("GET", "/v0/management/usage-statistics/export")
 
         if err:
             print(f"[Snapshot] Export failed: {err}")
@@ -72,7 +72,7 @@ def import_cliproxy_snapshot(call_management_api):
         print(f"  Requests:    {total_requests:,}")
 
         print(f"[Snapshot] Importing into CLIProxyAPI...")
-        data, err = call_management_api("POST", "/v0/management/usage/import", snapshot)
+        data, err = call_management_api("POST", "/v0/management/usage-statistics/import", snapshot)
 
         if err:
             print(f"[Snapshot] Import failed: {err}")

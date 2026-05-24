@@ -19,7 +19,7 @@ CSV_FILE = os.path.join(BASE_DIR, "data", "usage_history.csv")
 SCHEMA_FILE = os.path.join(BASE_DIR, "db_schema.sql")
 USER_KEYS_FILE = os.path.join(BASE_DIR, "data", "user_keys.json")
 
-MANAGEMENT_API_URL = "http://localhost:8317/v0/management/usage"
+MANAGEMENT_API_URL = "http://localhost:8317/v0/management/usage-statistics"
 MANAGEMENT_API_KEY = "admin123"
 
 

@@ -44,12 +44,30 @@
         .pixel-toggle .view-btn:hover, .pixel-toggle .pixel-select:hover { background: #24306b; transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(0,0,0,0.35); }
         .pixel-toggle .view-btn.active { background: #ffe66d; color: #101633; border-color: #ffe66d; text-shadow: none; box-shadow: 3px 3px 0 #5f3dc4; }
         .pixel-toggle .pixel-select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, #ffe66d 50%), linear-gradient(135deg, #ffe66d 50%, transparent 50%); background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; cursor: pointer; }
-        .pixel-track { position: relative; min-height: 390px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #5fb657 156px 184px, #4f9d4a 184px 196px, #565b7a 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; }
+        .pixel-track { position: relative; min-height: 390px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #5fb657 156px 184px, #4f9d4a 184px 196px, #565b7a 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; transition: background 1.2s ease, box-shadow 1.2s ease; contain: layout paint; transform: translateZ(0); }
+        .pixel-track.sky-boost { background: linear-gradient(#4f46e5 0 70px, #fb7185 70px 118px, #facc15 118px 144px, #7fd06a 144px 166px, #5fb657 166px 184px, #4f9d4a 184px 196px, #3f4568 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.18), inset 0 0 80px rgba(250,204,21,0.22); }
+        .pixel-track.sky-ufo { background: linear-gradient(#111827 0 82px, #312e81 82px 128px, #0f766e 128px 160px, #5fb657 160px 184px, #4f9d4a 184px 196px, #30364f 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.18), inset 0 0 90px rgba(94,234,212,0.25); }
+        .pixel-track.sky-evening { background: linear-gradient(#7c3aed 0 70px, #fb7185 70px 118px, #fbbf24 118px 144px, #7fd06a 144px 166px, #5fb657 166px 184px, #4f9d4a 184px 196px, #4b526f 196px 100%); }
+        .pixel-track.sky-night { background: linear-gradient(#0f172a 0 94px, #1e1b4b 94px 132px, #164e63 132px 160px, #2f855a 160px 184px, #276749 184px 196px, #30364f 196px 100%); }
         .pixel-track::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 72px, rgba(255,255,255,0.5) 72px 110px, transparent 110px 180px); background-position-x: var(--cloud-x, 0px); opacity: 0.18; }
         .pixel-track::after { content: ''; position: absolute; left: 0; right: 0; top: 196px; bottom: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,0.14) 0 2px, transparent 2px 44px), repeating-linear-gradient(90deg, rgba(255,255,255,0.22) 0 34px, transparent 34px 70px), linear-gradient(180deg, rgba(86,91,122,0.88), rgba(47,52,77,0.92)); background-position: 0 0, var(--road-x, 0px) 0, 0 0; opacity: 0.92; }
-        .pixel-sun { position: absolute; right: 26px; top: 20px; width: 38px; height: 38px; background: #ffe66d; box-shadow: 0 0 0 6px rgba(255,230,109,0.25); }
+        .pixel-sun { position: absolute; left: var(--celestial-left, 74%); top: var(--celestial-top, 18px); width: 12px; height: 12px; background: #fff7ad; opacity: var(--sun-opacity, 1); transform: translate(-24px, 0); transition: left 1.5s ease, top 1.5s ease, opacity 1.5s ease; box-shadow: 12px 0 #ffe66d, 24px 0 #ffe66d, 36px 0 #fff7ad, 0 12px #ffe66d, 12px 12px #ffd166, 24px 12px #ffd166, 36px 12px #ffe66d, -12px 24px rgba(255,230,109,0.82), 0 24px #ffe66d, 12px 24px #ffd166, 24px 24px #ffd166, 36px 24px #ffe66d, 48px 24px rgba(255,230,109,0.82), 0 36px #fff7ad, 12px 36px #ffe66d, 24px 36px #ffe66d, 36px 36px #fff7ad, 12px -12px rgba(255,230,109,0.72), 24px -12px rgba(255,230,109,0.72), 12px 48px rgba(255,230,109,0.72), 24px 48px rgba(255,230,109,0.72), -12px 12px rgba(255,230,109,0.58), 48px 12px rgba(255,230,109,0.58), -24px 24px rgba(255,230,109,0.38), 60px 24px rgba(255,230,109,0.38); }
+        .pixel-moon { position: absolute; left: var(--celestial-left, 74%); top: var(--celestial-top, 18px); width: 12px; height: 12px; background: transparent; opacity: var(--moon-opacity, 0); transform: translate(-18px, 0); transition: left 1.5s ease, top 1.5s ease, opacity 1.5s ease; }
+        .pixel-moon.phase-0 { background: rgba(148,163,184,0.2); box-shadow: 12px 0 rgba(148,163,184,0.16), 0 12px rgba(148,163,184,0.16), 12px 12px rgba(148,163,184,0.12); }
+        .pixel-moon.phase-1 { background: transparent; box-shadow: 24px 0 #bae6fd, 24px 12px #7dd3fc, 24px 24px #38bdf8; }
+        .pixel-moon.phase-2 { background: transparent; box-shadow: 12px 0 #e0f2fe, 24px 0 #bae6fd, 12px 12px #bae6fd, 24px 12px #7dd3fc, 12px 24px #7dd3fc, 24px 24px #38bdf8; }
+        .pixel-moon.phase-3 { background: #e0f2fe; box-shadow: 12px 0 #e0f2fe, 24px 0 #bae6fd, 0 12px #e0f2fe, 12px 12px #bae6fd, 24px 12px #7dd3fc, 0 24px #bae6fd, 12px 24px #7dd3fc, 24px 24px #38bdf8; }
+        .pixel-moon.phase-4 { background: #f8fafc; box-shadow: 12px 0 #f8fafc, 24px 0 #e0f2fe, 0 12px #f8fafc, 12px 12px #e0f2fe, 24px 12px #bae6fd, 0 24px #e0f2fe, 12px 24px #bae6fd, 24px 24px #7dd3fc, -12px 12px rgba(224,242,254,0.55), 36px 12px rgba(186,230,253,0.55); }
+        .pixel-moon.phase-5 { background: #e0f2fe; box-shadow: 12px 0 #e0f2fe, 0 12px #e0f2fe, 12px 12px #bae6fd, 0 24px #bae6fd, 12px 24px #7dd3fc; }
+        .pixel-moon.phase-6 { background: #e0f2fe; box-shadow: 0 12px #bae6fd, 0 24px #7dd3fc; }
+        .pixel-moon.phase-7 { background: #bae6fd; box-shadow: 0 12px #7dd3fc, 0 24px #38bdf8; }
+        .pixel-stars { position: absolute; inset: 0; opacity: 0; transition: opacity 1.5s ease; background: radial-gradient(circle at 18% 24%, #fff 0 2px, transparent 2px), radial-gradient(circle at 38% 14%, #fde68a 0 2px, transparent 2px), radial-gradient(circle at 62% 28%, #fff 0 1.5px, transparent 1.5px), radial-gradient(circle at 78% 18%, #bae6fd 0 2px, transparent 2px), radial-gradient(circle at 88% 36%, #fff 0 1.5px, transparent 1.5px); pointer-events: none; }
+        .pixel-track.sky-night .pixel-stars { opacity: 0.85; }
         .pixel-cloud { position: absolute; top: 30px; width: 64px; height: 18px; background: white; box-shadow: 18px -10px 0 white, 36px 0 0 white; opacity: 0.75; animation: pixelClouds 24s linear infinite; }
         .pixel-cloud.c2 { top: 82px; animation-duration: 31s; animation-delay: -12s; opacity: 0.55; }
+        .pixel-track.sky-night .pixel-stars { opacity: 0.78; }
+        .pixel-track.sky-night .pixel-cloud { opacity: 0.22; }
+        .pixel-track.sky-evening .pixel-cloud { opacity: 0.48; }
         .pixel-scenery { position: absolute; left: 0; right: 0; top: 0; height: 170px; overflow: hidden; pointer-events: none; }
         .pixel-scenery-strip { position: absolute; left: 0; top: 0; width: 200%; height: 100%; transform: translateX(var(--scenery-x, 0px)); }
         .pixel-scenery-copy { position: absolute; left: 0; top: 0; width: 50%; height: 100%; }
@@ -72,14 +90,22 @@
         .race-lane { position: absolute; left: 0; right: 0; height: 44px; border-top: 2px dashed rgba(255,255,255,0.36); }
         .race-lane:nth-child(odd) { background: rgba(255,255,255,0.04); }
         .race-lane.me { background: rgba(52,211,153,0.18); box-shadow: inset 0 0 0 2px rgba(52,211,153,0.45); }
-        .pixel-racer { position: absolute; left: 12px; top: 0; transform: translateX(var(--race-x, 0px)); transition: transform 1.35s cubic-bezier(.16,.84,.2,1), top 1.1s cubic-bezier(.16,.84,.2,1); z-index: 3; }
+        .pixel-racer { position: absolute; left: 12px; top: 0; transform: translateX(var(--race-x, 0px)) translateZ(0); transition: transform 1.35s cubic-bezier(.16,.84,.2,1), top 1.1s cubic-bezier(.16,.84,.2,1); z-index: 3; will-change: transform, top; }
         .pixel-racer-sprite { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 28px; font-size: 24px; filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.35)); animation: racerBob 0.75s steps(2) infinite; }
         .pixel-racer-sprite.flip { transform: scaleX(-1); }
+        .pixel-racer-sprite.level-plane { transform: rotate(45deg); }
+        .pixel-racer-sprite.level-rocket { transform: rotate(45deg); }
+        .pixel-racer-sprite.level-ufo { transform: rotate(15deg); }
         .pixel-racer.fast .pixel-racer-sprite { animation-duration: 0.28s; }
+        .pixel-racer.slowing .pixel-racer-sprite { animation: racerCalm 1.15s steps(2) infinite; }
         .pixel-racer.turbo .pixel-racer-sprite { animation: racerBob 0.22s steps(2) infinite, turboShake 0.18s steps(2) infinite; }
+        .pixel-racer.turbo.slowing .pixel-racer-sprite { animation: racerCalm 1.05s steps(2) infinite; }
         .pixel-trail { position: absolute; left: -26px; top: 12px; width: 26px; height: 8px; background: repeating-linear-gradient(90deg, rgba(255,230,109,0.95) 0 7px, transparent 7px 13px); opacity: 0; }
         .pixel-racer.fast .pixel-trail { opacity: 0.75; }
         .pixel-racer.turbo .pixel-trail { opacity: 1; width: 42px; left: -42px; background: repeating-linear-gradient(90deg, #ff6b6b 0 7px, #ffe66d 7px 14px, transparent 14px 21px); }
+        .pixel-racer.nitro .pixel-trail { opacity: 1; width: 58px; left: -58px; top: 10px; height: 12px; background: repeating-linear-gradient(90deg, #38bdf8 0 9px, #a78bfa 9px 18px, #ffe66d 18px 27px, transparent 27px 36px); animation: nitroPulse 0.34s steps(2) infinite; }
+        .pixel-racer.nitro .pixel-racer-sprite { filter: drop-shadow(0 0 8px rgba(125,211,252,0.95)) drop-shadow(3px 3px 0 rgba(0,0,0,0.35)); }
+        .pixel-racer.idle .pixel-trail { opacity: 0.7; width: 18px; left: -18px; top: 14px; height: 8px; background: repeating-linear-gradient(90deg, rgba(203,213,225,0.76) 0 5px, transparent 5px 10px); animation: smokePuff 1.2s steps(3) infinite; }
         .pixel-name { position: absolute; left: 4px; top: -16px; padding: 1px 5px; background: #101633; color: #ffe66d; border: 2px solid #ffe66d; font: 700 11px 'Courier New', monospace; letter-spacing: 0.08em; }
         .pixel-racer.me .pixel-name { background: #052e26; color: #5eead4; border-color: #34d399; box-shadow: 0 0 0 2px rgba(52,211,153,0.22); }
         .pixel-racer.me .pixel-speed { color: #a7f3d0; text-shadow: 2px 2px 0 rgba(5,46,38,0.75); }
@@ -96,14 +122,21 @@
         .pixel-hud-row span:first-child { color: #ffe66d; }
         .pixel-hud-row.up { color: #86efac; transform: translateX(4px); }
         .pixel-hud-row.down { color: #fca5a5; transform: translateX(-3px); }
+        .pixel-radio-panel { position: absolute; left: 286px; top: 14px; z-index: 7; width: min(250px, calc(100% - 398px)); padding: 7px 9px; border: 2px solid rgba(125,211,252,0.62); border-radius: 8px; background: rgba(8,13,34,0.34); color: #fef3c7; font: 700 10px 'Courier New', monospace; box-shadow: 3px 3px 0 rgba(0,0,0,0.12); backdrop-filter: blur(0.5px); }
+        .pixel-event-line { margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fde68a; text-shadow: 2px 2px 0 #101633; }
+        .pixel-event-line strong { color: #67e8f9; }
+        .pixel-event-line.rare { color: #fca5a5; }
         @keyframes liveBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.35; } }
+        @keyframes nitroPulse { 0% { transform: scaleX(0.72); opacity: 0.78; } 100% { transform: scaleX(1.08); opacity: 1; } }
+        @keyframes smokePuff { 0% { transform: translateX(0); opacity: 0.72; } 100% { transform: translateX(-12px); opacity: 0.18; } }
         .speed-empty { padding: 16px; color: #9fb1ff; text-align: center; background: #182047; border: 2px solid #4652a8; border-radius: 6px; font-family: 'Courier New', monospace; }
         @keyframes racerBob { 0%,100% { margin-top: 0; } 50% { margin-top: -4px; } }
+        @keyframes racerCalm { 0%,100% { margin-top: 0; } 50% { margin-top: -1px; } }
         @keyframes turboShake { 0%,100% { margin-left: 0; } 50% { margin-left: 3px; } }
         @keyframes pixelClouds { from { background-position-x: 0; transform: translateX(0); } to { background-position-x: -180px; transform: translateX(-60px); } }
         @keyframes pixelRoad { from { background-position-x: 0; } to { background-position-x: -72px; } }
         @keyframes sceneryScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-        @media (max-width: 820px) { .pixel-track { min-height: 320px; } .pixel-speed { display: none; } }
+        @media (max-width: 820px) { .pixel-track { min-height: 320px; } .pixel-speed { display: none; } .pixel-radio-panel { left: auto; right: 10px; top: 92px; width: min(220px, calc(100% - 24px)); } }
         .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
         .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
@@ -322,7 +355,9 @@
                     </div>
                 </div>
                 <div class="pixel-track" id="speedRaceTrack">
+                    <div class="pixel-stars"></div>
                     <div class="pixel-sun"></div>
+                    <div class="pixel-moon"></div>
                     <div class="pixel-cloud"></div>
                     <div class="pixel-cloud c2"></div>
                     <div class="pixel-scenery">
@@ -358,6 +393,7 @@
                             <div class="pixel-hud-card" id="speedLeaderboardRows"><span class="pixel-hud-title">TOP RACERS</span> LOADING...</div>
                         </div>
                     </div>
+                    <div class="pixel-radio-panel" id="speedRaceEvents"><span class="pixel-hud-title">RACE RADIO</span> STANDBY...</div>
                     <div id="speedRaceRows"><div class="speed-empty" style="margin:140px 18px 0;">正在加载赛道...</div></div>
                 </div>
             </div>
@@ -680,12 +716,18 @@
         let speedLeaderboardClockRenderedSecond = null;
         let speedRacePositions = {};
         let speedRaceLanes = {};
+        let speedRaceNodes = {};
         let speedRaceRanks = {};
         let speedRaceStates = {};
+        let speedRaceLastLevels = {};
+        let speedRaceEventKeys = {};
+        let speedRaceEvents = [];
         let speedRaceWorldRate = 0;
         let speedRaceWorldOffset = { road: 0, clouds: 0, scenery: 0 };
         let speedRaceFrameTimer = null;
         let speedRaceLastFrameAt = 0;
+        let speedRaceTrackWidth = 900;
+        let speedRaceTrackWidthAt = 0;
         let raceVisibleRacers = 5;
         let raceLaneCountSetting = 5;
         const RACE_SIZE_LANES = { 5: 5 };
@@ -918,6 +960,39 @@
             return { rank, rate, level: level || { label: '步行', index: 0, progress: 0 }, unit, value };
         }
 
+        function raceEventText(levelLabel) {
+            if (levelLabel === '汽车') return 'hits CAR MODE';
+            if (levelLabel === '直升机') return 'lifts into HELI MODE';
+            if (levelLabel === '飞机') return 'takes off';
+            if (levelLabel === '火箭') return 'ignites ROCKET MODE';
+            if (levelLabel === 'UFO') return 'UFO SIGHTING';
+            return '';
+        }
+
+        function pushRaceEvent(state, text, rare = false, key = '') {
+            if (!text) return;
+            const now = Date.now();
+            const eventKey = key || `${state.id}:${text}`;
+            if (speedRaceEventKeys[eventKey] && now - speedRaceEventKeys[eventKey] < 9000) return;
+            speedRaceEventKeys[eventKey] = now;
+            speedRaceEvents.unshift({ id: `${eventKey}:${now}`, name: state.row?.email_mask || 'RACER', text, rare });
+            speedRaceEvents = speedRaceEvents.slice(0, 3);
+        }
+
+        function pushRaceLevelEvent(state, levelLabel) {
+            const text = raceEventText(levelLabel);
+            if (!text) return;
+            pushRaceEvent(state, text, ['飞机', '火箭', 'UFO'].includes(levelLabel), `${state.id}:level:${levelLabel}`);
+        }
+
+        function renderRaceEvents() {
+            const eventEl = document.getElementById('speedRaceEvents');
+            if (!eventEl) return;
+            eventEl.innerHTML = speedRaceEvents.length
+                ? '<span class="pixel-hud-title">RACE RADIO</span>' + speedRaceEvents.map(event => `<div class="pixel-event-line${event.rare ? ' rare' : ''}"><strong>${escapeHtml(event.name)}</strong> ${escapeHtml(event.text)}</div>`).join('')
+                : '<span class="pixel-hud-title">RACE RADIO</span> STANDBY...';
+        }
+
         function raceSprite(levelLabel) {
             if (levelLabel === '熄火') return { icon: '🐢', flip: true };
             if (levelLabel === '跑步') return { icon: '🏃', flip: true };
@@ -925,9 +1000,9 @@
             if (levelLabel === '电动车') return { icon: '🛵', flip: true };
             if (levelLabel === '汽车') return { icon: '🏎️', flip: true };
             if (levelLabel === '直升机') return { icon: '🚁', flip: true };
-            if (levelLabel === '飞机') return { icon: '✈️', flip: false };
-            if (levelLabel === '火箭') return { icon: '🚀', flip: false };
-            if (levelLabel === 'UFO') return { icon: '🛸', flip: false };
+            if (levelLabel === '飞机') return { icon: '✈️', flip: false, className: 'level-plane' };
+            if (levelLabel === '火箭') return { icon: '🚀', flip: false, className: 'level-rocket' };
+            if (levelLabel === 'UFO') return { icon: '🛸', flip: false, className: 'level-ufo' };
             return { icon: '🚶', flip: true };
         }
 
@@ -984,9 +1059,11 @@
                 ['步行', 0.0001], ['跑步', 0.2], ['自行车', 0.6], ['电动车', 1.5],
                 ['汽车', 3], ['直升机', 8], ['飞机', 18], ['火箭', 40], ['UFO', 80]
             ];
-            const thresholds = metric === 'requests'
-                ? requestThresholds
-                : requestThresholds.map(([label, threshold]) => [label, threshold * 100000]);
+            const tokenThresholds = [
+                ['步行', 1], ['跑步', 20000], ['自行车', 60000], ['电动车', 120000],
+                ['汽车', 250000], ['直升机', 500000], ['飞机', 750000], ['火箭', 1100000], ['UFO', 1600000]
+            ];
+            const thresholds = metric === 'requests' ? requestThresholds : tokenThresholds;
             let idx = 0;
             for (let i = 0; i < thresholds.length; i += 1) {
                 if (visibleRate >= thresholds[i][1]) idx = i;
@@ -996,7 +1073,8 @@
 
         function raceLevelThresholds(metric) {
             const requestThresholds = [0, 0.0001, 0.2, 0.6, 1.5, 3, 8, 18, 40, 80];
-            return metric === 'requests' ? requestThresholds : requestThresholds.map(value => value * 100000);
+            const tokenThresholds = [0, 1, 20000, 60000, 120000, 250000, 500000, 750000, 1100000, 1600000];
+            return metric === 'requests' ? requestThresholds : tokenThresholds;
         }
 
         function raceSegmentEdges(maxTravel) {
@@ -1067,13 +1145,27 @@
             const parts = state.parts || raceMetricParts(row, metric);
             const nextRank = parts.rank || fallbackIndex + 1;
             const targetRate = Number(parts.rate || 0);
+            if (state.rank && nextRank && nextRank < state.rank) {
+                const jump = state.rank - nextRank;
+                pushRaceEvent(state, jump >= 2 ? `jumps to #${nextRank}` : `takes #${nextRank}`, false, `${state.id}:rank:${nextRank}:${Math.floor(now / 12000)}`);
+            }
             if (state.targetRate !== targetRate || state.rank !== nextRank) {
                 state.fromRate = state.displayRate;
+                state.previousTargetRate = state.targetRate;
                 state.targetRate = targetRate;
+                if (targetRate >= Math.max(1, state.previousTargetRate) * 1.5 && targetRate - state.previousTargetRate >= 20000) {
+                    state.nitroUntil = now + 3600;
+                    const gain = Math.round((targetRate / Math.max(1, state.previousTargetRate) - 1) * 100);
+                    pushRaceEvent(state, `hits NITRO +${gain}%`, true, `${state.id}:nitro:${Math.floor(now / 10000)}`);
+                }
                 state.transitionStart = now + state.phaseMs;
                 state.transitionEnd = state.transitionStart + transitionDuration(state.displayRate, targetRate);
                 state.rank = nextRank;
             }
+            const nextLevel = levelForDisplayRate(targetRate, metric);
+            const previousLevelIndex = speedRaceLastLevels[state.id] || 0;
+            if (Number(nextLevel.index || 0) >= 5 && Number(nextLevel.index || 0) > previousLevelIndex) pushRaceLevelEvent(state, nextLevel.label);
+            speedRaceLastLevels[state.id] = Math.max(previousLevelIndex, Number(nextLevel.index || 0));
             state.lastSeenAt = now;
             state.lastSnapshotAt = now;
             return state;
@@ -1128,20 +1220,32 @@
         }
 
         function ensureRaceNode(raceEl, id) {
-            let lane = raceEl.querySelector(`[data-lane-id="${id}"]`);
-            let racer = raceEl.querySelector(`[data-racer-id="${id}"]`);
-            if (!lane) {
-                lane = document.createElement('div');
-                lane.dataset.laneId = id;
-                raceEl.appendChild(lane);
-            }
-            if (!racer) {
-                racer = document.createElement('div');
-                racer.dataset.racerId = id;
-                racer.innerHTML = '<div class="pixel-name"></div><div class="pixel-trail"></div><div class="pixel-racer-sprite"></div><div class="pixel-speed"></div>';
-                raceEl.appendChild(racer);
-            }
-            return { lane, racer };
+            let entry = speedRaceNodes[id];
+            if (entry?.lane?.isConnected && entry?.racer?.isConnected) return entry;
+            const lane = document.createElement('div');
+            const racer = document.createElement('div');
+            lane.dataset.laneId = id;
+            racer.dataset.racerId = id;
+            racer.innerHTML = '<div class="pixel-name"></div><div class="pixel-trail"></div><div class="pixel-racer-sprite"></div><div class="pixel-speed"></div>';
+            entry = speedRaceNodes[id] = {
+                lane,
+                racer,
+                nameEl: racer.querySelector('.pixel-name'),
+                spriteEl: racer.querySelector('.pixel-racer-sprite'),
+                speedEl: racer.querySelector('.pixel-speed'),
+                laneClass: '',
+                laneTop: '',
+                racerClass: '',
+                racerTop: '',
+                raceX: '',
+                nameText: '',
+                spriteClass: '',
+                spriteText: '',
+                speedText: '',
+            };
+            raceEl.appendChild(lane);
+            raceEl.appendChild(racer);
+            return entry;
         }
 
         function updateRaceNode(raceEl, state, laneIndex, trackWidth, maxLanes, activeIds) {
@@ -1155,31 +1259,43 @@
             const levelIndex = Number(level.index || 0);
             const speedDelta = previous == null ? 0 : state.x - previous;
             speedRacePositions[state.id] = state.x;
+            const rateJump = state.previousTargetRate > 0 ? state.targetRate / Math.max(1, state.previousTargetRate) : 0;
+            const nitroActive = state.nitroUntil && performance.now() < state.nitroUntil;
+            const slowingClass = state.targetRate < state.fromRate && Math.abs(state.targetRate - state.fromRate) > 1000 ? ' slowing' : '';
             const fastClass = state.displayRate > 0 && (levelIndex >= 4 || speedDelta > 16) ? ' fast' : '';
             const turboClass = state.displayRate > 0 && (levelIndex >= 8 || speedDelta > 34) ? ' turbo' : '';
+            const nitroClass = nitroActive || rateJump >= 1.5 ? ' nitro' : '';
+            const idleClass = state.displayRate > 0 && levelIndex <= 2 ? ' idle' : '';
             const meClass = row.is_current_user ? ' me' : '';
             const sprite = raceSprite(level.label);
-            const { lane, racer } = ensureRaceNode(raceEl, state.id);
-            lane.className = `race-lane${meClass}`;
-            lane.style.top = `${laneTop}px`;
-            racer.className = `pixel-racer${fastClass}${turboClass}${meClass}`;
-            racer.style.top = `${laneTop + 10}px`;
-            racer.style.setProperty('--race-x', `${state.x}px`);
-            racer.querySelector('.pixel-name').textContent = `${row.email_mask || '??'}${row.is_current_user ? ' YOU' : ''}`;
-            const spriteEl = racer.querySelector('.pixel-racer-sprite');
-            spriteEl.className = `pixel-racer-sprite${sprite.flip ? ' flip' : ''}`;
-            spriteEl.textContent = sprite.icon;
-            const speedEl = racer.querySelector('.pixel-speed');
+            const node = ensureRaceNode(raceEl, state.id);
+            const laneClass = `race-lane${meClass}`;
+            const laneTopText = `${laneTop}px`;
+            const racerClass = `pixel-racer${fastClass}${turboClass}${nitroClass}${slowingClass}${idleClass}${meClass}`;
+            const racerTopText = `${laneTop + 10}px`;
+            const raceXText = `${state.x.toFixed(2)}px`;
+            const nameText = `${row.email_mask || '??'}${row.is_current_user ? ' YOU' : ''}`;
+            const spriteClass = `pixel-racer-sprite${sprite.flip ? ' flip' : ''}${sprite.className ? ' ' + sprite.className : ''}`;
             const visibleRate = displayedRaceRate(state.displayRate);
-            speedEl.textContent = `#${parts.rank || '-'} ${level.label} · ${formatNumber(visibleRate)} ${parts.unit}`;
+            const speedText = `#${parts.rank || '-'} ${level.label} · ${formatNumber(visibleRate)} ${parts.unit}`;
+            if (node.laneClass !== laneClass) { node.lane.className = laneClass; node.laneClass = laneClass; }
+            if (node.laneTop !== laneTopText) { node.lane.style.top = laneTopText; node.laneTop = laneTopText; }
+            if (node.racerClass !== racerClass) { node.racer.className = racerClass; node.racerClass = racerClass; }
+            if (node.racerTop !== racerTopText) { node.racer.style.top = racerTopText; node.racerTop = racerTopText; }
+            if (node.raceX !== raceXText) { node.racer.style.setProperty('--race-x', raceXText); node.raceX = raceXText; }
+            if (node.nameText !== nameText) { node.nameEl.textContent = nameText; node.nameText = nameText; }
+            if (node.spriteClass !== spriteClass) { node.spriteEl.className = spriteClass; node.spriteClass = spriteClass; }
+            if (node.spriteText !== sprite.icon) { node.spriteEl.textContent = sprite.icon; node.spriteText = sprite.icon; }
+            if (node.speedText !== speedText) { node.speedEl.textContent = speedText; node.speedText = speedText; }
         }
 
         function pruneRaceNodes(raceEl, activeIds) {
-            raceEl.querySelectorAll('[data-racer-id]').forEach(node => {
-                if (!activeIds.has(node.dataset.racerId)) node.remove();
-            });
-            raceEl.querySelectorAll('[data-lane-id]').forEach(node => {
-                if (!activeIds.has(node.dataset.laneId)) node.remove();
+            Object.keys(speedRaceNodes).forEach(id => {
+                if (!activeIds.has(id)) {
+                    speedRaceNodes[id].racer.remove();
+                    speedRaceNodes[id].lane.remove();
+                    delete speedRaceNodes[id];
+                }
             });
         }
 
@@ -1221,6 +1337,32 @@
             return states.filter(state => now - state.lastSeenAt <= 9000 || state.displayRate > 0);
         }
 
+        function moonPhaseIndex(date) {
+            const knownNewMoon = Date.UTC(2026, 0, 18, 2, 52);
+            const lunarCycleMs = 29.530588853 * 24 * 60 * 60 * 1000;
+            const age = ((date.getTime() - knownNewMoon) % lunarCycleMs + lunarCycleMs) % lunarCycleMs;
+            return Math.floor((age / lunarCycleMs) * 8 + 0.5) % 8;
+        }
+
+        function updateTrackSky(trackEl) {
+            const bj = new Date(Date.now() + 8 * 60 * 60 * 1000);
+            const hour = bj.getUTCHours() + bj.getUTCMinutes() / 60;
+            const isNight = hour < 6 || hour >= 19;
+            const isEvening = hour >= 17 && hour < 19;
+            const dayProgress = isNight ? ((hour >= 19 ? hour - 19 : hour + 5) / 11) : clamp((hour - 6) / 13, 0, 1);
+            const left = 10 + dayProgress * 78;
+            const arc = Math.sin(dayProgress * Math.PI);
+            const top = isNight ? 34 + (1 - arc) * 34 : 18 + (1 - arc) * 62;
+            trackEl.style.setProperty('--celestial-left', `${left}%`);
+            trackEl.style.setProperty('--celestial-top', `${top}px`);
+            trackEl.style.setProperty('--sun-opacity', isNight ? 0 : 1);
+            trackEl.style.setProperty('--moon-opacity', isNight ? 1 : 0);
+            trackEl.classList.toggle('sky-night', isNight);
+            trackEl.classList.toggle('sky-evening', isEvening);
+            const moonEl = trackEl.querySelector('.pixel-moon');
+            if (moonEl) moonEl.className = `pixel-moon phase-${moonPhaseIndex(bj)}`;
+        }
+
         function renderSpeedLeaderboard(now = performance.now()) {
             const deltaSeconds = speedRaceLastFrameAt ? Math.min((now - speedRaceLastFrameAt) / 1000, 0.2) : 1 / 60;
             updateRaceClock(now);
@@ -1236,8 +1378,17 @@
             document.getElementById('speedMetricRequests')?.classList.toggle('active', metric === 'requests');
             const states = liveRaceStates(now);
             const laneCount = raceLaneCount();
-            trackEl.style.minHeight = `${raceTrackHeight(laneCount)}px`;
-            const trackWidth = trackEl.clientWidth || 900;
+            const trackHeight = `${raceTrackHeight(laneCount)}px`;
+            if (trackEl.dataset.raceHeight !== trackHeight) {
+                trackEl.style.minHeight = trackHeight;
+                trackEl.dataset.raceHeight = trackHeight;
+            }
+            if (!speedRaceTrackWidthAt || now - speedRaceTrackWidthAt > 1000) {
+                speedRaceTrackWidth = trackEl.clientWidth || speedRaceTrackWidth || 900;
+                speedRaceTrackWidthAt = now;
+            }
+            const trackWidth = speedRaceTrackWidth;
+            updateTrackSky(trackEl);
             const leadRate = states.reduce((max, state) => Math.max(max, state.displayRate), 0);
             updateWorldSpeed(trackEl, leadRate, metric, deltaSeconds);
             const activeIds = new Set();
@@ -1276,6 +1427,7 @@
                     return `<div class="pixel-hud-row${moveClass}"><span>#${p.rank || '-'} ${state.row.email_mask || '??'}</span><span>${level.label} · ${formatNumber(displayedRaceRate(state.displayRate))}${p.unit}</span></div>`;
                 }).join('')
                 : '<span class="pixel-hud-title">TOP RACERS</span> WAITING...';
+            renderRaceEvents();
         }
 
         function speedRaceFrame(now) {
@@ -1300,10 +1452,20 @@
             });
         }
 
+        function clearRaceNodes() {
+            Object.values(speedRaceNodes).forEach(node => {
+                node.racer?.remove();
+                node.lane?.remove();
+            });
+            speedRaceNodes = {};
+        }
+
         function setSpeedMetric(metric) {
             currentSpeedMetric = metric === 'requests' ? 'requests' : 'tokens';
             speedRacePositions = {};
+            speedRaceLanes = {};
             speedRaceStates = {};
+            clearRaceNodes();
             speedRaceWorldRate = 0;
             speedRaceWorldOffset = { road: 0, clouds: 0, scenery: 0 };
             renderSpeedLeaderboard();
@@ -1316,6 +1478,7 @@
             if (selector) selector.value = '5';
             speedRacePositions = {};
             speedRaceLanes = {};
+            clearRaceNodes();
             loadSpeedLeaderboard();
             renderSpeedLeaderboard();
         }
