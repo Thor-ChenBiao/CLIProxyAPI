@@ -7,11 +7,11 @@
 ## 核心原则
 
 1. Key Portal 只运行在 node-a。
-2. 新增节点只运行 Nginx、LiteLLM、cliproxyapi 和轻量 health-agent，不运行完整 Key Portal。
+2. 新增节点只运行 Nginx、LiteLLM、cliproxyapi 和轻量 health-agent，不运行完整 Key Portal。当前总体架构见 `ops/ARCHITECTURE.md`。
 3. 新增节点的 `/`、`/admin/*`、`/socket.io/*`、Key Portal API 等入口必须反代回 node-a 的 `172.31.17.144:18080`。
 4. `/v1/*` 模型请求必须走本节点自己的 LiteLLM，再走本节点自己的 cliproxyapi。
 5. 认证文件目录 `~/.cli-proxy-api/` 不要自动复制；由人工登录和管理。
-6. 新节点加入 NLB 前，必须确认本机业务 health-agent 返回 200，且当前 Nginx `/healthz` 仍正常。
+6. 新节点加入 NLB 前，必须确认本机业务 health-agent 返回 200，且 Nginx `/healthz` 已代理到 health-agent 并返回 200。
 7. NLB 是 TCP 443 passthrough，TLS 在每个节点的 Nginx 上终止。
 8. node-a 可作为开发工作区，但不要覆盖、重启或扰动 node-a 正在运行的服务；实验部署先放 node-b。
 
@@ -216,13 +216,12 @@ WantedBy=multi-user.target
 
 历史 node-b 如果 cliproxyapi 仍监听 `172.31.26.28:8317`，则 `CLIPROXY_API_URL` 应按节点改成对应内网地址。
 
-当前阶段不要把 Nginx `/healthz` 或 NLB health check 直接切到 `18081`，避免误摘节点。先用本机命令验证:
+当前 Nginx `/healthz` 应代理到 `127.0.0.1:18081/healthz`，让 NLB 按 health-agent 的业务健康结果摘除/恢复节点。变更前后都要用本机命令验证:
 
 ```bash
 curl -sS -w "http=%{http_code}\n" http://127.0.0.1:18081/healthz
+curl -k -H 'Host: token.zasdas.com' -sS -w "http=%{http_code}\n" https://127.0.0.1/healthz
 ```
-
-等所有节点都稳定后，再单独评审是否把 Nginx `/healthz` 代理到 health-agent，让 NLB 原生摘除/恢复节点。
 
 ## Key Portal / LiteLLM 监控外迁
 
@@ -271,15 +270,13 @@ proxy_pass http://127.0.0.1:4000/litellm$request_uri;
 
 ### `/healthz`
 
-必须返回本节点 cliproxyapi 健康检查。
-
-如果本节点 cliproxyapi 监听 `127.0.0.1:8317`:
+必须返回本节点 health-agent 的业务健康检查。health-agent 再检查本节点 cliproxyapi、LiteLLM 和可用认证文件。
 
 ```nginx
-location = /healthz { proxy_pass http://127.0.0.1:8317; include /etc/nginx/proxy_params; }
+location = /healthz { proxy_pass http://127.0.0.1:18081/healthz; include /etc/nginx/proxy_params; }
 ```
 
-如果某个节点 cliproxyapi 监听内网 IP，比如历史 node-b 的 `172.31.26.28:8317`，则必须改为对应内网 IP，否则 NLB health check 会失败。
+如果 health-agent 返回 503，NLB 应停止把新流量分配到该节点。不要把 `/healthz` 指向其它节点，否则会掩盖本节点故障。
 
 ### Key Portal 路由
 

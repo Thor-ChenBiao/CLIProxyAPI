@@ -1,5 +1,7 @@
 # CLIProxyAPI + Key Portal 部署与迁移指南
 
+> 状态: 历史单节点迁移文档。当前生产架构以 `ops/ARCHITECTURE.md` 为准；本文旧章节中的 Key Portal `8080`、CLIProxyAPI 直接公网入口和 `Client → CLIProxyAPI` 流程不代表当前 `NLB → Nginx → LiteLLM → cliproxyapi` 生产链路。
+
 ## 系统架构
 
 ### 整体架构图
