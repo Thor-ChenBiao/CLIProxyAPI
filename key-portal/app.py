@@ -1849,6 +1849,8 @@ def mask_speed_identity(email):
 
 
 def speed_level_for(rate, metric):
+    if rate <= 0:
+        return {"label": "度假中", "index": 0, "progress": 0}
     request_thresholds = [
         ("步行", 0),
         ("跑步", 0.2),
@@ -1858,6 +1860,7 @@ def speed_level_for(rate, metric):
         ("高铁", 8),
         ("飞机", 18),
         ("火箭", 40),
+        ("UFO", 80),
     ]
     token_thresholds = [(label, int(threshold * 100000)) for label, threshold in request_thresholds]
     thresholds = token_thresholds if metric == "tokens" else request_thresholds

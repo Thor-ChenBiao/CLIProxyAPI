@@ -852,13 +852,15 @@
         }
 
         function raceSprite(levelLabel) {
+            if (levelLabel === '度假中') return { icon: '🏖️', flip: false };
             if (levelLabel === '跑步') return { icon: '🏃', flip: true };
             if (levelLabel === '自行车') return { icon: '🚲', flip: true };
             if (levelLabel === '电动车') return { icon: '🛵', flip: true };
             if (levelLabel === '汽车') return { icon: '🏎️', flip: true };
-            if (levelLabel === '高铁') return { icon: '🚄', flip: false };
+            if (levelLabel === '高铁') return { icon: '🚄', flip: true };
             if (levelLabel === '飞机') return { icon: '✈️', flip: false };
             if (levelLabel === '火箭') return { icon: '🚀', flip: false };
+            if (levelLabel === 'UFO') return { icon: '🛸', flip: false };
             return { icon: '🚶', flip: true };
         }
 
