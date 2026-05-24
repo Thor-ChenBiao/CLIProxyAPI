@@ -64,6 +64,23 @@ def _env_int(name, default):
         return default
 
 
+def _env_float(name, default):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _env_csv(name, default):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        value = default
+    return [item.strip().lower() for item in value.split(",") if item.strip()]
+
+
 # Server settings
 HOST = os.environ.get("KEY_PORTAL_HOST", "0.0.0.0").strip() or "0.0.0.0"
 PORT = _env_int("KEY_PORTAL_PORT", 8080)
@@ -77,6 +94,10 @@ STATUS_FEISHU_WEBHOOK_URL = os.environ.get("STATUS_FEISHU_WEBHOOK_URL", "").stri
 STATUS_PUBLIC_URL = os.environ.get("STATUS_PUBLIC_URL", "").strip()
 STATUS_USAGE_RECORD_ENABLED = os.environ.get("STATUS_USAGE_RECORD_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 STATUS_USAGE_RECORD_LOOKBACK_DAYS = _env_int("STATUS_USAGE_RECORD_LOOKBACK_DAYS", 365)
+MODEL_GROUP_SPEND_ALERT_ENABLED = os.environ.get("MODEL_GROUP_SPEND_ALERT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+MODEL_GROUP_SPEND_ALERT_INTERVAL_MINUTES = _env_int("MODEL_GROUP_SPEND_ALERT_INTERVAL_MINUTES", 30)
+MODEL_GROUP_SPEND_ALERT_THRESHOLD_USD = _env_float("MODEL_GROUP_SPEND_ALERT_THRESHOLD_USD", 50.0)
+MODEL_GROUP_SPEND_ALERT_GROUPS = _env_csv("MODEL_GROUP_SPEND_ALERT_GROUPS", "claude,deepseek")
 
 # Service info for tutorial page
 _public_base = os.environ.get("PUBLIC_BASE_URL", "").strip()

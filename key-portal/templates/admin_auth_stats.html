@@ -135,6 +135,49 @@
         .table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
         .table-title h2 { color: #10192b; margin: 0; font-size: 24px; letter-spacing: -0.03em; }
         .table-title p { color: var(--muted); margin-top: 6px; font-size: 13px; }
+        .view-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+        .view-tabs { display: inline-flex; padding: 4px; border: 1px solid var(--line); border-radius: 999px; background: #f8fbff; }
+        .view-tab { border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 900; padding: 8px 13px; white-space: nowrap; }
+        .view-tab.active { background: #102044; color: #fff; box-shadow: 0 8px 18px rgba(16, 32, 68, 0.18); }
+        .traffic-board { display: grid; gap: 14px; }
+        .traffic-rank { border: 1px solid var(--line); border-radius: 18px; background: #fff; overflow: hidden; }
+        .traffic-rank-head, .traffic-rank-row { display: grid; grid-template-columns: minmax(220px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr); gap: 12px; align-items: center; padding: 13px 15px; }
+        .traffic-rank-head { color: var(--muted); background: #f8fbff; font-size: 12px; font-weight: 950; }
+        .traffic-rank-row { border-top: 1px solid rgba(223,230,240,0.82); cursor: pointer; }
+        .traffic-rank-row:hover { background: #fbfcff; }
+        .traffic-rank-row.is-expanded { background: #f3f7ff; }
+        .traffic-identity { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 9px; align-items: center; }
+        .traffic-expand { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-weight: 950; transition: transform 0.18s ease; }
+        .traffic-rank-row.is-expanded .traffic-expand { transform: rotate(90deg); }
+        .traffic-history-row { display: none; border-top: 1px solid rgba(223,230,240,0.82); background: #fbfcff; padding: 16px; }
+        .traffic-history-row.is-expanded { display: block; }
+        .traffic-history-title { display: flex; justify-content: space-between; gap: 12px; color: #172846; font-size: 13px; font-weight: 900; margin-bottom: 12px; }
+        .history-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+        .history-range-tabs { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: #fff; }
+        .history-range-tab { border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 900; padding: 6px 10px; }
+        .history-range-tab.active { color: #fff; background: #102044; }
+        .history-chart { display: grid; grid-template-columns: repeat(var(--points), minmax(10px, 1fr)); gap: 5px; align-items: end; min-height: 160px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+        .history-hour { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; min-width: 0; height: 132px; }
+        .history-bar { width: 100%; border-radius: 5px 5px 2px 2px; min-height: 2px; }
+        .history-bar.success { background: var(--green); }
+        .history-bar.failure { background: var(--red); }
+        .history-label { margin-top: 5px; color: var(--muted); font-size: 10px; text-align: center; white-space: nowrap; transform: rotate(-45deg); transform-origin: top center; }
+        .history-legend { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 12px; font-weight: 800; }
+        .history-legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 999px; vertical-align: -1px; }
+        .history-legend .success::before { background: var(--green); }
+        .history-legend .failure::before { background: var(--red); }
+        .traffic-name strong { display: block; color: var(--ink); font-size: 15px; overflow-wrap: anywhere; }
+        .traffic-name span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+        .traffic-window strong { display: block; color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; }
+        .traffic-window span { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+        .traffic-bar { height: 9px; margin-top: 8px; border-radius: 999px; background: rgba(82,96,112,0.14); overflow: hidden; }
+        .traffic-bar-fill { display: block; height: 100%; width: var(--fill); border-radius: inherit; background: var(--blue); }
+        .traffic-bar-fill.warn { background: var(--orange); }
+        .traffic-bar-fill.danger { background: var(--red); }
+        .traffic-status { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 900; white-space: nowrap; }
+        .traffic-status.good { color: var(--green); background: var(--green-soft); }
+        .traffic-status.warn { color: var(--orange); background: var(--orange-soft); }
+        .traffic-status.danger { color: var(--red); background: var(--red-soft); }
         .loading, .empty-state { text-align: center; padding: 42px 18px; color: var(--muted); border: 1px dashed var(--line); border-radius: 18px; background: var(--panel-soft); }
         .auth-list { display: grid; gap: 14px; }
         .auth-card {
@@ -280,12 +323,19 @@
         <div class="table-card">
             <div class="table-head">
                 <div class="table-title">
-                    <h2>认证文件明细</h2>
-	                    <p>首次加载按关注优先排序；自动刷新保持列表顺序稳定，避免实时数据变化时卡片跳动。</p>
+                    <h2 id="authStatsViewTitle">节点健康视图</h2>
+                    <p id="authStatsViewDescription">按节点查看整体健康；切换到认证文件视图可跨节点定位需要处理的账号。</p>
                 </div>
-                <button class="btn primary" onclick="loadAuthStats(true)">刷新认证统计</button>
+                <div class="view-controls">
+                    <div class="view-tabs" role="tablist" aria-label="认证统计视图">
+                        <button class="view-tab active" data-view="node" type="button">按节点</button>
+                        <button class="view-tab" data-view="auth" type="button">按认证文件</button>
+                    </div>
+                    <button class="btn primary" onclick="loadAuthStats(true)">刷新认证统计</button>
+                </div>
             </div>
             <div class="loading" id="loading">正在加载...</div>
+            <div id="nodeStatsView"></div>
             <div class="auth-list" id="authStatsCards" style="display:none;"></div>
         </div>
     </div>
@@ -293,9 +343,12 @@
     <script>
         let authStatsLoading = false;
         let authStatsRetryTimer = null;
-        const AUTH_STATS_REFRESH_MS = 5000;
+        let authStatsView = 'node';
+        let historyRange = '24h';
+        const AUTH_STATS_REFRESH_MS = 60000;
         const authRowOrder = new Map();
         const authRowsByKey = new Map();
+        const expandedTrafficRows = new Set();
 
         function formatNumberFull(num) {
             return Number(num || 0).toLocaleString('zh-CN');
@@ -841,6 +894,176 @@
             });
         }
 
+        function trafficStatusFor(item) {
+            const unavailable = Number(item.unavailable || 0);
+            const warning = Number(item.warning || 0);
+            const fiveFailure = Number(item.last_5h?.failure_rate || 0);
+            const sevenFailure = Number(item.last_7d?.failure_rate || 0);
+            if (unavailable > 0 || fiveFailure >= 20 || sevenFailure >= 10 || item.disabled || item.unavailable || item.status === 'error') {
+                return { cls: 'danger', text: '需处理' };
+            }
+            if (warning > 0 || fiveFailure >= 5 || sevenFailure >= 5 || needsAttention(item)) {
+                return { cls: 'warn', text: '需关注' };
+            }
+            return { cls: 'good', text: '正常' };
+        }
+
+        function trafficWindowCell(bucket, maxRequests) {
+            const requests = Number(bucket?.requests || 0);
+            const tokens = Number(bucket?.tokens || 0);
+            const fill = maxRequests > 0 ? clampPercent(requests / maxRequests * 100) : 0;
+            const failLevel = nodeFailureClass(bucket?.failure_rate);
+            return `<div class="traffic-window">
+                <strong title="${escapeHtml(formatNumberFull(requests))} 请求">${formatNumberFull(requests)}</strong>
+                <span title="${escapeHtml(formatNumberFull(tokens))} Tokens · ${escapeHtml(tokenBreakdownText(bucket))}">${formatCompactNumber(tokens)} Tokens · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
+                <div class="traffic-bar"><span class="traffic-bar-fill ${failLevel}" style="--fill:${fill}%"></span></div>
+            </div>`;
+        }
+
+        function historyLabel(value) {
+            const formatted = formatDateTime(value);
+            if (formatted === '-') return '-';
+            return historyRange === '24h' ? formatted.slice(11, 16) : formatted.slice(5, 10);
+        }
+
+        function historyRangeText() {
+            if (historyRange === '7d') return '最近 7 天';
+            if (historyRange === '30d') return '最近 30 天';
+            return '最近 24 小时';
+        }
+
+        function renderHistoryChart(item) {
+            const historyData = item.history || {};
+            const history = Array.isArray(historyData[historyRange]) ? historyData[historyRange] : [];
+            const maxCount = Math.max(1, ...history.map(bucket => Number(bucket.requests || 0)));
+            const bars = history.map(bucket => {
+                const success = Number(bucket.success || 0);
+                const failure = Number(bucket.failure || 0);
+                const successHeight = Math.max(2, success / maxCount * 120);
+                const failureHeight = Math.max(failure ? 2 : 0, failure / maxCount * 120);
+                const title = `${formatDateTime(bucket.time)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 总请求 ${formatNumberFull(bucket.requests || 0)}`;
+                return `<div class="history-hour" title="${escapeHtml(title)}">
+                    <span class="history-bar failure" style="height:${failureHeight}px"></span>
+                    <span class="history-bar success" style="height:${successHeight}px"></span>
+                    <span class="history-label">${escapeHtml(historyLabel(bucket.time))}</span>
+                </div>`;
+            }).join('');
+            return `<div class="traffic-history-title">
+                <span>${historyRangeText()}成功 / 失败请求曲线</span>
+                <div class="history-controls">
+                    <div class="history-range-tabs" role="tablist" aria-label="历史范围">
+                        ${['24h', '7d', '30d'].map(range => `<button class="history-range-tab ${historyRange === range ? 'active' : ''}" data-history-range="${range}" type="button">${range === '24h' ? '24小时' : range === '7d' ? '7天' : '30天'}</button>`).join('')}
+                    </div>
+                    <div class="history-legend"><span class="success">成功</span><span class="failure">失败</span></div>
+                </div>
+            </div>
+            <div class="history-chart" style="--points:${Math.max(1, history.length)}">${bars || '<div class="empty-state">暂无历史数据</div>'}</div>`;
+        }
+
+        function trafficRowKey(item, mode) {
+            if (mode === 'node') return `node:${item.name || ''}`;
+            return `auth:${authRowKey(item)}`;
+        }
+
+        function renderTrafficRank(items, mode) {
+            if (!items.length) return '<div class="empty-state">暂无流量数据</div>';
+            const maxRequests = Math.max(1, ...items.flatMap(item => ['last_1h', 'last_5h', 'last_24h', 'last_7d'].map(name => Number(item[name]?.requests || 0))));
+            const rows = items.map(item => {
+                const status = trafficStatusFor(item);
+                const key = trafficRowKey(item, mode);
+                const expanded = expandedTrafficRows.has(key);
+                const name = mode === 'node' ? item.name : (item.account || '-');
+                const sub = mode === 'node'
+                    ? `${formatNumberFull(item.auth_files || 0)} 个认证文件 · 可用 ${formatNumberFull(item.active || 0)} · 不可用 ${formatNumberFull(item.unavailable || 0)}`
+                    : `${item.node || '-'} · ${item.provider || 'provider'}${item.auth_index ? ' · ' + item.auth_index : ''}`;
+                return `<div class="traffic-rank-row ${expanded ? 'is-expanded' : ''}" data-traffic-key="${escapeHtml(key)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                    <div class="traffic-identity"><span class="traffic-expand" aria-hidden="true">›</span><div class="traffic-name"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(sub)}</span></div></div>
+                    ${trafficWindowCell(item.last_1h || {}, maxRequests)}
+                    ${trafficWindowCell(item.last_5h || {}, maxRequests)}
+                    ${trafficWindowCell(item.last_24h || {}, maxRequests)}
+                    ${trafficWindowCell(item.last_7d || {}, maxRequests)}
+                    <div><span class="traffic-status ${status.cls}">${status.text}</span></div>
+                </div>
+                <div class="traffic-history-row ${expanded ? 'is-expanded' : ''}" data-traffic-history="${escapeHtml(key)}">${renderHistoryChart(item)}</div>`;
+            }).join('');
+            return `<div class="traffic-board">
+                <div class="traffic-rank">
+                    <div class="traffic-rank-head">
+                        <div>${mode === 'node' ? '节点' : '认证文件'}</div>
+                        <div>近 1 小时</div>
+                        <div>近 5 小时</div>
+                        <div>近 24 小时</div>
+                        <div>近 7 天</div>
+                        <div>状态</div>
+                    </div>
+                    ${rows}
+                </div>
+            </div>`;
+        }
+
+        function nodeTrafficItems(nodeEntries) {
+            return nodeEntries.map(([node, data]) => ({ name: node, ...data }))
+                .sort((a, b) => Number(b.last_5h?.requests || 0) - Number(a.last_5h?.requests || 0));
+        }
+
+        function authTrafficItems(rows) {
+            return [...rows].sort((a, b) => concernScore(b) - concernScore(a) || Number(b.last_5h?.requests || 0) - Number(a.last_5h?.requests || 0));
+        }
+
+        function bindTrafficRows() {
+            document.querySelectorAll('.traffic-rank-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    const key = row.dataset.trafficKey || '';
+                    const expanded = !row.classList.contains('is-expanded');
+                    row.classList.toggle('is-expanded', expanded);
+                    row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                    const detail = document.querySelector(`[data-traffic-history="${CSS.escape(key)}"]`);
+                    if (detail) detail.classList.toggle('is-expanded', expanded);
+                    if (expanded) expandedTrafficRows.add(key);
+                    else expandedTrafficRows.delete(key);
+                });
+            });
+            document.querySelectorAll('.history-range-tab').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    historyRange = button.dataset.historyRange || '24h';
+                    loadAuthStats(true);
+                });
+            });
+        }
+
+        function renderView(rows, nodeEntries, nodeSignals, groupedRows) {
+            const titleEl = document.getElementById('authStatsViewTitle');
+            const descEl = document.getElementById('authStatsViewDescription');
+            const nodeViewEl = document.getElementById('nodeStatsView');
+            const cardsEl = document.getElementById('authStatsCards');
+            document.querySelectorAll('.view-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.view === authStatsView);
+            });
+            if (authStatsView === 'auth') {
+                titleEl.textContent = '按认证文件看流量';
+                descEl.textContent = '跨节点对比每个认证文件在 1h / 5h / 24h / 7d 的流量、失败率和处理优先级。';
+                nodeViewEl.innerHTML = renderTrafficRank(authTrafficItems(rows), 'auth');
+            } else {
+                titleEl.textContent = '按节点看流量';
+                descEl.textContent = '对比每个节点在 1h / 5h / 24h / 7d 的流量、失败率和整体健康。';
+                nodeViewEl.innerHTML = renderTrafficRank(nodeTrafficItems(nodeEntries), 'node');
+            }
+            nodeViewEl.style.display = 'block';
+            cardsEl.innerHTML = '';
+            cardsEl.style.display = 'none';
+            bindTrafficRows();
+        }
+
+        function bindViewTabs() {
+            document.querySelectorAll('.view-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    authStatsView = tab.dataset.view || 'node';
+                    loadAuthStats(true);
+                });
+            });
+        }
+
         function renderAuthCard(row) {
             const info = statusInfo(row);
             const statusMsg = row.status_explanation || row.status_message || '';
@@ -868,20 +1091,6 @@
 	                    ${renderHealthPanel(row, lastError, statusMsg, errorMsg)}
 	                    ${renderTrafficPanel(row)}
 	                </div>
-                <details class="secondary-metrics">
-                    <summary>展开 1h / 24h / 累计 / 时间信息</summary>
-                    <div class="detail-grid">
-                        ${renderWindowDetail('近 1 小时', windowStat(row, 'last_1h'))}
-                        ${renderWindowDetail('近 24 小时', windowStat(row, 'last_24h'))}
-                        ${renderWindowDetail('累计', windowStat(row, 'total'))}
-                        <div class="detail-box time-grid">
-                            <h5>时间信息</h5>
-                            <div class="detail-value"><span>最近请求</span><strong>${formatDateTime(row.last_request_at)}</strong></div>
-                            <div class="detail-value"><span>最近失败</span><strong>${lastError}</strong></div>
-                            <div class="detail-value"><span>文件更新</span><strong>${formatDateTime(row.updated_at)}</strong></div>
-                        </div>
-                    </div>
-                </details>
             </article>`;
         }
 
@@ -961,7 +1170,7 @@
                 const generated = formatDateTime(data.generated_at);
                 const cacheAge = Number(data.cache_age_seconds || 0).toFixed(1);
                 const refreshingText = data.refreshing ? '，后台刷新中' : '';
-                metaEl.textContent = `生成时间：${generated} 北京时间，统计缓存年龄：${cacheAge}s${refreshingText}，限额数据独立缓存，页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 读取最新缓存`;
+                metaEl.textContent = `生成时间：${generated} 北京时间，统计缓存年龄：${cacheAge}s${refreshingText}；认证文件用量来自节点管理接口，页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 低频刷新`;
                 renderWarnings(data.errors || []);
 
                 const rows = sortAuthRows(data.auth_files || []);
@@ -982,14 +1191,9 @@
                 const groupedRows = groupAuthRowsByNode(rows);
                 ensureAuthNodeExpansion(Array.from(groupedRows.entries()), nodeSignals);
                 const quotaCard = renderTodayQuotaCard(data.today_quota_usage || {});
-                const nodeTable = renderNodeSummaryTable(nodeEntries, nodeSignals, groupedRows);
-                summaryEl.innerHTML = quotaCard + nodeTable;
-
-                cardsEl.innerHTML = '';
-                bindNodeSummaryRows();
-                bindAuthToggleButtons();
+                summaryEl.innerHTML = quotaCard;
+                renderView(rows, nodeEntries, nodeSignals, groupedRows);
                 loading.style.display = 'none';
-                cardsEl.style.display = 'none';
             } catch (e) {
                 const transient = /HTTP 502|HTTP 503|HTTP 504|Bad Gateway|Gateway Timeout/i.test(e.message || '');
                 loading.textContent = transient
@@ -1008,6 +1212,7 @@
             }
         }
 
+        bindViewTabs();
         loadAuthStats();
         setInterval(() => {
             if (document.visibilityState === 'visible') loadAuthStats();

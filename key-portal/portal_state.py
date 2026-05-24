@@ -327,6 +327,15 @@ class PortalState:
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_key_portal_approval_status ON key_portal_approval_requests(status)")
                     cur.execute(
                         """
+                        SELECT setval(
+                            pg_get_serial_sequence('key_portal_approval_requests', 'id'),
+                            COALESCE((SELECT MAX(id) FROM key_portal_approval_requests), 0) + 1,
+                            false
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
                         CREATE TABLE IF NOT EXISTS key_portal_status_events (
                             id bigserial PRIMARY KEY,
                             event_type text NOT NULL,

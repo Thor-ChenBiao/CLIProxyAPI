@@ -231,20 +231,6 @@
                     <button class="btn btn-primary" onclick="registerUserKey()" id="regBtn">申请 API Key</button>
                 </div>
 
-                <!-- Skills 推荐 -->
-                <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 22px; border-radius: 12px; margin-top: 30px; max-width: 600px; margin-left: auto; margin-right: auto; box-shadow: 0 4px 20px rgba(245, 87, 108, 0.25); border: 2px solid rgba(255,255,255,0.3);">
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <div style="font-size: 40px;">🚀</div>
-                        <div style="flex: 1;">
-                            <h3 style="margin: 0 0 8px 0; color: white; font-size: 18px; font-weight: 700;">公司级 Claude Skills</h3>
-                            <p style="margin: 0 0 15px 0; font-size: 14px; color: white; line-height: 1.5;">提升 Claude Code 能力，安装公司定制的技能包</p>
-                            <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 10px 24px; background: white; color: #f5576c; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 700; transition: all 0.3s; box-shadow: 0 2px 10px rgba(0,0,0,0.15);" onmouseover="this.style.transform='translateY(-3px)'; this.style.boxShadow='0 6px 20px rgba(0,0,0,0.25)'" onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 10px rgba(0,0,0,0.15)'">
-                                📦 访问 GitHub 仓库 →
-                            </a>
-                        </div>
-                    </div>
-                </div>
-
                 <div id="regResult" style="margin-top: 30px; display: none;"></div>
             </div>
         </div>
@@ -343,7 +329,8 @@
             document.querySelector('.tab[onclick="showTab(\'' + name + '\')"]').classList.add('active');
             document.getElementById(name).classList.add('active');
             if (name === 'report') {
-                startPersonalUsageSummaryPolling();
+                loadPersonalUsageSummary();
+                if (!usageSocketConnected) startPersonalUsageSummaryPolling();
                 loadUsage().then(() => {
                     setTimeout(() => {
                         renderChart();
@@ -557,6 +544,8 @@
         let personalUsagePollTimer = null;
         let personalUsageLoading = false;
         let personalRateSnapshot = null;
+        let usageHistoryRefreshTimer = null;
+        let usageSocketConnected = false;
 
         function setElementText(elementId, value) {
             const el = document.getElementById(elementId);
@@ -569,16 +558,36 @@
 
             socket.on('connect', () => {
                 console.log('[WebSocket] Connected');
+                usageSocketConnected = true;
+                stopUsageSummaryPolling();
+                if (document.getElementById('report')?.classList.contains('active')) {
+                    stopPersonalUsageSummaryPolling();
+                    loadPersonalUsageSummary();
+                }
             });
 
             socket.on('usage_update', (data) => {
                 console.log('[WebSocket] Usage update:', data);
-                loadUsageSummary();
+                applyUsageSummary(data);
+                if (document.getElementById('report')?.classList.contains('active')) {
+                    loadPersonalUsageSummary();
+                }
             });
 
             socket.on('disconnect', () => {
                 console.log('[WebSocket] Disconnected');
+                usageSocketConnected = false;
+                startUsageSummaryPolling();
+                if (document.getElementById('report')?.classList.contains('active')) {
+                    startPersonalUsageSummaryPolling();
+                }
             });
+
+            setTimeout(() => {
+                if (!usageSocketConnected) startUsageSummaryPolling();
+            }, 5000);
+        } else {
+            startUsageSummaryPolling();
         }
 
         function setChartView(view) {
@@ -692,7 +701,7 @@
         function startPersonalUsageSummaryPolling() {
             if (personalUsagePollTimer) return;
             loadPersonalUsageSummary();
-            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 2000);
+            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 30000);
         }
 
         function stopPersonalUsageSummaryPolling() {
@@ -718,7 +727,13 @@
         function startUsageSummaryPolling() {
             if (usageSummaryPollTimer) return;
             loadUsageSummary();
-            usageSummaryPollTimer = setInterval(loadUsageSummary, 1000);
+            usageSummaryPollTimer = setInterval(loadUsageSummary, 30000);
+        }
+
+        function stopUsageSummaryPolling() {
+            if (!usageSummaryPollTimer) return;
+            clearInterval(usageSummaryPollTimer);
+            usageSummaryPollTimer = null;
         }
 
         function getRecentBeijingHourBuckets() {
@@ -1129,6 +1144,10 @@
         async function loadUsageHistory() {
             const tbody = document.getElementById('dailyReport');
             try {
+                if (usageHistoryRefreshTimer) {
+                    clearTimeout(usageHistoryRefreshTimer);
+                    usageHistoryRefreshTimer = null;
+                }
                 loadUsageSummary();
                 loadPersonalUsageSummary();
 
@@ -1147,12 +1166,20 @@
 
                 const history = window.usageData.history || [];
                 if (history.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">暂无数据</td></tr>';
+                    const warming = window.usageData.refreshing || window.usageData.cache_status === 'warming';
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">' + (warming ? '正在刷新数据...' : '暂无数据') + '</td></tr>';
                 } else {
                     const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
                     tbody.innerHTML = sorted.map(d =>
                         '<tr><td>' + d.date + '</td><td>' + tokenUsageCellHtml(d) + '</td><td>' + d.total_requests + '</td></tr>'
                     ).join('');
+                }
+
+                const hasAnyUsageData = history.length > 0 ||
+                    (window.usageData.model_groups || []).length > 0 ||
+                    (window.usageData.recent_hours || []).some(row => Number(row.tokens ?? row.total_tokens ?? row.requests ?? row.total_requests ?? 0) > 0);
+                if (!hasAnyUsageData && (window.usageData.refreshing || window.usageData.cache_status === 'warming')) {
+                    usageHistoryRefreshTimer = setTimeout(loadUsageHistory, 1500);
                 }
 
                 renderModelGroupReport();
@@ -1564,9 +1591,8 @@ export OPENAI_API_KEY="${apiKey}"`;
             }
         };
 
-        // Keep the lightweight counters fresh; defer chart rendering until the report tab is visible.
+        // Keep the lightweight counters initialized; live updates come from Socket.IO when available.
         loadUsageSummary();
-        startUsageSummaryPolling();
 
         // Fill dynamic API URL shown in UI
         const dynamicApiUrl = {{ service_info.base_url|tojson }};

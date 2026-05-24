@@ -24,10 +24,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import config
 import database as db
-import usage_sync
 import portal_state
 import portal_auth
 import portal_docs
+import portal_scheduler
+import auth_stats_service
+import status_events
+import usage_realtime
 
 # Import modular components
 import snapshot
@@ -41,9 +44,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('KEY_PORTAL_SECRET_KEY', 'key-portal-secret')
 socketio = SocketIO(app, cors_allowed_origins="*")
 portal_state.configure(config.KEY_PORTAL_DATABASE_URL, config.KEY_PORTAL_REDIS_URL)
-
-# Track last usage state for change detection
-_last_usage_state = {"total_tokens": 0, "total_requests": 0}
+usage_broadcaster = usage_realtime.UsageRealtimeBroadcaster(socketio, lambda: get_usage_summary_cached())
 
 # Load user mapping
 USER_MAPPING_FILE = os.path.join(os.path.dirname(__file__), "user_mapping.json")
@@ -67,21 +68,6 @@ _user_usage_summary_cache = {
     "ttl": 2,
 }
 _user_usage_summary_cache_lock = threading.Lock()
-
-_auth_stats_cache = {
-    "data": None,
-    "last_update": 0,
-    "ttl": 15,
-    "refreshing": False
-}
-_auth_stats_cache_lock = threading.Lock()
-
-_auth_quota_cache = {
-    "data": {},
-    "ttl": 300,
-    "error_ttl": 60,
-}
-_auth_quota_cache_lock = threading.Lock()
 
 _persistent_floor_cache = {
     "data": None,
@@ -974,31 +960,6 @@ def load_cliproxy_nodes():
 CLIPROXY_NODES = load_cliproxy_nodes()
 
 
-def node_management_path(node_name, index):
-    name = str(node_name or "").strip().lower()
-    if name in ("old", "node-a", "node_a", "a"):
-        slug = "a"
-    else:
-        match = re.match(r"^node[-_]?([a-z0-9]+)$", name)
-        if match:
-            slug = match.group(1)
-        elif 0 <= index < 26:
-            slug = chr(ord("a") + index)
-        else:
-            slug = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-") or str(index + 1)
-    return f"/{slug}/management.html#/auth-files"
-
-
-def configured_auth_stat_nodes():
-    return [
-        {
-            "name": node.get("name", ""),
-            "management_path": node_management_path(node.get("name", ""), index),
-        }
-        for index, node in enumerate(CLIPROXY_NODES)
-    ]
-
-
 def call_management_api_node(node, method, endpoint, data=None, timeout=30):
     """Call one CLIProxyAPI management endpoint."""
     url = f"{node['url']}{endpoint}"
@@ -1018,315 +979,6 @@ def call_management_api_node(node, method, endpoint, data=None, timeout=30):
         return None, f"API error: {resp.status_code} - {resp.text}"
     except Exception as e:
         return None, str(e)
-
-
-def _number_or_none(value):
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        if text.endswith("%"):
-            text = text[:-1].strip()
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    return None
-
-
-def _clamp_percent(value):
-    if value is None:
-        return None
-    return max(0, min(100, round(float(value), 2)))
-
-
-def _camel_or_snake(data, snake, camel=None):
-    if not isinstance(data, dict):
-        return None
-    if snake in data:
-        return data.get(snake)
-    if camel and camel in data:
-        return data.get(camel)
-    return None
-
-
-def _reset_at_iso(window):
-    if not isinstance(window, dict):
-        return ""
-    reset_at = _number_or_none(
-        _camel_or_snake(window, "reset_at", "resetAt")
-        or _camel_or_snake(window, "reset_time", "resetTime")
-    )
-    if reset_at and reset_at > 0:
-        try:
-            return datetime.utcfromtimestamp(reset_at).isoformat() + "Z"
-        except (OverflowError, OSError, ValueError):
-            pass
-    reset_after = _number_or_none(
-        _camel_or_snake(window, "reset_after_seconds", "resetAfterSeconds")
-        or _camel_or_snake(window, "reset_in", "resetIn")
-    )
-    if reset_after and reset_after > 0:
-        return (datetime.utcnow() + timedelta(seconds=reset_after)).isoformat() + "Z"
-    raw_reset = _camel_or_snake(window, "resets_at", "resetsAt")
-    if isinstance(raw_reset, str) and raw_reset.strip():
-        return raw_reset.strip()
-    return ""
-
-
-def _quota_window_from_used_percent(window, limit_label):
-    if not isinstance(window, dict):
-        return None
-    used_raw = _camel_or_snake(window, "used_percent", "usedPercent")
-    if used_raw is None:
-        used_raw = window.get("utilization")
-    used = _number_or_none(used_raw)
-    if used is None and _reset_at_iso(window):
-        used = 100
-    if used is None:
-        return None
-    remaining = _clamp_percent(100 - used)
-    return {
-        "limit_label": limit_label,
-        "used_percent": _clamp_percent(used),
-        "remaining_percent": remaining,
-        "reset_at": _reset_at_iso(window),
-        "limit_window_seconds": _number_or_none(_camel_or_snake(window, "limit_window_seconds", "limitWindowSeconds")),
-    }
-
-
-def _parse_json_body(body):
-    if isinstance(body, dict):
-        return body
-    if not isinstance(body, str):
-        return None
-    text = body.strip()
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except Exception:
-        return None
-
-
-def _api_call_node(node, auth_index, method, url, headers, body=""):
-    payload = {
-        "auth_index": auth_index,
-        "method": method,
-        "url": url,
-        "header": headers,
-    }
-    if body:
-        payload["data"] = body
-    data, err = call_management_api_node(node, "POST", "/v0/management/api-call", data=payload, timeout=30)
-    if err:
-        raise RuntimeError(err)
-    status_code = int(data.get("status_code", 0) or 0)
-    if status_code < 200 or status_code >= 300:
-        response_body = str(data.get("body", "") or "").strip()
-        if len(response_body) > 200:
-            response_body = response_body[:200] + "..."
-        raise RuntimeError(f"provider quota API returned {status_code}: {response_body}")
-    return _parse_json_body(data.get("body"))
-
-
-def _auth_chatgpt_account_id(auth_file):
-    id_token = auth_file.get("id_token")
-    if isinstance(id_token, dict):
-        account_id = id_token.get("chatgpt_account_id") or id_token.get("chatgptAccountId")
-        if isinstance(account_id, str) and account_id.strip():
-            return account_id.strip()
-    return ""
-
-
-def _build_error_quota(provider, message):
-    return {
-        "status": "error",
-        "provider": provider,
-        "error": message,
-        "fetched_at": datetime.utcnow().isoformat() + "Z",
-        "windows": {},
-    }
-
-
-def _fetch_codex_quota(node, auth_file):
-    auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
-    account_id = _auth_chatgpt_account_id(auth_file)
-    if not auth_index:
-        return _build_error_quota("codex", "auth_index missing")
-    if not account_id:
-        return _build_error_quota("codex", "chatgpt account id missing")
-    payload = _api_call_node(node, auth_index, "GET", "https://chatgpt.com/backend-api/wham/usage", {
-        "Authorization": "Bearer $TOKEN$",
-        "Content-Type": "application/json",
-        "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
-        "Chatgpt-Account-Id": account_id,
-    })
-    if not payload:
-        return _build_error_quota("codex", "empty quota response")
-    rate_limit = payload.get("rate_limit") or payload.get("rateLimit") or {}
-    primary = rate_limit.get("primary_window") or rate_limit.get("primaryWindow")
-    secondary = rate_limit.get("secondary_window") or rate_limit.get("secondaryWindow")
-    return {
-        "status": "success",
-        "provider": "codex",
-        "plan_type": (payload.get("plan_type") or payload.get("planType") or auth_file.get("plan_type") or ""),
-        "fetched_at": datetime.utcnow().isoformat() + "Z",
-        "windows": {
-            "last_5h": _quota_window_from_used_percent(primary, "5h 原生窗口"),
-            "last_7d": _quota_window_from_used_percent(secondary, "7d 原生窗口"),
-        },
-    }
-
-
-def _pick_claude_seven_day_window(payload):
-    candidates = [
-        ("seven_day", "7d 原生窗口"),
-        ("seven_day_oauth_apps", "7d OAuth Apps"),
-        ("seven_day_opus", "7d Opus"),
-        ("seven_day_sonnet", "7d Sonnet"),
-        ("seven_day_cowork", "7d Cowork"),
-    ]
-    parsed = []
-    for key, label in candidates:
-        item = _quota_window_from_used_percent(payload.get(key), label)
-        if item:
-            parsed.append(item)
-    if not parsed:
-        return None
-    return sorted(parsed, key=lambda item: item.get("remaining_percent", 101))[0]
-
-
-def _fetch_claude_quota(node, auth_file):
-    auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
-    if not auth_index:
-        return _build_error_quota("claude", "auth_index missing")
-    payload = _api_call_node(node, auth_index, "GET", "https://api.anthropic.com/api/oauth/usage", {
-        "Authorization": "Bearer $TOKEN$",
-        "Content-Type": "application/json",
-        "anthropic-beta": "oauth-2025-04-20",
-    })
-    if not payload:
-        return _build_error_quota("claude", "empty quota response")
-    return {
-        "status": "success",
-        "provider": "claude",
-        "fetched_at": datetime.utcnow().isoformat() + "Z",
-        "windows": {
-            "last_5h": _quota_window_from_used_percent(payload.get("five_hour"), "5h 原生窗口"),
-            "last_7d": _pick_claude_seven_day_window(payload),
-        },
-        "extra_usage": payload.get("extra_usage"),
-    }
-
-
-def fetch_auth_quota(node, auth_file):
-    provider = str(auth_file.get("provider") or auth_file.get("type") or "").strip().lower()
-    try:
-        if provider == "codex":
-            return _fetch_codex_quota(node, auth_file)
-        if provider == "claude":
-            return _fetch_claude_quota(node, auth_file)
-        return {
-            "status": "unsupported",
-            "provider": provider,
-            "fetched_at": datetime.utcnow().isoformat() + "Z",
-            "windows": {},
-        }
-    except Exception as e:
-        return _build_error_quota(provider, str(e))
-
-
-def get_auth_quota_cached(node, auth_file):
-    auth_index = (auth_file.get("auth_index") or auth_file.get("authIndex") or "").strip()
-    provider = str(auth_file.get("provider") or auth_file.get("type") or "").strip().lower()
-    if not auth_index:
-        return _build_error_quota(provider, "auth_index missing")
-    cache_key = f"{node.get('name', '')}:{auth_index}:{provider}"
-    now = time.time()
-    with _auth_quota_cache_lock:
-        cached = _auth_quota_cache["data"].get(cache_key)
-        if cached:
-            ttl = _auth_quota_cache["error_ttl"] if cached.get("quota", {}).get("status") == "error" else _auth_quota_cache["ttl"]
-            if (now - cached.get("updated_at", 0)) < ttl:
-                return dict(cached["quota"], cache_age_seconds=round(now - cached.get("updated_at", now), 3))
-    quota = fetch_auth_quota(node, auth_file)
-    with _auth_quota_cache_lock:
-        _auth_quota_cache["data"][cache_key] = {
-            "updated_at": now,
-            "quota": quota,
-        }
-    return dict(quota, cache_age_seconds=0)
-
-
-def _median(values):
-    ordered = sorted(values)
-    count = len(ordered)
-    if not count:
-        return 0
-    middle = count // 2
-    if count % 2:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2
-
-
-def apply_quota_window_usage(stats):
-    for stat in stats.values():
-        bucket = (((stat.get("quota") or {}).get("windows") or {}).get("last_7d") or {})
-        reset_at = parse_detail_time_utc(bucket.get("reset_at"))
-        window_seconds = int(bucket.get("limit_window_seconds") or 0)
-        details = stat.get("_quota_usage_details") or []
-        if not reset_at or not window_seconds or not details:
-            stat["quota_window"] = {"tokens": 0, "requests": 0}
-            continue
-        start = reset_at - timedelta(seconds=window_seconds)
-        window_details = [(when, tokens) for when, tokens in details if start <= when <= reset_at]
-        stat["quota_window"] = {
-            "tokens": sum(tokens for _, tokens in window_details),
-            "requests": len(window_details),
-            "start_at": start.isoformat() + "Z",
-            "reset_at": reset_at.isoformat() + "Z",
-        }
-
-
-def build_today_quota_usage(stats, today, today_used_tokens=None):
-    account_count = len(stats)
-    if today_used_tokens is None:
-        today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in stats.values())
-    else:
-        today_used_tokens = int(today_used_tokens or 0)
-    candidates = []
-    for stat in stats.values():
-        quota_window_tokens = int((stat.get("quota_window") or {}).get("tokens", 0) or 0)
-        bucket = (((stat.get("quota") or {}).get("windows") or {}).get("last_7d") or {})
-        used_percent = _number_or_none(bucket.get("used_percent"))
-        if quota_window_tokens <= 0 or used_percent is None or used_percent < 1:
-            continue
-        daily_limit = quota_window_tokens / (used_percent / 100) / 7
-        if math.isfinite(daily_limit) and daily_limit > 0:
-            candidates.append(daily_limit)
-    single_account_daily_limit = int(round(_median(candidates))) if candidates else 0
-    total_daily_limit = account_count * single_account_daily_limit if single_account_daily_limit else 0
-    usage_ratio = round(today_used_tokens / total_daily_limit, 6) if total_daily_limit else 0
-    return {
-        "date": today,
-        "today_used_tokens": today_used_tokens,
-        "account_count": account_count,
-        "account_count_source": "auth_files",
-        "single_account_daily_token_limit": single_account_daily_limit,
-        "single_account_daily_token_limit_source": "inferred_from_provider_7d_window" if single_account_daily_limit else "unavailable",
-        "total_daily_token_limit": total_daily_limit,
-        "usage_ratio": usage_ratio,
-        "usage_percent": round(usage_ratio * 100, 2) if total_daily_limit else 0,
-        "inferred_account_count": len(candidates),
-        "inferred_daily_token_limit_min": int(round(min(candidates))) if candidates else 0,
-        "inferred_daily_token_limit_max": int(round(max(candidates))) if candidates else 0,
-        "configured": bool(total_daily_limit),
-    }
 
 
 def merge_usage_payloads(results):
@@ -1454,101 +1106,6 @@ def strip_usage_details(payload):
             model_stats.pop("details", None)
     return payload
 
-
-def _refresh_today_quota_usage_from_summary(result):
-    quota_usage = result.get("today_quota_usage")
-    if not isinstance(quota_usage, dict):
-        return
-    try:
-        summary, err = get_usage_summary_cached()
-    except Exception:
-        return
-    if err or not summary:
-        return
-    today = summary.get("today") or quota_usage.get("date")
-    today_used_tokens = int(summary.get("today_tokens", 0) or 0)
-    total_daily_limit = int(quota_usage.get("total_daily_token_limit", 0) or 0)
-    usage_ratio = round(today_used_tokens / total_daily_limit, 6) if total_daily_limit else 0
-    updated = dict(quota_usage)
-    updated["date"] = today
-    updated["today_used_tokens"] = today_used_tokens
-    updated["usage_ratio"] = usage_ratio
-    updated["usage_percent"] = round(usage_ratio * 100, 2) if total_daily_limit else 0
-    updated["today_used_tokens_source"] = "usage_summary_live"
-    result["today_quota_usage"] = updated
-
-
-def _with_auth_stats_cache_metadata(data, now=None, refreshing=None):
-    import time
-    now = now or time.time()
-    result = dict(data)
-    _refresh_today_quota_usage_from_summary(result)
-    result["cache_ttl_seconds"] = _auth_stats_cache["ttl"]
-    result["cache_age_seconds"] = round(now - _auth_stats_cache["last_update"], 3)
-    result["refreshing"] = _auth_stats_cache["refreshing"] if refreshing is None else refreshing
-    return result
-
-
-def refresh_auth_stats_cache():
-    import time
-    try:
-        data = build_auth_stats()
-        now = time.time()
-        portal_state.cache_set_json("auth_stats", data, _auth_stats_cache["ttl"] * 4)
-        with _auth_stats_cache_lock:
-            _auth_stats_cache["data"] = data
-            _auth_stats_cache["last_update"] = now
-    finally:
-        with _auth_stats_cache_lock:
-            _auth_stats_cache["refreshing"] = False
-
-
-def clear_auth_stats_cache():
-    portal_state.cache_delete("auth_stats")
-    with _auth_stats_cache_lock:
-        _auth_stats_cache["data"] = None
-        _auth_stats_cache["last_update"] = 0
-        _auth_stats_cache["refreshing"] = False
-
-
-def start_auth_stats_refresh():
-    with _auth_stats_cache_lock:
-        if _auth_stats_cache["refreshing"]:
-            return False
-        _auth_stats_cache["refreshing"] = True
-    threading.Thread(target=refresh_auth_stats_cache, daemon=True).start()
-    return True
-
-
-def get_auth_stats_cached():
-    import time
-    now = time.time()
-    with _auth_stats_cache_lock:
-        cached = _auth_stats_cache["data"]
-        last_update = _auth_stats_cache["last_update"]
-        ttl = _auth_stats_cache["ttl"]
-        refreshing = _auth_stats_cache["refreshing"]
-    if cached and (now - last_update) < ttl:
-        return _with_auth_stats_cache_metadata(cached, now, refreshing)
-    if cached:
-        start_auth_stats_refresh()
-        return _with_auth_stats_cache_metadata(cached, now, True)
-    redis_cached = portal_state.cache_get_json("auth_stats")
-    if redis_cached:
-        with _auth_stats_cache_lock:
-            _auth_stats_cache["data"] = redis_cached
-            _auth_stats_cache["last_update"] = now
-            _auth_stats_cache["refreshing"] = False
-        start_auth_stats_refresh()
-        return _with_auth_stats_cache_metadata(redis_cached, now, True)
-    data = build_auth_stats()
-    now = time.time()
-    portal_state.cache_set_json("auth_stats", data, _auth_stats_cache["ttl"] * 4)
-    with _auth_stats_cache_lock:
-        _auth_stats_cache["data"] = data
-        _auth_stats_cache["last_update"] = now
-        _auth_stats_cache["refreshing"] = False
-    return _with_auth_stats_cache_metadata(data, now, False)
 
 def call_management_api_all(method, endpoint, data=None, timeout=30):
     def fetch(node):
@@ -2056,6 +1613,7 @@ def litellm_user_stats(period="month"):
         "year": "to_char(s.\"endTime\" + interval '8 hours', 'YYYY')",
         "total": "'total'",
     }[period]
+    order_sql = "total_tokens DESC" if period == "total" else "period DESC, total_tokens DESC"
     identity = litellm_spend_identity_sql()
     sql = f"""
 WITH rows AS (
@@ -2093,9 +1651,30 @@ WITH rows AS (
     FROM rows
     GROUP BY 1, 2
 )
-SELECT coalesce(json_agg(row_to_json(user_rows) ORDER BY total_tokens DESC), '[]'::json) FROM user_rows;
+SELECT coalesce(json_agg(row_to_json(user_rows) ORDER BY {order_sql}), '[]'::json) FROM user_rows;
 """
     return litellm_psql_json(sql, timeout=30) or []
+
+
+def litellm_key_match_sql(api_key, alias_expr="v.key_alias", api_key_expr="s.api_key"):
+    key_literal = _sql_literal(api_key)
+    suffix_literal = _sql_literal(f":{api_key}")
+    return (
+        f"({api_key_expr} = {key_literal} OR {alias_expr} = {key_literal} "
+        f"OR right(coalesce({alias_expr}, ''), {len(api_key) + 1}) = {suffix_literal})"
+    )
+
+
+def litellm_keys_match_sql(keys, alias_expr="v.key_alias", api_key_expr="s.api_key"):
+    values = [str(key or "").strip() for key in (keys or []) if str(key or "").strip()]
+    if not values:
+        return ""
+    key_values = ",".join(_sql_literal(key) for key in values)
+    suffix_terms = " OR ".join(
+        f"right(coalesce({alias_expr}, ''), {len(key) + 1}) = {_sql_literal(f':{key}')}"
+        for key in values
+    )
+    return f"({api_key_expr} IN ({key_values}) OR {alias_expr} IN ({key_values}) OR {suffix_terms})"
 
 
 def litellm_user_key_totals(email, keys=None):
@@ -2103,10 +1682,9 @@ def litellm_user_key_totals(email, keys=None):
     identity = litellm_spend_identity_sql()
     if email:
         clauses.append(f"lower({identity}) = lower({_sql_literal(email)})")
-    if keys:
-        key_values = ",".join(_sql_literal(k) for k in keys if k)
-        if key_values:
-            clauses.append(f"(s.api_key IN ({key_values}) OR v.key_alias IN ({key_values}))")
+    key_clause = litellm_keys_match_sql(keys)
+    if key_clause:
+        clauses.append(key_clause)
     where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
     today = _sql_literal(beijing_today())
     sql = f"""
@@ -2249,11 +1827,69 @@ def get_user_usage_summary_cached(email, keys=None):
     return {**summary, "cache_age_seconds": 0}
 
 
-def litellm_key_timeseries(api_key, date_from, date_to):
-    key_literal = _sql_literal(api_key)
+def litellm_key_timeseries(api_key, date_from, date_to, email="", hourly=False):
+    key_match = litellm_key_match_sql(api_key)
+    identity = litellm_spend_identity_sql()
+    email_clause = f"AND lower({identity}) = lower({_sql_literal(email)})" if email else ""
+    if hourly:
+        sql = f"""
+WITH hours AS (
+    SELECT generate_series({_sql_literal(date_from)}::date, {_sql_literal(date_from)}::date + interval '23 hours', interval '1 hour') AS hour_start
+), matched AS (
+    SELECT
+        s."startTime",
+        s."endTime",
+        s.status,
+        s.total_tokens,
+        s.prompt_tokens,
+        s.completion_tokens,
+        s.metadata,
+        s.spend
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE {key_match}
+      {email_clause}
+), rows AS (
+    SELECT
+        hours.hour_start::date::text AS date,
+        to_char(hours.hour_start, 'HH24') AS hour,
+        coalesce(count(s.*), 0)::bigint AS requests,
+        coalesce(count(s.*) FILTER (WHERE coalesce(s.status, 'success') != 'failure'), 0)::bigint AS success_count,
+        coalesce(count(s.*) FILTER (WHERE coalesce(s.status, 'success') = 'failure'), 0)::bigint AS failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        coalesce(avg(extract(epoch FROM (s."endTime" - s."startTime")) * 1000), 0)::float8 AS avg_latency_ms
+    FROM hours
+    LEFT JOIN matched s
+      ON s."endTime" >= hours.hour_start - interval '8 hours'
+     AND s."endTime" < hours.hour_start + interval '1 hour' - interval '8 hours'
+    GROUP BY hours.hour_start
+    ORDER BY hours.hour_start
+)
+SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json) FROM rows;
+"""
+        return litellm_psql_json(sql, timeout=30) or []
     sql = f"""
 WITH days AS (
     SELECT generate_series({_sql_literal(date_from)}::date, {_sql_literal(date_to)}::date, interval '1 day')::date AS day
+), matched AS (
+    SELECT
+        s."startTime",
+        s."endTime",
+        s.status,
+        s.total_tokens,
+        s.prompt_tokens,
+        s.completion_tokens,
+        s.metadata,
+        s.spend
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE {key_match}
+      {email_clause}
 ), rows AS (
     SELECT
         days.day::text AS date,
@@ -2268,11 +1904,9 @@ WITH days AS (
         coalesce(sum(s.spend), 0)::float8 AS spend_usd,
         coalesce(avg(extract(epoch FROM (s."endTime" - s."startTime")) * 1000), 0)::float8 AS avg_latency_ms
     FROM days
-    LEFT JOIN "LiteLLM_SpendLogs" s
+    LEFT JOIN matched s
       ON s."endTime" >= days.day::timestamp - interval '8 hours'
      AND s."endTime" < days.day::timestamp + interval '16 hours'
-    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
-    WHERE s.api_key IS NULL OR s.api_key = {key_literal} OR v.key_alias = {key_literal}
     GROUP BY days.day
     ORDER BY days.day
 )
@@ -2720,7 +2354,6 @@ def get_usage_summary_cached():
             _usage_summary_cache["last_update"] = now
         return dict(redis_cached, cache_age_seconds=0, cache_status="redis"), None
 
-    cluster_summary = get_cluster_usage_summary()
     litellm = query_litellm_spendlogs_aggregate()
     if litellm:
         summary = {
@@ -2729,14 +2362,19 @@ def get_usage_summary_cached():
             "summary_sources": ["litellm_spendlogs"],
             "litellm_included": True,
             "litellm_usage": litellm,
+            "cluster_partial": False,
+            "node_errors": [],
+            "nodes": [],
+            "live_usage_summary": {},
         }
     else:
+        cluster_summary = get_cluster_usage_summary()
         summary = build_usage_summary_response(cluster_summary)
         summary = apply_persistent_usage_floor(summary)
         summary["summary_sources"] = ["key_portal_sqlite_fallback"]
         summary["litellm_included"] = False
+        summary = attach_live_node_metadata(summary, cluster_summary)
 
-    summary = attach_live_node_metadata(summary, cluster_summary)
     summary = attach_token_breakdown(summary)
     summary["generated_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -2746,278 +2384,6 @@ def get_usage_summary_cached():
         _usage_summary_cache["last_update"] = now
     portal_state.cache_set_json("usage_summary", summary, max(2, int(_usage_summary_cache["ttl"] * 2)))
     return dict(summary, cache_age_seconds=0), None
-
-
-def status_page_url():
-    if getattr(config, "STATUS_PUBLIC_URL", ""):
-        return config.STATUS_PUBLIC_URL.rstrip("/")
-    base = os.environ.get("PUBLIC_BASE_URL", "").strip()
-    if base:
-        return f"{base.rstrip('/')}/status"
-    return "https://token.zasdas.com/status"
-
-
-def portal_home_url():
-    base = os.environ.get("PUBLIC_BASE_URL", "").strip()
-    if base:
-        return f"{base.rstrip('/')}/"
-    return "https://token.zasdas.com/"
-
-
-def format_compact_number(value):
-    value = _int_usage_value(value)
-    if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.2f}B"
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.1f}M"
-    if value >= 10_000:
-        return f"{value / 10_000:.1f}万"
-    return f"{value:,}"
-
-
-def format_event_duration(started_at, resolved_at=None):
-    if not started_at:
-        return "-"
-    try:
-        start = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
-        end = datetime.fromisoformat(str(resolved_at).replace("Z", "+00:00")) if resolved_at else datetime.now(timezone.utc)
-        seconds = max(0, int((end - start).total_seconds()))
-    except Exception:
-        return "-"
-    if seconds < 60:
-        return f"{seconds} 秒"
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes} 分钟"
-    hours = minutes // 60
-    return f"{hours} 小时 {minutes % 60} 分钟"
-
-
-def status_event_public(event, include_private=False):
-    item = dict(event or {})
-    if not include_private:
-        item.pop("metadata", None)
-        item.pop("dedupe_key", None)
-    item["duration"] = format_event_duration(item.get("started_at"), item.get("resolved_at"))
-    return item
-
-
-def build_status_payload(include_private=False):
-    events = portal_state.list_status_events(120)
-    active_incidents = [
-        item for item in events
-        if item.get("event_type") == "node_health" and item.get("status") == "open"
-    ]
-    recent_notices = [
-        item for item in events
-        if item.get("event_type") != "node_health" or item.get("status") != "open"
-    ]
-    service_status = "degraded" if active_incidents else "operational"
-    affected_nodes = sorted({
-        node
-        for event in active_incidents
-        for node in (event.get("affected_nodes") or [])
-        if node
-    })
-    return {
-        "status": service_status,
-        "status_text": "部分节点异常" if active_incidents else "全部服务正常",
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "active_incidents": [status_event_public(item, include_private) for item in active_incidents],
-        "recent_events": [status_event_public(item, include_private) for item in recent_notices],
-        "affected_nodes": affected_nodes,
-        "active_incident_count": len(active_incidents),
-        "node_count": len(CLIPROXY_NODES),
-        "is_admin": bool(include_private),
-    }
-
-
-def status_event_webhook_content(event, action):
-    title = event.get("title") or "CLIProxyAPI 状态更新"
-    nodes = ", ".join(event.get("affected_nodes") or []) or "-"
-    lines = [
-        f"**事件**: {title}",
-        f"**状态**: {action}",
-        f"**影响节点**: {nodes}",
-        f"**原因**: {event.get('reason') or event.get('summary') or '-'}",
-    ]
-    if event.get("started_at"):
-        lines.append(f"**开始时间**: {event.get('started_at')}")
-    if event.get("resolved_at"):
-        lines.append(f"**恢复时间**: {event.get('resolved_at')}")
-        lines.append(f"**持续时间**: {format_event_duration(event.get('started_at'), event.get('resolved_at'))}")
-    if event.get("summary"):
-        lines.append(f"**说明**: {event.get('summary')}")
-    lines.append(f"**详情**: {status_page_url()}")
-    return "\n".join(lines)
-
-
-def send_status_webhook(event, action, template="orange"):
-    if not event:
-        return False
-    sent = feishu.send_feishu_webhook(
-        getattr(config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-        f"{event.get('title') or 'CLIProxyAPI 状态更新'}",
-        status_event_webhook_content(event, action),
-        template=template,
-    )
-    if sent:
-        portal_state.mark_status_event_notified(event.get("id"))
-    return sent
-
-
-def normalize_monitor_result(result):
-    result = dict(result or {})
-    payload = result.get("payload") if isinstance(result.get("payload"), dict) else {}
-    checks = payload.get("checks") if isinstance(payload.get("checks"), dict) else {}
-    return {
-        "url": result.get("url") or "",
-        "status_code": result.get("status_code") or 0,
-        "reason": result.get("reason") or "",
-        "payload_status": payload.get("status") or "",
-        "checks": checks,
-    }
-
-
-def record_nlb_monitor_event(event):
-    node = str((event or {}).get("node") or "").strip()
-    status = str((event or {}).get("status") or "").strip().lower()
-    if not node or status not in {"healthy", "unhealthy"}:
-        return None
-    result = normalize_monitor_result((event or {}).get("result"))
-    reason = str((event or {}).get("reason") or result.get("reason") or "").strip()
-    dedupe_key = f"node_health:{node}"
-
-    if status == "unhealthy":
-        summary = f"{node} 探活失败，NLB 可能已将该节点从服务池摘除。"
-        saved = portal_state.upsert_status_event(
-            event_type="node_health",
-            dedupe_key=dedupe_key,
-            status="open",
-            severity="warning",
-            title=f"{node} 节点异常",
-            summary=summary,
-            reason=reason or "health check failed",
-            affected_nodes=[node],
-            metadata={"monitor_result": result},
-        )
-        if saved.get("created") or saved.get("changed"):
-            send_status_webhook(saved.get("event"), "故障开始", template="red")
-        return saved
-
-    resolved = portal_state.resolve_status_event(
-        dedupe_key,
-        summary=f"{node} 探活恢复，节点已重新处于健康状态。",
-        reason=reason or "ok",
-        metadata={"recovery_result": result, "initial": bool((event or {}).get("initial"))},
-    )
-    if resolved.get("changed"):
-        send_status_webhook(resolved.get("event"), "故障恢复", template="green")
-    return resolved
-
-
-def daily_usage_record_snapshot():
-    today = beijing_today()
-    lookback_days = max(30, _int_usage_value(getattr(config, "STATUS_USAGE_RECORD_LOOKBACK_DAYS", 365)) or 365)
-    today_sql = _sql_literal(today)
-    sql = f"""
-WITH daily AS (
-    SELECT
-        ((s."endTime" + interval '8 hours')::date)::text AS date,
-        count(*)::bigint AS total_requests,
-        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens
-    FROM "LiteLLM_SpendLogs" s
-    WHERE s."endTime" >= ({today_sql}::date::timestamp - interval '8 hours' - interval '{lookback_days} days')
-    GROUP BY 1
-), record_row AS (
-    SELECT date, total_tokens, total_requests
-    FROM daily
-    WHERE date <> {today_sql}
-    ORDER BY total_tokens DESC, date DESC
-    LIMIT 1
-), today_row AS (
-    SELECT date, total_tokens, total_requests
-    FROM daily
-    WHERE date = {today_sql}
-)
-SELECT json_build_object(
-    'today', {today_sql},
-    'today_tokens', coalesce((SELECT total_tokens FROM today_row), 0),
-    'today_requests', coalesce((SELECT total_requests FROM today_row), 0),
-    'previous_record_date', (SELECT date FROM record_row),
-    'previous_record_tokens', coalesce((SELECT total_tokens FROM record_row), 0),
-    'previous_record_requests', coalesce((SELECT total_requests FROM record_row), 0),
-    'source', 'litellm_spendlogs'
-);
-"""
-    payload = litellm_psql_json(sql, timeout=15)
-    if not payload:
-        rows = db.get_daily_usage_history()
-        record = None
-        today_row = None
-        for row in rows:
-            if row.get("date") == today:
-                today_row = row
-            elif record is None or _int_usage_value(row.get("total_tokens")) > _int_usage_value(record.get("total_tokens")):
-                record = row
-        payload = {
-            "today": today,
-            "today_tokens": _int_usage_value((today_row or {}).get("total_tokens")),
-            "today_requests": _int_usage_value((today_row or {}).get("total_requests")),
-            "previous_record_date": (record or {}).get("date"),
-            "previous_record_tokens": _int_usage_value((record or {}).get("total_tokens")),
-            "previous_record_requests": _int_usage_value((record or {}).get("total_requests")),
-            "source": "key_portal_sqlite_fallback",
-        }
-
-    summary, err = get_usage_summary_cached()
-    if not err and summary and summary.get("today") == today:
-        payload["today_tokens"] = max(_int_usage_value(payload.get("today_tokens")), _int_usage_value(summary.get("today_tokens")))
-        payload["today_requests"] = max(_int_usage_value(payload.get("today_requests")), _int_usage_value(summary.get("today_requests")))
-    return payload
-
-
-def check_daily_usage_record():
-    if not getattr(config, "STATUS_USAGE_RECORD_ENABLED", True):
-        return None
-    snapshot = daily_usage_record_snapshot()
-    today_tokens = _int_usage_value(snapshot.get("today_tokens"))
-    record_tokens = _int_usage_value(snapshot.get("previous_record_tokens"))
-    if record_tokens <= 0 or today_tokens <= record_tokens:
-        return None
-
-    today = snapshot.get("today") or beijing_today()
-    previous_date = snapshot.get("previous_record_date") or "-"
-    diff = today_tokens - record_tokens
-    saved = portal_state.upsert_status_event(
-        event_type="usage_record",
-        dedupe_key=f"usage_record:{today}:tokens",
-        status="notice",
-        severity="info",
-        title="今日用量突破历史新高",
-        summary=f"今日 Tokens {format_compact_number(today_tokens)}，超过 {previous_date} 的历史最高 {format_compact_number(record_tokens)}。",
-        reason="daily token record",
-        affected_nodes=[],
-        metadata={**snapshot, "delta_tokens": diff},
-    )
-    if saved.get("created"):
-        event = saved.get("event") or {}
-        content = "\n".join([
-            "**事件**: 今日用量突破历史新高",
-            f"**今日 Tokens**: {format_compact_number(today_tokens)}",
-            f"**历史最高**: {format_compact_number(record_tokens)} ({previous_date})",
-            f"**突破幅度**: +{format_compact_number(diff)}",
-            f"**入口**: {portal_home_url()}",
-        ])
-        sent = feishu.send_feishu_webhook(
-            getattr(config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-            "今日用量突破历史新高",
-            content,
-            template="blue",
-        )
-        if sent:
-            portal_state.mark_status_event_notified(event.get("id"))
-    return saved
 
 
 def get_cluster_auth_files():
@@ -3081,6 +2447,40 @@ def beijing_now():
 
 def beijing_today():
     return beijing_now().strftime("%Y-%m-%d")
+
+
+status_service = status_events.StatusEventsService(
+    config=config,
+    portal_state=portal_state,
+    feishu=feishu,
+    database=db,
+    nodes=CLIPROXY_NODES,
+    beijing_today=beijing_today,
+    int_usage_value=_int_usage_value,
+    sql_literal=_sql_literal,
+    litellm_psql_json=litellm_psql_json,
+    usage_summary_loader=lambda: get_usage_summary_cached(),
+)
+
+auth_stats = auth_stats_service.AuthStatsService(
+    portal_state=portal_state,
+    nodes=CLIPROXY_NODES,
+    call_management_api_node=call_management_api_node,
+    get_cluster_usage=get_cluster_usage,
+    get_cluster_auth_files=get_cluster_auth_files,
+    usage_summary_loader=lambda: get_usage_summary_cached(),
+    parse_detail_time=parse_detail_time,
+    parse_detail_time_utc=parse_detail_time_utc,
+    build_token_breakdown=build_token_breakdown,
+)
+
+
+def get_auth_stats_cached():
+    return auth_stats.get_cached()
+
+
+def clear_auth_stats_cache():
+    auth_stats.clear_cache()
 
 
 def key_usage_for_date(api_stats, date):
@@ -3343,296 +2743,6 @@ def get_recent_hours_cached(summary_usage):
     return recent_hours, False
 
 
-def build_auth_stats():
-    try:
-        usage_payload = get_cluster_usage()
-    except Exception:
-        usage_payload = None
-    if not usage_payload:
-        usage_payload = {"usage": {}, "node_errors": [{"node": "cluster", "error": "usage unavailable"}]}
-    files, auth_errors = get_cluster_auth_files()
-    now = datetime.utcnow()
-    today = datetime.now().strftime("%Y-%m-%d")
-    node_by_name = {node["name"]: node for node in CLIPROXY_NODES}
-    windows = {
-        "last_1h": now - timedelta(hours=1),
-        "last_5h": now - timedelta(hours=5),
-        "last_24h": now - timedelta(hours=24),
-        "last_7d": now - timedelta(days=2),
-        "total": None,
-    }
-    window_names = tuple(windows.keys())
-
-    stats = {}
-    quota_sources = {}
-
-    def empty_window():
-        return {
-            "requests": 0,
-            "success": 0,
-            "failure": 0,
-            "tokens": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cached_tokens": 0,
-            "reasoning_tokens": 0,
-            "failure_rate": 0,
-            "success_rate": 0,
-            "avg_tokens_per_request": 0,
-        }
-
-    def enrich_window(bucket):
-        requests_count = bucket.get("requests", 0) or 0
-        if requests_count:
-            bucket["failure_rate"] = round((bucket.get("failure", 0) or 0) * 100 / requests_count, 2)
-            bucket["success_rate"] = round((bucket.get("success", 0) or 0) * 100 / requests_count, 2)
-            bucket["avg_tokens_per_request"] = round((bucket.get("tokens", 0) or 0) / requests_count, 2)
-        else:
-            bucket["failure_rate"] = 0
-            bucket["success_rate"] = 0
-            bucket["avg_tokens_per_request"] = 0
-        breakdown = build_token_breakdown(
-            bucket.get("tokens", 0),
-            bucket.get("input_tokens", 0),
-            bucket.get("output_tokens", 0),
-            bucket.get("cached_tokens", 0),
-            bucket.get("reasoning_tokens", 0),
-        )
-        bucket["token_breakdown"] = breakdown
-        bucket["estimated_cost_usd"] = breakdown["cost_usd"]
-        return bucket
-
-    def detail_error_message(detail):
-        for key in ("error", "error_message", "message", "status_message", "reason"):
-            value = detail.get(key)
-            if isinstance(value, dict):
-                value = value.get("message") or value.get("error") or json.dumps(value, ensure_ascii=False)
-            if value:
-                return str(value)
-        return "请求失败"
-
-    def detail_error_status(detail):
-        for key in ("status", "status_code", "http_status", "code"):
-            value = detail.get(key)
-            if value:
-                return str(value)
-        return ""
-
-    def status_explanation(stat):
-        if stat.get("disabled"):
-            return "认证文件已禁用，不参与调度。"
-        if stat.get("unavailable"):
-            return "认证文件被标记为不可用，需要人工处理。"
-        if stat.get("status") == "error":
-            msg = stat.get("last_error_message") or stat.get("status_message") or "最近有失败记录。"
-            return f"最近有失败记录：{msg}"
-        if stat.get("last_5h", {}).get("failure", 0):
-            return "最近 5 小时有失败请求，但账号未被标记为不可用。"
-        if stat.get("last_5h", {}).get("requests", 0):
-            return "最近 5 小时有成功请求。"
-        return "当前未发现不可用标记。"
-
-    auth_index_map = {}
-    account_map = {}
-    for f in files:
-        key = f.get("auth_index") or f.get("account") or f.get("email") or f.get("id") or f.get("name")
-        if not key:
-            continue
-        node = f.get("node", "")
-        account = f.get("account") or f.get("email") or f.get("label") or f.get("name") or key
-        stats_key = f"{node}:{key}"
-        stats[stats_key] = {
-            "node": node,
-            "account": account,
-            "auth_id": f.get("id", ""),
-            "auth_name": f.get("name", ""),
-            "auth_index": f.get("auth_index", ""),
-            "provider": f.get("provider") or f.get("type", ""),
-            "plan_type": (f.get("id_token") or {}).get("plan_type", ""),
-            "status": f.get("status", ""),
-            "status_message": f.get("status_message", ""),
-            "unavailable": bool(f.get("unavailable", False)),
-            "disabled": bool(f.get("disabled", False)),
-            "updated_at": f.get("updated_at") or f.get("modtime", ""),
-            "last_request_at": "",
-            "last_error_at": "",
-            "last_error_message": "",
-            "last_error_status": "",
-            "today": {
-                "requests": 0,
-                "success": 0,
-                "failure": 0,
-                "tokens": 0,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "cached_tokens": 0,
-                "reasoning_tokens": 0,
-            },
-            "quota_window": {
-                "tokens": 0,
-                "requests": 0,
-            },
-            "_quota_usage_details": [],
-            "quota": {
-                "status": "unsupported",
-                "provider": f.get("provider") or f.get("type", ""),
-                "windows": {},
-            },
-        }
-        for window_name in window_names:
-            stats[stats_key][window_name] = empty_window()
-        if stats[stats_key].get("auth_index"):
-            auth_index_map[stats[stats_key]["auth_index"]] = stats[stats_key]
-        if account:
-            account_map[account] = stats[stats_key]
-        provider = str(stats[stats_key]["provider"] or "").strip().lower()
-        if provider in ("codex", "claude"):
-            node_cfg = node_by_name.get(node)
-            if node_cfg:
-                quota_sources[stats_key] = (node_cfg, f)
-
-    def find_stat(detail):
-        auth_index = detail.get("auth_index")
-        source = detail.get("source")
-        if auth_index and auth_index in auth_index_map:
-            return auth_index_map[auth_index]
-        if source and source in account_map:
-            return account_map[source]
-        for account, stat in account_map.items():
-            if source and source in account:
-                return stat
-        return None
-
-    for api_stats in (usage_payload.get("usage", {}).get("apis", {}) or {}).values():
-        for model_stats in (api_stats.get("models", {}) or {}).values():
-            for detail in model_stats.get("details", []) or []:
-                if not isinstance(detail, dict):
-                    continue
-                stat = find_stat(detail)
-                if not stat:
-                    continue
-                when = parse_detail_time(detail.get("timestamp"))
-                when_utc = parse_detail_time_utc(detail.get("timestamp"))
-                tokens_info = detail.get("tokens") or {}
-                tokens = int(tokens_info.get("total_tokens", 0) or 0)
-                input_tokens = int(tokens_info.get("input_tokens", 0) or 0)
-                output_tokens = int(tokens_info.get("output_tokens", 0) or 0)
-                cached_tokens = int(tokens_info.get("cached_tokens", 0) or 0)
-                reasoning_tokens = int(tokens_info.get("reasoning_tokens", 0) or 0)
-                failed = bool(detail.get("failed", False))
-                if when_utc:
-                    stat["_quota_usage_details"].append((when_utc, tokens))
-                detail_timestamp = str(detail.get("timestamp") or "")
-                detail_date = detail_timestamp[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", detail_timestamp) else None
-                if detail_date == today:
-                    stat["today"]["requests"] += 1
-                    stat["today"]["tokens"] += tokens
-                    stat["today"]["input_tokens"] += input_tokens
-                    stat["today"]["output_tokens"] += output_tokens
-                    stat["today"]["cached_tokens"] += cached_tokens
-                    stat["today"]["reasoning_tokens"] += reasoning_tokens
-                    if failed:
-                        stat["today"]["failure"] += 1
-                    else:
-                        stat["today"]["success"] += 1
-                for window_name, start_time in windows.items():
-                    if start_time is not None and (when is None or when < start_time):
-                        continue
-                    bucket = stat[window_name]
-                    bucket["requests"] += 1
-                    bucket["tokens"] += tokens
-                    bucket["input_tokens"] += input_tokens
-                    bucket["output_tokens"] += output_tokens
-                    bucket["cached_tokens"] += cached_tokens
-                    bucket["reasoning_tokens"] += reasoning_tokens
-                    if failed:
-                        bucket["failure"] += 1
-                    else:
-                        bucket["success"] += 1
-                if when and (not stat["last_request_at"] or when > parse_detail_time(stat["last_request_at"])):
-                    stat["last_request_at"] = detail.get("timestamp", "")
-                if failed and when and (not stat["last_error_at"] or when > parse_detail_time(stat["last_error_at"])):
-                    stat["last_error_at"] = detail.get("timestamp", "")
-                    stat["last_error_message"] = detail_error_message(detail)
-                    stat["last_error_status"] = detail_error_status(detail)
-
-    node_summary = {
-        node["name"]: {
-            "auth_files": 0,
-            "active": 0,
-            "warning": 0,
-            "unavailable": 0,
-            "management_path": node_management_path(node.get("name", ""), index),
-            "management_url": node.get("url", ""),
-        }
-        for index, node in enumerate(CLIPROXY_NODES)
-    }
-    for summary in node_summary.values():
-        for window_name in window_names:
-            summary.setdefault(window_name, empty_window())
-
-    for stat in stats.values():
-        for window_name in window_names:
-            enrich_window(stat[window_name])
-        enrich_window(stat["today"])
-        stat["status_explanation"] = status_explanation(stat)
-
-        node = stat["node"] or "unknown"
-        summary = node_summary.setdefault(node, {
-            "auth_files": 0,
-            "active": 0,
-            "warning": 0,
-            "unavailable": 0,
-            "management_path": node_management_path(node, len(node_summary)),
-            "management_url": "",
-        })
-        for window_name in window_names:
-            summary.setdefault(window_name, empty_window())
-        summary["auth_files"] += 1
-        if stat.get("disabled") or stat.get("unavailable"):
-            summary["unavailable"] += 1
-        else:
-            summary["active"] += 1
-        if stat.get("status") == "error" and not (stat.get("disabled") or stat.get("unavailable")):
-            summary["warning"] += 1
-        for window_name in window_names:
-            for metric in ("requests", "success", "failure", "tokens", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"):
-                summary[window_name][metric] += stat[window_name][metric]
-
-    for summary in node_summary.values():
-        for window_name in window_names:
-            enrich_window(summary[window_name])
-
-    if quota_sources:
-        workers = min(6, len(quota_sources))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_map = {
-                executor.submit(get_auth_quota_cached, node_cfg, auth_file): stats_key
-                for stats_key, (node_cfg, auth_file) in quota_sources.items()
-                if stats_key in stats
-            }
-            for future in as_completed(future_map):
-                stats_key = future_map[future]
-                try:
-                    stats[stats_key]["quota"] = future.result()
-                except Exception as e:
-                    stats[stats_key]["quota"] = _build_error_quota(stats[stats_key].get("provider", ""), str(e))
-
-    apply_quota_window_usage(stats)
-    today_used_tokens = int(((usage_payload.get("usage") or {}).get("tokens_by_day") or {}).get(today, 0) or 0)
-    today_quota_usage = build_today_quota_usage(stats, today, today_used_tokens)
-    for stat in stats.values():
-        stat.pop("_quota_usage_details", None)
-
-    return {
-        "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),
-        "nodes": node_summary,
-        "configured_nodes": configured_auth_stat_nodes(),
-        "today_quota_usage": today_quota_usage,
-        "errors": usage_payload.get("node_errors", []) + auth_errors,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-    }
-
 def get_auth_files():
     """Get list of auth files from all CLIProxyAPI nodes."""
     files, _ = get_cluster_auth_files()
@@ -3793,45 +2903,6 @@ def sync_usage_from_api():
         print(f"[UsageSync] LiteLLM cache refresh error: {e}")
         import traceback
         traceback.print_exc()
-        return False
-
-
-def git_sync_usage_csv():
-    """Commit and push usage CSV to GitHub."""
-    try:
-        repo_dir = os.path.dirname(os.path.dirname(__file__))  # CLIProxyAPI root
-        csv_path = "key-portal/data/usage_history.csv"
-
-        # Check if there are changes
-        result = subprocess.run(
-            ["git", "diff", "--quiet", csv_path],
-            cwd=repo_dir,
-            capture_output=True
-        )
-
-        if result.returncode == 0:
-            print("[GitSync] No changes to commit")
-            return True
-
-        # Add, commit, push
-        subprocess.run(["git", "add", csv_path], cwd=repo_dir, check=True)
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        subprocess.run(
-            ["git", "commit", "-m", f"Update usage history {today}"],
-            cwd=repo_dir,
-            check=True
-        )
-
-        subprocess.run(["git", "push"], cwd=repo_dir, check=True)
-
-        print(f"[GitSync] Pushed usage history update for {today}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"[GitSync] Git command failed: {e}")
-        return False
-    except Exception as e:
-        print(f"[GitSync] Error: {e}")
         return False
 
 
@@ -4225,7 +3296,7 @@ def status():
 @app.route("/api/status")
 def api_status():
     """Return current service status, active incidents, and recent announcements."""
-    return jsonify(build_status_payload(include_private=is_current_admin()))
+    return jsonify(status_service.build_payload(include_private=is_current_admin()))
 
 
 @app.route("/api/status/events/<int:event_id>", methods=["PATCH"])
@@ -4237,7 +3308,7 @@ def api_update_status_event(event_id):
     event = portal_state.update_status_event_note(event_id, body.get("admin_note", ""))
     if not event:
         return jsonify({"error": "事件不存在"}), 404
-    return jsonify({"event": status_event_public(event, include_private=True)})
+    return jsonify({"event": status_service.event_public(event, include_private=True)})
 
 
 @app.route("/api/auth-url")
@@ -4449,15 +3520,29 @@ def usage_history_empty_response(refreshing=False):
     }
 
 
+def usage_history_cache_usable(data):
+    if not isinstance(data, dict):
+        return False
+    if data.get("cache_status") == "warming":
+        return False
+    if data.get("refreshing") and not (
+        data.get("history") or data.get("by_month") or data.get("by_year") or data.get("recent_hours") or data.get("model_groups")
+    ):
+        return False
+    return True
+
+
 def load_usage_history_response_cache_from_disk():
     try:
         redis_cached = portal_state.cache_get_json("usage_history_response")
-        if redis_cached:
+        if usage_history_cache_usable(redis_cached):
             return redis_cached, time.time()
         if not os.path.exists(USAGE_HISTORY_RESPONSE_CACHE_FILE):
             return None, 0
         with open(USAGE_HISTORY_RESPONSE_CACHE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if not usage_history_cache_usable(data):
+            return None, 0
         return data, os.path.getmtime(USAGE_HISTORY_RESPONSE_CACHE_FILE)
     except Exception as e:
         print(f"[UsageHistory] Failed to read disk cache: {e}")
@@ -4505,9 +3590,9 @@ def get_usage_history():
         last_update = _usage_history_response_cache["last_update"]
         ttl = _usage_history_response_cache["ttl"]
 
-    if cached and (now - last_update) < ttl:
+    if usage_history_cache_usable(cached) and (now - last_update) < ttl:
         return jsonify({**cached, "cache_age_seconds": round(now - last_update, 3), "cache_status": "memory"})
-    if cached:
+    if usage_history_cache_usable(cached):
         start_usage_history_response_refresh()
         return jsonify({**cached, "cache_age_seconds": round(now - last_update, 3), "refreshing": True, "cache_status": "stale_memory"})
 
@@ -4519,8 +3604,17 @@ def get_usage_history():
         start_usage_history_response_refresh()
         return jsonify({**disk_cached, "cache_age_seconds": round(now - disk_mtime, 3), "refreshing": True, "cache_status": "disk"})
 
-    start_usage_history_response_refresh()
-    return jsonify(usage_history_empty_response(refreshing=True))
+    try:
+        data = build_usage_history_response()
+        save_usage_history_response_cache_to_disk(data)
+        with _usage_history_response_cache_lock:
+            _usage_history_response_cache["data"] = data
+            _usage_history_response_cache["last_update"] = time.time()
+        return jsonify({**data, "cache_age_seconds": 0, "cache_status": "live"})
+    except Exception as e:
+        print(f"[UsageHistory] Live refresh failed: {e}")
+        start_usage_history_response_refresh()
+        return jsonify({**usage_history_empty_response(refreshing=True), "error": str(e)})
 
 
 # ============================================================================
@@ -5469,7 +4563,7 @@ def api_get_user_keys():
         key_meta = user_data.get("keys", {}).get(api_key, {})
         key_stats = stats_by_key.get(api_key) or stats_by_key.get(key_meta.get("label", "")) or {}
         if date:
-            series = {row.get("date"): row for row in litellm_key_timeseries(api_key, date, date)}
+            series = {row.get("date"): row for row in litellm_key_timeseries(api_key, date, date, email=email)}
             day_stats = series.get(date, {})
             key_stats = {
                 **key_stats,
@@ -5688,7 +4782,8 @@ def api_get_user_key_timeseries():
     if email and owner and owner != email and owner.lower() != email.lower():
         return jsonify({"error": "该 Key 不属于该用户"}), 403
 
-    cache_key = f"{owner or email}|{api_key}|{date_from}|{date_to}"
+    hourly = num_days == 1
+    cache_key = f"{owner or email}|{api_key}|{date_from}|{date_to}|{'hourly' if hourly else 'daily'}"
     now = time.time()
     with _user_key_timeseries_cache_lock:
         cached = _user_key_timeseries_cache["data"].get(cache_key)
@@ -5699,7 +4794,7 @@ def api_get_user_key_timeseries():
         return jsonify({"error": "Key 不存在"}), 404
 
     buckets = []
-    for row in litellm_key_timeseries(api_key, date_from, date_to):
+    for row in litellm_key_timeseries(api_key, date_from, date_to, email=owner or email, hourly=hourly):
         total_tokens = int(row.get("total_tokens", 0) or 0)
         input_tokens = int(row.get("input_tokens", 0) or 0)
         output_tokens = int(row.get("output_tokens", 0) or 0)
@@ -5709,6 +4804,7 @@ def api_get_user_key_timeseries():
         breakdown = build_litellm_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
         buckets.append({
             "date": row.get("date"),
+            "hour": row.get("hour", ""),
             "requests": int(row.get("requests", 0) or 0),
             "success_count": int(row.get("success_count", 0) or 0),
             "failure_count": int(row.get("failure_count", 0) or 0),
@@ -5721,7 +4817,7 @@ def api_get_user_key_timeseries():
             "token_breakdown": breakdown,
             "estimated_cost_usd": breakdown["cost_usd"],
         })
-    mode = "daily"
+    mode = "hourly" if hourly else "daily"
 
     totals = {
         "requests": sum(b["requests"] for b in buckets),
@@ -5757,21 +4853,6 @@ def api_get_user_key_timeseries():
             "last_update": time.time(),
         }
     return jsonify(result)
-
-
-# WebSocket event handlers
-@socketio.on("connect")
-def handle_connect():
-    """Handle client connection."""
-    print(f"[WebSocket] Client connected")
-    # Send current usage immediately
-    broadcast_usage_update()
-
-
-@socketio.on("disconnect")
-def handle_disconnect():
-    """Handle client disconnection."""
-    print(f"[WebSocket] Client disconnected")
 
 
 @app.route("/api/sync-usage", methods=["POST"])
@@ -5988,55 +5069,21 @@ def scheduled_expiry_check():
             print(f"[Scheduler] Error in expiry check: {e}")
 
 
-def broadcast_usage_update():
-    """Broadcast usage update to all connected WebSocket clients."""
-    global _last_usage_state
-    try:
-        data, err = get_usage_summary_cached()
-        if err:
-            return
-
-        current_tokens = data.get("total_tokens", 0)
-        current_requests = data.get("total_requests", 0)
-
-        # Cluster mode aggregates multiple nodes; per-node counters can move independently
-        # as auth files migrate, so the single-node restart recovery heuristic is disabled.
-
-        # Only broadcast if there's a change
-        if (current_tokens != _last_usage_state["total_tokens"] or
-            current_requests != _last_usage_state["total_requests"]):
-            _last_usage_state["total_tokens"] = current_tokens
-            _last_usage_state["total_requests"] = current_requests
-
-            socketio.emit("usage_update", {
-                "total_tokens": current_tokens,
-                "total_requests": current_requests,
-                "today_tokens": data.get("today_tokens", 0),
-                "today_requests": data.get("today_requests", 0),
-                "success_count": data.get("success_count", 0),
-                "failure_count": data.get("failure_count", 0),
-                "timestamp": datetime.now().isoformat()
-            })
-            print(f"[WebSocket] Broadcast usage update: {current_tokens:,} tokens")
-    except Exception as e:
-        print(f"[WebSocket] Error broadcasting: {e}")
-        import traceback
-        traceback.print_exc()
+def broadcast_usage_update(force=False):
+    usage_broadcaster.broadcast(force=force)
 
 
-def scheduled_usage_sync():
-    """Sync precise LiteLLM usage and broadcast lightweight updates."""
-    with app.app_context():
-        print(f"[Scheduler] Running usage sync at {datetime.now().isoformat()}")
-        sync_usage_from_api()
-        broadcast_usage_update()
+# WebSocket event handlers
+@socketio.on("connect")
+def handle_connect():
+    """Handle client connection."""
+    usage_broadcaster.handle_connect()
 
 
-def scheduled_git_sync():
-    """Scheduled task to push usage CSV to GitHub."""
-    with app.app_context():
-        print(f"[Scheduler] Running git sync at {datetime.now().isoformat()}")
-        git_sync_usage_csv()
+@socketio.on("disconnect")
+def handle_disconnect():
+    """Handle client disconnection."""
+    usage_broadcaster.handle_disconnect()
 
 
 def scheduled_nlb_health_monitor():
@@ -6045,7 +5092,7 @@ def scheduled_nlb_health_monitor():
         try:
             events = nlb_monitor.monitor_once(CLIPROXY_NODES)
             for event in events:
-                record_nlb_monitor_event(event)
+                status_service.record_nlb_monitor_event(event)
                 print(f"[NLBMonitor] {event.get('node')} -> {event.get('status')}: {event.get('reason')}")
         except Exception as e:
             print(f"[NLBMonitor] Error: {e}")
@@ -6055,11 +5102,23 @@ def scheduled_usage_record_monitor():
     """Publish an announcement when today's usage crosses the historical daily record."""
     with app.app_context():
         try:
-            saved = check_daily_usage_record()
+            saved = status_service.check_daily_usage_record()
             if saved and saved.get("created"):
                 print(f"[Status] Usage record announced: {(saved.get('event') or {}).get('summary')}")
         except Exception as e:
             print(f"[Status] Usage record monitor error: {e}")
+
+
+def scheduled_model_group_spend_monitor():
+    """Publish an alert when an expensive model group crosses the daily spend threshold."""
+    with app.app_context():
+        try:
+            results = status_service.check_model_group_spend_alerts()
+            created = [item for item in (results or []) if item and item.get("created")]
+            for item in created:
+                print(f"[Status] Model group spend alert: {(item.get('event') or {}).get('summary')}")
+        except Exception as e:
+            print(f"[Status] Model group spend monitor error: {e}")
 
 
 if __name__ == "__main__":
@@ -6076,97 +5135,20 @@ if __name__ == "__main__":
     print("[Startup] Loading user keys database...")
     load_user_keys()
 
-    print("[Startup] Loading usage history...")
-    load_usage_history()
-
     print("[Startup] Restoring CLIProxyAPI usage snapshots...")
     # import_cliproxy_snapshot()  # disabled: NLB architecture, nodes are independent
 
-    # Start scheduler
-    scheduler.add_job(
-        scheduled_expiry_check,
-        "interval",
-        minutes=config.KEY_CHECK_INTERVAL_MINUTES,
-        id="expiry_check"
-    )
-
-    # Sync precise LiteLLM aggregates every 5 minutes without full CLIProxyAPI payload pulls.
-    scheduler.add_job(
-        scheduled_usage_sync,
-        "interval",
-        minutes=5,
-        id="usage_refresh"
-    )
-
-    # Git sync daily at 00:05
-    scheduler.add_job(
-        scheduled_git_sync,
-        "cron",
-        hour=0,
-        minute=5,
-        id="git_sync"
-    )
-
-    # Export full CLIProxyAPI snapshots only when explicitly enabled; these
-    # payloads can be hundreds of MB and are not needed for LiteLLM-backed usage.
-    if config.KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED:
-        scheduler.add_job(
-            scheduled_snapshot_export,
-            "interval",
-            minutes=60,
-            id="snapshot_export"
-        )
-
-    # Real-time usage broadcast. Keep this modest: management usage payloads
-    # grow with traffic and can create large short-lived objects.
-    scheduler.add_job(
-        broadcast_usage_update,
-        "interval",
-        seconds=15,
-        id="usage_broadcast",
-        max_instances=1,
-        coalesce=True
-    )
-
-    scheduler.add_job(
-        lambda: approval.poll_pending_approvals(),
-        "interval",
-        seconds=30,
-        id="approval_poll",
-        max_instances=1,
-        coalesce=True
-    )
-
-    if config.NLB_MONITOR_ENABLED:
-        scheduler.add_job(
-            scheduled_nlb_health_monitor,
-            "interval",
-            seconds=config.NLB_MONITOR_INTERVAL_SECONDS,
-            id="nlb_health_monitor",
-            max_instances=1,
-            coalesce=True
-        )
-
-    if config.STATUS_USAGE_RECORD_ENABLED:
-        scheduler.add_job(
-            scheduled_usage_record_monitor,
-            "interval",
-            minutes=5,
-            id="usage_record_monitor",
-            max_instances=1,
-            coalesce=True
-        )
-
+    portal_scheduler.configure_scheduler(scheduler, config, {
+        "expiry_check": scheduled_expiry_check,
+        "snapshot_export": scheduled_snapshot_export,
+        "usage_broadcast": broadcast_usage_update,
+        "approval_poll": lambda: approval.poll_pending_approvals(),
+        "nlb_health_monitor": scheduled_nlb_health_monitor,
+        "usage_record_monitor": scheduled_usage_record_monitor,
+        "model_group_spend_monitor": scheduled_model_group_spend_monitor,
+    })
     scheduler.start()
-    print(f"[Scheduler] Started:")
-    print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
-    print(f"  - Usage refresh: every 5 min")
-    print(f"  - Git sync:     daily at 00:05")
-    print(f"  - Snapshot:     {'every 60 min' if config.KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED else 'disabled'}")
-    print(f"  - Broadcast:    every 15 sec")
-    print(f"  - Approval poll: every 30 sec")
-    print(f"  - NLB monitor:  {'every ' + str(config.NLB_MONITOR_INTERVAL_SECONDS) + ' sec' if config.NLB_MONITOR_ENABLED else 'disabled'}")
-    print(f"  - Usage record: {'every 5 min' if config.STATUS_USAGE_RECORD_ENABLED else 'disabled'}")
+    portal_scheduler.print_schedule(config)
 
     # Initial usage sync is manual-only because the full usage payload is large.
 

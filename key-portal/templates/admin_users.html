@@ -100,10 +100,17 @@
         .rank.silver { color: #c0c0c0; }
         .rank.bronze { color: #cd7f32; }
         .toggle {
-            display: inline-block;
-            width: 18px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            flex: 0 0 22px;
             color: #667eea;
-            font-weight: bold;
+            background: #eef2ff;
+            border-radius: 999px;
+            font-weight: 800;
+            line-height: 1;
         }
         .loading {
             text-align: center;
@@ -215,6 +222,12 @@
         }
         .key-row.expanded {
             background: #f2f4ff;
+        }
+        .key-identity {
+            display: grid;
+            grid-template-columns: 22px minmax(0, 1fr);
+            gap: 9px;
+            align-items: center;
         }
         .key-code {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -659,7 +672,7 @@
 
                 if (isAggregated) {
                     row.innerHTML = `
-                        <td class="col-period"><span class="toggle">${expanded ? '▾' : '▸'}</span><strong>${escapeHtml(user.period || '')}</strong></td>
+                        <td class="col-period"><div class="key-identity"><span class="toggle">${expanded ? '▾' : '▸'}</span><strong>${escapeHtml(user.period || '')}</strong></div></td>
                         <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
                         <td class="col-keys">${formatNumber(user.key_count)}</td>
                         <td class="col-requests">${formatNumber(user.total_requests)}</td>
@@ -672,7 +685,7 @@
                 } else {
                     const rank = index + 1;
                     row.innerHTML = `
-                        <td class="col-rank"><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="rank ${getRankClass(rank)}">${getRankEmoji(rank)}</span></td>
+                        <td class="col-rank"><div class="key-identity"><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="rank ${getRankClass(rank)}">${getRankEmoji(rank)}</span></div></td>
                         <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
                         <td class="col-keys">${formatNumber(user.key_count)}</td>
                         <td class="col-requests">${formatNumber(user.total_requests)}</td>
@@ -793,7 +806,7 @@
             const failure = Number(apiKey.failure_count || 0);
             const keyRow = `
                 <tr class="key-row${expanded ? ' expanded' : ''}" data-api-key="${escapeAttr(apiKey.key)}">
-                    <td><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="key-code" title="${escapeAttr(maskedKey(apiKey.key))}">${escapeHtml(maskedKey(apiKey.key))}</span></td>
+                    <td><div class="key-identity"><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="key-code" title="${escapeAttr(maskedKey(apiKey.key))}">${escapeHtml(maskedKey(apiKey.key))}</span></div></td>
                     <td>${escapeHtml(apiKey.label || '')}</td>
                     <td>${escapeHtml(modelGroupLabel(apiKey.model_group || 'common'))}</td>
                     <td>${formatNumber(apiKey.total_requests)}</td>
