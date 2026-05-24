@@ -6,6 +6,8 @@ package config
 
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
+	// APIKeyPermissions optionally restricts authenticated client keys to model groups or models.
+	APIKeyPermissions []APIKeyPermission `yaml:"api-key-permissions" json:"api-key-permissions"`
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
@@ -34,9 +36,6 @@ type SDKConfig struct {
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 
-	// APIKeyPermissions optionally restricts authenticated client keys to model groups or models.
-	APIKeyPermissions []APIKeyPermission `yaml:"api-key-permissions" json:"api-key-permissions"`
-
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
 	PassthroughHeaders bool `yaml:"passthrough-headers" json:"passthrough-headers"`
@@ -49,16 +48,6 @@ type SDKConfig struct {
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
 }
 
-// APIKeyPermission restricts a downstream client API key to specific model groups or models.
-type APIKeyPermission struct {
-	Key              string   `yaml:"key" json:"key"`
-	Label            string   `yaml:"label,omitempty" json:"label,omitempty"`
-	AllowModelGroups []string `yaml:"allow-model-groups,omitempty" json:"allow-model-groups,omitempty"`
-	AllowModels      []string `yaml:"allow-models,omitempty" json:"allow-models,omitempty"`
-	DenyModelGroups  []string `yaml:"deny-model-groups,omitempty" json:"deny-model-groups,omitempty"`
-	DenyModels       []string `yaml:"deny-models,omitempty" json:"deny-models,omitempty"`
-}
-
 // StreamingConfig holds server streaming behavior configuration.
 type StreamingConfig struct {
 	// KeepAliveSeconds controls how often the server emits SSE heartbeats (": keep-alive\n\n").
@@ -69,4 +58,14 @@ type StreamingConfig struct {
 	// to allow auth rotation / transient recovery.
 	// <= 0 disables bootstrap retries. Default is 0.
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
+}
+
+// APIKeyPermission restricts a downstream client API key to specific model groups or models.
+type APIKeyPermission struct {
+	Key              string   `yaml:"key" json:"key"`
+	Label            string   `yaml:"label,omitempty" json:"label,omitempty"`
+	AllowModelGroups []string `yaml:"allow-model-groups,omitempty" json:"allow-model-groups,omitempty"`
+	AllowModels      []string `yaml:"allow-models,omitempty" json:"allow-models,omitempty"`
+	DenyModelGroups  []string `yaml:"deny-model-groups,omitempty" json:"deny-model-groups,omitempty"`
+	DenyModels       []string `yaml:"deny-models,omitempty" json:"deny-models,omitempty"`
 }
