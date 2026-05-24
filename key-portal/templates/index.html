@@ -355,7 +355,7 @@
                     </div>
                     <div class="pixel-hud">
                         <div class="pixel-hud-board">
-                            <div class="pixel-hud-header"><span>RACE BOARD</span><span class="pixel-hud-live">LIVE</span></div>
+                            <div class="pixel-hud-header"><span>RACE BOARD</span><span><span id="raceBoardClock">--:--:--</span> <span class="pixel-hud-live">LIVE</span></span></div>
                             <div class="pixel-hud-card" id="mySpeedCard"><span class="pixel-hud-title">MY RACER</span> LOADING...</div>
                             <div class="pixel-hud-card" id="speedLeaderboardRows"><span class="pixel-hud-title">TOP RACERS</span> LOADING...</div>
                         </div>
@@ -873,7 +873,7 @@
             if (levelLabel === '自行车') return { icon: '🚲', flip: true };
             if (levelLabel === '电动车') return { icon: '🛵', flip: true };
             if (levelLabel === '汽车') return { icon: '🏎️', flip: true };
-            if (levelLabel === '高铁') return { icon: '🚄', flip: true };
+            if (levelLabel === '直升机') return { icon: '🚁', flip: true };
             if (levelLabel === '飞机') return { icon: '✈️', flip: false };
             if (levelLabel === '火箭') return { icon: '🚀', flip: false };
             if (levelLabel === 'UFO') return { icon: '🛸', flip: false };
@@ -931,7 +931,7 @@
             if (visibleRate <= 0) return { label: '熄火', index: 0, progress: 0 };
             const requestThresholds = [
                 ['步行', 0.0001], ['跑步', 0.2], ['自行车', 0.6], ['电动车', 1.5],
-                ['汽车', 3], ['高铁', 8], ['飞机', 18], ['火箭', 40], ['UFO', 80]
+                ['汽车', 3], ['直升机', 8], ['飞机', 18], ['火箭', 40], ['UFO', 80]
             ];
             const thresholds = metric === 'requests'
                 ? requestThresholds
@@ -1158,6 +1158,8 @@
 
         function renderSpeedLeaderboard(now = performance.now()) {
             const deltaSeconds = speedRaceLastFrameAt ? Math.min((now - speedRaceLastFrameAt) / 1000, 0.2) : 1 / 60;
+            const clockEl = document.getElementById('raceBoardClock');
+            if (clockEl) clockEl.textContent = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
             const hudEl = document.getElementById('speedLeaderboardRows');
             const myEl = document.getElementById('mySpeedCard');
             const raceEl = document.getElementById('speedRaceRows');
