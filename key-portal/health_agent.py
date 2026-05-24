@@ -29,6 +29,7 @@ HOST = os.environ.get("HEALTH_AGENT_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = _env_int("HEALTH_AGENT_PORT", 18081)
 NODE_NAME = os.environ.get("NODE_NAME", os.uname().nodename).strip() or os.uname().nodename
 CLIPROXY_API_URL = os.environ.get("CLIPROXY_API_URL", "http://127.0.0.1:8317").strip().rstrip("/")
+LITELLM_URL = os.environ.get("LITELLM_URL", "http://127.0.0.1:4000").strip().rstrip("/")
 MANAGEMENT_KEY = os.environ.get("CLIPROXY_MANAGEMENT_KEY", "").strip()
 if not MANAGEMENT_KEY and config is not None:
     MANAGEMENT_KEY = getattr(config, "CLIPROXY_MANAGEMENT_KEY", "")
@@ -95,6 +96,20 @@ def evaluate_health():
 
     if checks["cliproxy_health_status"] != 200:
         return False, "cliproxy health check failed", checks
+
+    try:
+        req = Request(f"{LITELLM_URL}/health/liveliness")
+        with urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+            checks["litellm_health_status"] = resp.status
+    except HTTPError as exc:
+        checks["litellm_health_status"] = exc.code
+        return False, "litellm health check failed", checks
+    except (URLError, TimeoutError, OSError) as exc:
+        checks["litellm_error"] = str(exc)
+        return False, "litellm unreachable", checks
+
+    if checks.get("litellm_health_status") != 200:
+        return False, "litellm health check failed", checks
 
     try:
         payload = _get_json("/v0/management/auth-files")

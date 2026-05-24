@@ -10,8 +10,6 @@
 | node-b (cliproxy-node-b) | i-08055c52390086849 | c7g.large (2vCPU/4GB) | 3.150.54.188 | 172.31.26.28 | Nginx + LiteLLM + cliproxyapi |
 | node-c (cliproxy-node-c) | i-07d065661a87679df | c7g.large (2vCPU/4GB) | 18.189.167.58 | 172.31.16.7 | Nginx + LiteLLM + cliproxyapi |
 | node-d (cliproxy-node-d) | i-0fd32ef2df7d69857 | c7g.large (2vCPU/4GB) | 3.19.6.233 | 172.31.24.86 | Nginx + LiteLLM + cliproxyapi |
-| node-e (cliproxy-node-e) | i-025bef9fe5312b1a2 | c7g.large (2vCPU/4GB) | 3.130.130.13 | 172.31.29.243 | Nginx + LiteLLM + cliproxyapi |
-| node-f (cliproxy-node-f) | i-0641bdedc4c8964f7 | c7g.large (2vCPU/4GB) | 3.136.37.81 (auto public IP) | 172.31.25.74 | Nginx + LiteLLM + cliproxyapi |
 
 区域: us-east-2, VPC: vpc-0f364ac1dc5cb2e11, 子网: subnet-08a5e4e391a7304c4 (us-east-2b)
 
