@@ -1850,7 +1850,7 @@ def mask_speed_identity(email):
 
 def speed_level_for(rate, metric):
     if rate <= 0:
-        return {"label": "度假中", "index": 0, "progress": 0}
+        return {"label": "熄火", "index": 0, "progress": 0}
     request_thresholds = [
         ("步行", 0),
         ("跑步", 0.2),
@@ -1884,12 +1884,15 @@ def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
     window_seconds = max(30, min(int(window_seconds or 60), 600))
     limit = max(3, min(int(limit or 8), 20))
     identity = litellm_spend_identity_sql()
+    active_seconds = max(15, min(window_seconds // 3, 30))
     sql = f"""
 WITH rows AS (
     SELECT
         lower({identity}) AS email,
         count(*)::bigint AS requests,
         coalesce(sum(s.total_tokens), 0)::bigint AS tokens,
+        count(*) FILTER (WHERE s."endTime" >= now() - ({active_seconds} * interval '1 second'))::bigint AS active_requests,
+        coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= now() - ({active_seconds} * interval '1 second')), 0)::bigint AS active_tokens,
         max(s."endTime") AS last_seen
     FROM "LiteLLM_SpendLogs" s
     LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
@@ -1900,9 +1903,11 @@ WITH rows AS (
         email,
         requests,
         tokens,
+        active_requests,
+        active_tokens,
         last_seen,
-        row_number() OVER (ORDER BY tokens DESC, requests DESC, email ASC) AS token_rank,
-        row_number() OVER (ORDER BY requests DESC, tokens DESC, email ASC) AS request_rank
+        row_number() OVER (ORDER BY active_tokens DESC, active_requests DESC, tokens DESC, email ASC) AS token_rank,
+        row_number() OVER (ORDER BY active_requests DESC, active_tokens DESC, requests DESC, email ASC) AS request_rank
     FROM rows
     WHERE email IS NOT NULL AND email != '' AND email != 'unknown'
 )
@@ -1915,13 +1920,17 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
         row_email = _normalize_email(row.get("email"))
         tokens = _int_usage_value(row.get("tokens"))
         requests = _int_usage_value(row.get("requests"))
+        active_tokens = _int_usage_value(row.get("active_tokens"))
+        active_requests = _int_usage_value(row.get("active_requests"))
         item = {
             "email_mask": mask_speed_identity(row_email),
             "is_current_user": row_email == email,
             "tokens": tokens,
             "requests": requests,
-            "tokens_per_minute": round(tokens * 60 / window_seconds, 2),
-            "requests_per_minute": round(requests * 60 / window_seconds, 2),
+            "active_tokens": active_tokens,
+            "active_requests": active_requests,
+            "tokens_per_minute": round(active_tokens * 60 / active_seconds, 2),
+            "requests_per_minute": round(active_requests * 60 / active_seconds, 2),
             "token_rank": _int_usage_value(row.get("token_rank")),
             "request_rank": _int_usage_value(row.get("request_rank")),
             "last_seen": row.get("last_seen"),
@@ -1948,6 +1957,7 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
     return {
         "window_seconds": window_seconds,
         "window_minutes": round(window_seconds / 60, 2),
+        "active_seconds": active_seconds,
         "top": built[:limit],
         "current_user": current,
         "generated_at": datetime.now(timezone.utc).isoformat(),
