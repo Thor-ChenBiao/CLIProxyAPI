@@ -49,7 +49,7 @@
     function mount(session) {
         const user = session.user || {};
         const email = session.email || user.email || '';
-        const role = session.is_admin ? 'Admin' : 'User';
+        const role = session.is_admin ? '<span class="portal-role">Admin</span>' : '';
         const avatar = user.avatar_url
             ? `<img src="${escapeHtml(user.avatar_url)}" alt="">`
             : escapeHtml(initials(user, email));
@@ -73,7 +73,7 @@
                         <div class="portal-user-name">${escapeHtml(user.name || email || '已登录')}</div>
                         <div class="portal-user-email">${escapeHtml(email)}</div>
                     </div>
-                    <span class="portal-role">${role}</span>
+                    ${role}
                     <button class="portal-logout" type="button">退出</button>
                 </div>
             </div>
