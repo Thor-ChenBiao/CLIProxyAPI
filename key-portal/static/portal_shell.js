@@ -74,6 +74,7 @@
                         <div class="portal-user-email">${escapeHtml(email)}</div>
                     </div>
                     ${role}
+                    <div class="portal-lang-toggle" aria-label="语言切换"></div>
                     <button class="portal-logout" type="button">退出</button>
                 </div>
             </div>
