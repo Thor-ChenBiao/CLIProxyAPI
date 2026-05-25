@@ -34,6 +34,7 @@
         "剩余可用 Key": "Keys available",
         "标识 *": "Label *",
         "邮箱 或 描述（如：张三-工作电脑、AI项目测试、产品部）": "Email or a short label, such as Alex - work laptop, AI project test, Product team",
+        "如：张三-工作电脑、AI项目测试、产品部": "Example: Alex - work laptop, AI project test, Product team",
         "用于识别和统计，可以是邮箱、姓名、场景描述等": "Used for usage tracking. Use an email, name, team, or project label.",
         "申请 API Key": "Get API key",
         "申请中...": "Creating key...",
@@ -482,7 +483,25 @@
         "⚠️ Claude / Bedrock 按量计费成本较高，请仅在必要、紧急或 GPT 无法满足任务时申请；常规用量推荐优先使用 GPT Key。审批通过后自动生成 Key 并通过飞书通知你。当前仅支持 Opus 4.6（模型名选 claude-opus-4-6），暂不支持 4.7。": "Claude / Bedrock pay-as-you-go usage is expensive. Apply only when the task is necessary, urgent, or cannot be handled by GPT. For regular usage, prefer GPT Key. After approval, a key will be generated automatically and sent to you in Feishu. Currently only Opus 4.6 is supported; use model name claude-opus-4-6. 4.7 is not supported yet.",
         "⚠️ DeepSeek Key 需要飞书审批。审批通过后自动生成 Key 并通过飞书通知你。": "DeepSeek Key requires Feishu approval. After approval, a key will be generated automatically and sent to you in Feishu.",
         "额度用完后请求将被拒绝，不会按天自动重置；需要追加额度后继续使用": "Requests will be rejected after the budget is used up. It does not reset daily; request additional budget to continue.",
-        "选择赛车人数": "Select racers"
+        "选择赛车人数": "Select racers",
+        "全部服务正常": "All services operational",
+        "部分服务异常": "Some services are degraded",
+        "无需审批": "No approval required",
+        "需要审批": "Approval required",
+        "gpt-5.5，以及 GPT-backed 的 claude-* 公开模型名": "gpt-5.5 and GPT-backed public claude-* model names",
+        "默认推荐。Claude Code、Codex、日常开发优先用它。": "Recommended by default. Use it first for Claude Code, Codex, and daily development.",
+        "只有 GPT Key 明显不满足、且必须走真实 Claude/Bedrock 时再申请。": "Apply only when GPT Key clearly is not enough and you must use real Claude/Bedrock.",
+        "deepseek-chat、deepseek-reasoner": "deepseek-chat, deepseek-reasoner",
+        "用于明确需要 DeepSeek V3/R1 的任务。": "Use only for tasks that explicitly need DeepSeek V3/R1.",
+        "把 <YOUR_API_KEY> 替换成你在“我的 Keys”里复制的 Key。": "Replace <YOUR_API_KEY> with the key you copied from My Keys.",
+        "同一个 Key 可以给 Codex CLI 使用，默认模型建议 gpt-5.5。": "The same key works with Codex CLI. The recommended default model is gpt-5.5.",
+        "多 Key、多配置切换推荐使用。": "Recommended for switching between multiple keys and configurations.",
+        "Claude Code 能力包。": "Claude Code skills package.",
+        "按节点查看整体健康；切换到认证文件视图可跨节点定位需要处理的账号。": "View overall health by node. Switch to the auth-file view to locate accounts that need action across nodes.",
+        "跨节点对比每个认证文件在 1h / 5h / 24h / 7d 的流量、失败率和处理优先级。": "Compare each auth file across nodes by 1h / 5h / 24h / 7d traffic, failure rate, and handling priority.",
+        "对比每个节点在 1h / 5h / 24h / 7d 的流量、失败率和整体健康。": "Compare each node by 1h / 5h / 24h / 7d traffic, failure rate, and overall health.",
+        "Key Portal 不主动查询 provider 原生额度": "Key Portal does not directly poll provider quota APIs",
+        "不由 Key Portal 主动查询 provider 原生额度": "not directly polled from provider quota APIs by Key Portal"
     };
 
     const PHRASES = [
@@ -521,6 +540,23 @@
         [/更新于\s*/g, "Updated "],
         [/(\d+(?:\.\d+)?)h 后过期/g, "$1h left"],
         [/账户:\s*/g, "Account: "],
+        [/-工作电脑/g, " - work laptop"],
+        [/工作电脑/g, "work laptop"],
+        [/AI项目测试/g, "AI project test"],
+        [/产品部/g, "Product team"],
+        [/张三/g, "Alex"],
+        [/熄火/g, "Idle"],
+        [/步行/g, "Walking"],
+        [/跑步/g, "Running"],
+        [/自行车/g, "Bicycle"],
+        [/电动车/g, "E-bike"],
+        [/汽车/g, "Car"],
+        [/直升机/g, "Helicopter"],
+        [/飞机/g, "Plane"],
+        [/火箭/g, "Rocket"],
+        [/(\d+)\s*个认证文件/g, "$1 auth files"],
+        [/(\d+)\s*个账号/g, "$1 accounts"],
+        [/(\d+)\s*个额度快照/g, "$1 quota snapshots"],
         [/(\d+)\s*个/g, "$1"],
         [/申请失败/g, "Could not create the key"],
         [/加载中/g, "Loading"],
@@ -530,6 +566,14 @@
         [/页面可见时每\s*(\d+)s\s*刷新/g, "refreshes every $1s while visible"],
         [/数据口径[：:]/g, "Data scope: "],
         [/请求数为加和值/g, "request counts are summed"],
+        [/占集群\s*/g, "of cluster "],
+        [/占列表\s*/g, "of list "],
+        [/每认证平均\s*/g, "avg per auth "],
+        [/失败率/g, "Failure rate"],
+        [/成功率/g, "Success rate"],
+        [/不可用/g, "Unavailable"],
+        [/可用/g, "Active"],
+        [/正常/g, "Normal"],
         [/重置\s*/g, "Reset "],
         [/剩余\s*/g, "Remaining "],
         [/已用\s*/g, "Used "],
@@ -537,7 +581,11 @@
         [/失败\s*/g, "Failures "],
         [/成功\s*/g, "Success "],
         [/请求\s*/g, "Requests "],
+        [/Tokens 已用/g, "Tokens used"],
+        [/单号日额度\s*/g, "single-account daily limit "],
         [/单号范围\s*/g, "single-account range "],
+        [/认证文件/g, "auth files"],
+        [/账号/g, "accounts"],
         [/已有\s*/g, "Have "],
         [/额度快照/g, "quota snapshots"],
         [/本地窗口用量不足/g, "insufficient local window usage"],
@@ -552,6 +600,8 @@
         [/进行中/g, "Ongoing"],
         [/已恢复/g, "Resolved"],
         [/公告/g, "Notice"],
+        [/需审批/g, "approval required"],
+        [/不限量/g, "unlimited"],
         [/当前展开的是/g, "Currently expanded: "],
         [/的 Key 用量/g, " key usage"],
         [/的 Keys/g, "'s keys"],
@@ -559,6 +609,9 @@
         [/成功[：:]\s*/g, "Success: "],
         [/失败[：:]\s*/g, "Failure: "],
         [/请求数[：:]\s*/g, "Requests: "],
+        [/估算费用/g, "Estimated cost"],
+        [/模型类型/g, "Model type"],
+        [/无请求/g, "No requests"],
         [/估算[：:]?\s*/g, "Estimated "],
         [/今日\s*/g, "Today "],
         [/累计\s*/g, "Total "],
@@ -597,6 +650,28 @@
         return String(text || "").replace(/\s+/g, " ").trim();
     }
 
+    function isMixedCodeText(text) {
+        return /[A-Za-z0-9$#@._/-]/.test(text);
+    }
+
+    function formatEnglishCompact(value) {
+        const num = Number(value || 0);
+        if (!Number.isFinite(num)) {
+            return String(value || "0");
+        }
+        const format = (base, suffix) => (num / base).toFixed(num >= base * 10 ? 1 : 2).replace(/\.?0+$/, "") + suffix;
+        if (Math.abs(num) >= 1e9) return format(1e9, "B");
+        if (Math.abs(num) >= 1e6) return format(1e6, "M");
+        if (Math.abs(num) >= 1e3) return format(1e3, "K");
+        return String(Math.round(num));
+    }
+
+    function translateChineseCompactNumbers(text) {
+        return text
+            .replace(/(\d+(?:\.\d+)?)\s*亿/g, (_, value) => formatEnglishCompact(Number(value) * 100000000))
+            .replace(/(\d+(?:\.\d+)?)\s*万/g, (_, value) => formatEnglishCompact(Number(value) * 10000));
+    }
+
     function translateCore(text) {
         const normalized = normalize(text);
         if (!normalized) {
@@ -605,14 +680,14 @@
         if (Object.prototype.hasOwnProperty.call(EXACT, normalized)) {
             return EXACT[normalized];
         }
-        let translated = normalized;
+        let translated = translateChineseCompactNumbers(normalized);
         for (const pair of PHRASES) {
             translated = translated.split(pair[0]).join(pair[1]);
         }
         for (const pair of REPLACEMENTS) {
             translated = translated.replace(pair[0], pair[1]);
         }
-        if (translated !== normalized && HAN_RE.test(translated)) {
+        if (translated !== normalized && HAN_RE.test(translated) && !isMixedCodeText(translated)) {
             return text;
         }
         return translated === normalized ? text : translated;
