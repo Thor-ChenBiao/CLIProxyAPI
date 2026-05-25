@@ -22,12 +22,16 @@
             margin-bottom: 30px;
             text-align: center;
         }
-        .search-box {
+        .lookup-panel {
             background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 30px;
+            border-radius: 14px;
+            box-shadow: 0 8px 24px rgba(31,41,55,0.08);
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        .search-box {
+            padding: 24px;
+            border-bottom: 1px solid #eef2ff;
         }
         .search-box input {
             width: 100%;
@@ -87,6 +91,11 @@
             margin-top: 6px;
         }
         .modal label { display: block; margin-top: 14px; color: #333; font-weight: 600; }
+        .lookup-panel .user-info {
+            box-shadow: none;
+            border-radius: 0;
+            margin-bottom: 0;
+        }
         .user-info {
             background: white;
             padding: 30px;
@@ -119,6 +128,11 @@
         }
         .token-detail { font-size: 11px; color: #666; margin-top: 4px; line-height: 1.45; }
         .token-cost { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 2px; }
+        .lookup-panel .keys-list {
+            box-shadow: none;
+            border-radius: 0;
+            border-top: 1px solid #eef2ff;
+        }
         .keys-list {
             background: white;
             padding: 30px;
@@ -147,6 +161,30 @@
             border-radius: 5px;
             font-size: 12px;
         }
+        .lookup-panel .error {
+            margin: 0 24px 24px;
+        }
+        .help-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .help-card {
+            padding: 16px;
+            border-radius: 10px;
+            line-height: 1.5;
+        }
+        .help-card code {
+            display: block;
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 13px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
         .error {
             background: #f8d7da;
             color: #721c24;
@@ -169,40 +207,15 @@
 </head>
 <body>
     <div class="container">
-        <div class="search-box">
-            <input type="text" id="keyInput" placeholder="输入 API Key（如：sk-... 或 usr_pool_...）">
-            <button class="btn" onclick="searchKeys()">查询 Key</button>
-        </div>
-
-        <!-- 历史申请的Keys -->
-        <div id="myKeysHistory" style="margin-bottom: 30px; display: none;">
-            <h3 style="color: #667eea; margin-bottom: 15px;">📋 我申请过的 Keys</h3>
-            <div id="myKeysList"></div>
-        </div>
-
-        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-            <strong>💡 如何查看我的 API Key？</strong>
-            <p style="margin: 10px 0; font-size: 14px; color: #856404;">在终端执行以下命令：</p>
-            <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 13px; margin-top: 10px;">
-                cat ~/.claude/settings.json | grep apiKeyHelper
+        <div class="lookup-panel">
+            <div class="search-box">
+                <input type="text" id="keyInput" placeholder="输入 API Key（如：sk-... 或 usr_pool_...）">
+                <button class="btn" onclick="searchKeys()">查询 Key</button>
             </div>
-            <p style="margin-top: 10px; font-size: 13px; color: #856404;">输出中 "echo" 后面的就是你的 API Key</p>
-        </div>
 
-        <div style="background: #f8d7da; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #f5c6cb;">
-            <strong style="color: #721c24;">🗑 安全移除代理配置</strong>
-            <p style="margin: 10px 0; font-size: 14px; color: #856404;">如需恢复为官方 Claude Code（移除代理配置但保留 MCP/permissions 等设置）：</p>
-            <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
-                <button onclick="copyRemoveCmd(this)" style="padding: 10px 20px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; white-space: nowrap;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
-                    复制移除命令
-                </button>
-                <span style="font-size: 12px; color: #856404;">复制后在终端粘贴执行，仅移除 apiKeyHelper 和 ANTHROPIC_BASE_URL，不影响其他配置</span>
-            </div>
-        </div>
+            <div class="error" id="error"></div>
 
-        <div class="error" id="error"></div>
-
-        <div class="user-info" id="userInfo">
+            <div class="user-info" id="userInfo">
             <h2 id="userName"></h2>
             <p id="userEmail" style="color: #666; margin-top: 5px;"></p>
 
@@ -238,6 +251,33 @@
                 </thead>
                 <tbody id="keysTableBody"></tbody>
             </table>
+        </div>
+        </div>
+
+        <!-- 历史申请的Keys -->
+        <div id="myKeysHistory" style="margin-bottom: 24px; display: none;">
+            <h3 style="color: #667eea; margin-bottom: 15px;">📋 本机历史申请记录</h3>
+            <div id="myKeysList"></div>
+        </div>
+
+        <div class="help-grid">
+            <div class="help-card" style="background: #fff3cd;">
+                <strong>💡 如何查看我的 API Key？</strong>
+                <p style="margin: 10px 0; font-size: 14px; color: #856404;">在终端执行以下命令：</p>
+                <code>cat ~/.claude/settings.json | grep apiKeyHelper</code>
+                <p style="margin-top: 10px; font-size: 13px; color: #856404;">输出中 "echo" 后面的就是你的 API Key</p>
+            </div>
+
+            <div class="help-card" style="background: #f8d7da; border: 1px solid #f5c6cb;">
+                <strong style="color: #721c24;">🗑 安全移除代理配置</strong>
+                <p style="margin: 10px 0; font-size: 14px; color: #856404;">如需恢复为官方 Claude Code（移除代理配置但保留 MCP/permissions 等设置）：</p>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                    <button onclick="copyRemoveCmd(this)" style="padding: 10px 20px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; white-space: nowrap;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                        复制移除命令
+                    </button>
+                    <span style="font-size: 12px; color: #856404;">仅移除 apiKeyHelper 和 ANTHROPIC_BASE_URL，不影响其他配置</span>
+                </div>
+            </div>
         </div>
 
         <div class="modal-backdrop" id="topupModal">
@@ -862,7 +902,10 @@ REMOVE_EOF`;
                 searchKeys();
                 return;
             }
-            searchByEmail();
+
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = '请先登录后查看自己的 Keys';
+            errorDiv.style.display = 'block';
         }
 
         bootMyKeysPage();

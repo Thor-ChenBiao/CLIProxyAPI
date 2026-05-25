@@ -1692,10 +1692,12 @@ SELECT coalesce(json_agg(row_to_json(user_rows) ORDER BY {order_sql}), '[]'::jso
 
 
 def litellm_key_match_sql(api_key, alias_expr="v.key_alias", api_key_expr="s.api_key"):
+    api_key = str(api_key or "").strip()
     key_literal = _sql_literal(api_key)
+    hash_literal = _sql_literal(_litellm_token_hash(api_key))
     suffix_literal = _sql_literal(f":{api_key}")
     return (
-        f"({api_key_expr} = {key_literal} OR {alias_expr} = {key_literal} "
+        f"({api_key_expr} IN ({key_literal}, {hash_literal}) OR {alias_expr} = {key_literal} "
         f"OR right(coalesce({alias_expr}, ''), {len(api_key) + 1}) = {suffix_literal})"
     )
 
@@ -1704,12 +1706,79 @@ def litellm_keys_match_sql(keys, alias_expr="v.key_alias", api_key_expr="s.api_k
     values = [str(key or "").strip() for key in (keys or []) if str(key or "").strip()]
     if not values:
         return ""
+    token_values = sorted({item for key in values for item in (key, _litellm_token_hash(key)) if item})
     key_values = ",".join(_sql_literal(key) for key in values)
+    token_sql = ",".join(_sql_literal(key) for key in token_values)
     suffix_terms = " OR ".join(
         f"right(coalesce({alias_expr}, ''), {len(key) + 1}) = {_sql_literal(f':{key}')}"
         for key in values
     )
-    return f"({api_key_expr} IN ({key_values}) OR {alias_expr} IN ({key_values}) OR {suffix_terms})"
+    return f"({api_key_expr} IN ({token_sql}) OR {alias_expr} IN ({key_values}) OR {suffix_terms})"
+
+
+def litellm_key_lookup(api_key):
+    api_key = str(api_key or "").strip()
+    if not api_key:
+        return None
+    token_hash = _litellm_token_hash(api_key)
+    today = _sql_literal(beijing_today())
+    sql = f"""
+WITH token_row AS (
+    SELECT token, user_id, key_alias, metadata, spend, max_budget
+    FROM "LiteLLM_VerificationToken"
+    WHERE token IN ({_sql_literal(api_key)}, {_sql_literal(token_hash)})
+    LIMIT 1
+), spend_row AS (
+    SELECT
+        s.api_key,
+        count(*)::bigint AS total_requests,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours'))::bigint AS today_requests,
+        coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_tokens,
+        coalesce(sum(s.prompt_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_input_tokens,
+        coalesce(sum(s.completion_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_cached_tokens,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_reasoning_tokens,
+        coalesce(sum(s.spend) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8 AS today_spend_usd
+    FROM "LiteLLM_SpendLogs" s
+    WHERE s.api_key IN ({_sql_literal(api_key)}, {_sql_literal(token_hash)})
+    GROUP BY s.api_key
+    ORDER BY total_requests DESC
+    LIMIT 1
+)
+SELECT json_build_object(
+    'found', EXISTS (SELECT 1 FROM token_row) OR EXISTS (SELECT 1 FROM spend_row),
+    'token', coalesce((SELECT token FROM token_row), (SELECT api_key FROM spend_row), {_sql_literal(token_hash)}),
+    'user_id', (SELECT user_id FROM token_row),
+    'key_alias', (SELECT key_alias FROM token_row),
+    'metadata', coalesce((SELECT metadata FROM token_row), '{{}}'::jsonb),
+    'max_budget', (SELECT max_budget FROM token_row),
+    'token_spend', coalesce((SELECT spend FROM token_row), 0),
+    'total_requests', coalesce((SELECT total_requests FROM spend_row), 0),
+    'total_tokens', coalesce((SELECT total_tokens FROM spend_row), 0),
+    'input_tokens', coalesce((SELECT input_tokens FROM spend_row), 0),
+    'output_tokens', coalesce((SELECT output_tokens FROM spend_row), 0),
+    'cached_tokens', coalesce((SELECT cached_tokens FROM spend_row), 0),
+    'reasoning_tokens', coalesce((SELECT reasoning_tokens FROM spend_row), 0),
+    'spend_usd', coalesce((SELECT spend_usd FROM spend_row), 0),
+    'today_requests', coalesce((SELECT today_requests FROM spend_row), 0),
+    'today_tokens', coalesce((SELECT today_tokens FROM spend_row), 0),
+    'today_input_tokens', coalesce((SELECT today_input_tokens FROM spend_row), 0),
+    'today_output_tokens', coalesce((SELECT today_output_tokens FROM spend_row), 0),
+    'today_cached_tokens', coalesce((SELECT today_cached_tokens FROM spend_row), 0),
+    'today_reasoning_tokens', coalesce((SELECT today_reasoning_tokens FROM spend_row), 0),
+    'today_spend_usd', coalesce((SELECT today_spend_usd FROM spend_row), 0)
+);
+"""
+    payload = litellm_psql_json(sql, timeout=15)
+    if not isinstance(payload, dict) or not payload.get("found"):
+        return None
+    return payload
 
 
 def litellm_user_key_totals(email, keys=None):
@@ -4471,12 +4540,14 @@ def update_key_email():
 def get_my_keys():
     """Get all keys for a user by email."""
     data = request.get_json(silent=True) or {}
-    email = _normalize_email(data.get("email"))
-    if not is_current_admin():
+    requested_email = _normalize_email(data.get("email"))
+    if is_current_admin():
+        email = requested_email or current_user_email()
+    else:
         email = current_user_email()
 
     if not email:
-        return jsonify({"error": "请输入邮箱"}), 400
+        return jsonify({"error": "登录状态已过期，请重新登录"}), 401
     if not user_can_access_email(email):
         return jsonify({"error": "不能查看其他用户的 Key"}), 403
 
@@ -4643,22 +4714,43 @@ def query_by_key():
 
     user_data = load_user_keys()
 
-    # Find which user owns this key
     key_info = user_data["keys"].get(api_key)
+    litellm_lookup = None
     if not key_info:
-        return jsonify({"error": "Key 不存在"}), 404
-    if not user_can_access_key(api_key, user_data):
+        litellm_lookup = litellm_key_lookup(api_key)
+        metadata = litellm_lookup.get("metadata") if isinstance(litellm_lookup, dict) else {}
+        identifier = _normalize_email((metadata or {}).get("email") or litellm_lookup.get("user_id") if litellm_lookup else "")
+        if not litellm_lookup or not identifier:
+            return jsonify({"error": "Key 不存在"}), 404
+        key_info = {
+            "email": identifier,
+            "name": (metadata or {}).get("name") or identifier,
+            "label": (metadata or {}).get("label") or litellm_lookup.get("key_alias") or "LiteLLM Key",
+            "model_group": normalize_model_group((metadata or {}).get("model_group", "common")),
+            "source": "litellm",
+            "max_budget": litellm_lookup.get("max_budget"),
+        }
+    else:
+        identifier = _normalize_email(key_info.get("email"))
+
+    if not user_can_access_email(identifier):
         return jsonify({"error": "不能查看其他用户的 Key"}), 403
 
-    identifier = key_info["email"]
-    user = user_data["users"].get(identifier)
-
-    if not user:
-        return jsonify({"error": "用户不存在"}), 404
+    user = user_data["users"].get(identifier) or {
+        "email": identifier,
+        "name": key_info.get("name") or identifier,
+        "api_keys": [api_key],
+    }
+    if api_key not in user.get("api_keys", []):
+        user = {**user, "api_keys": [*user.get("api_keys", []), api_key]}
 
     today = beijing_today()
     key_rows = litellm_user_key_totals(identifier, user.get("api_keys", []))
-    key_totals = {row.get("key_id"): row for row in key_rows}
+    key_totals = {}
+    for row in key_rows:
+        for key in (row.get("key_id"), row.get("key_label"), row.get("api_key")):
+            if key:
+                key_totals[key] = row
 
     user_total_requests = 0
     user_total_tokens = 0
@@ -4678,8 +4770,10 @@ def query_by_key():
     all_keys = []
 
     for key in user.get("api_keys", []):
-        key_meta = user_data["keys"].get(key, {})
-        key_stats = key_totals.get(key) or key_totals.get(key_meta.get("label", "")) or {}
+        key_meta = user_data["keys"].get(key, {}) or (key_info if key == api_key else {})
+        key_stats = key_totals.get(key) or key_totals.get(_litellm_token_hash(key)) or key_totals.get(key_meta.get("label", "")) or {}
+        if key == api_key and litellm_lookup:
+            key_stats = {**key_stats, **litellm_lookup}
         max_budget = _key_budget(key_meta, key)
         requests = _int_usage_value(key_stats.get("total_requests"))
         tokens = _int_usage_value(key_stats.get("total_tokens"))

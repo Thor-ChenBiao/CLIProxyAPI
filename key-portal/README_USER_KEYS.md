@@ -273,6 +273,63 @@ GET /api/all-users-stats
 
 ---
 
+## 🔎 LiteLLM Key 归属和用量排查
+
+LiteLLM 不直接用明文 `sk-...` 作为数据库关联键。用户拿到的是明文 key，请求进入 LiteLLM 后会按明文 key 计算 SHA256：
+
+```text
+raw key: sk-...
+sha256(raw key): <64 hex chars>
+```
+
+数据库关联关系：
+
+```text
+用户明文 key sk-...
+    ↓ sha256
+LiteLLM_VerificationToken.token
+    ↓ join
+LiteLLM_SpendLogs.api_key
+    ↓ metadata
+metadata.email / metadata.name / metadata.label / metadata.model_group
+```
+
+排查某个明文 key 的归属时，先算 SHA256，再用 hash 去查 LiteLLM：
+
+```bash
+python3 - <<'PY'
+import hashlib
+raw_key = 'sk-REPLACE_ME'
+print(hashlib.sha256(raw_key.encode()).hexdigest())
+PY
+```
+
+然后在 LiteLLM Postgres 里查：
+
+```sql
+SELECT
+  token,
+  user_id,
+  metadata,
+  spend,
+  max_budget
+FROM "LiteLLM_VerificationToken"
+WHERE token = '<sha256(raw key)>';
+
+SELECT
+  count(*) AS requests,
+  coalesce(sum(total_tokens), 0) AS tokens,
+  coalesce(sum(spend), 0) AS spend_usd,
+  min("endTime") AS first_seen,
+  max("endTime") AS last_seen
+FROM "LiteLLM_SpendLogs"
+WHERE api_key = '<sha256(raw key)>';
+```
+
+模型组费用告警也按这个关联口径统计：只信任 `LiteLLM_VerificationToken.metadata->>'model_group'`，不要用 `SpendLogs.model` 名称推断 key 组，否则 common key 调 Claude 模型会被误算进 Claude key 组。
+
+---
+
 ## ❓ 常见问题
 
 ### Q1：Key 用完了怎么办？
