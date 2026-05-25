@@ -469,6 +469,37 @@ class FlaskSmokeTests(unittest.TestCase):
         self.assertEqual(by_key["sk-unused"]["total_requests"], 0)
         self.assertEqual(by_key["sk-unused"]["total_tokens"], 0)
 
+    def test_user_key_timeseries_accepts_key_listed_under_requested_admin_user(self):
+        user_data = {
+            "users": {"owner@example.com": {"name": "Owner", "api_keys": ["sk-shared"]}},
+            "keys": {"sk-shared": {"email": "stale@example.com", "label": "shared", "model_group": "common"}},
+        }
+        rows = [{
+            "date": "2026-05-26",
+            "hour": "2026-05-26 10:00",
+            "requests": 2,
+            "success_count": 1,
+            "failure_count": 1,
+            "total_tokens": 100,
+            "input_tokens": 40,
+            "output_tokens": 60,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "spend_usd": 0.25,
+        }]
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "biao.chen@zilliz.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_key_timeseries", return_value=rows), \
+             patch.object(portal_app, "litellm_spend_pricing_metadata", return_value={}):
+            response = client.get("/api/user-key-timeseries?email=owner@example.com&api_key=sk-shared&date=2026-05-26")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["email"], "owner@example.com")
+        self.assertEqual(payload["totals"]["requests"], 2)
+        self.assertEqual(payload["totals"]["total_tokens"], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

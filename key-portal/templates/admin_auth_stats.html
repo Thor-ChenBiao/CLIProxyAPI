@@ -178,10 +178,12 @@
         .traffic-name span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
         .traffic-window strong { display: block; color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; }
         .traffic-window span { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
-        .traffic-bar { height: 9px; margin-top: 8px; border-radius: 999px; background: rgba(82,96,112,0.14); overflow: hidden; }
-        .traffic-bar-fill { display: block; height: 100%; width: var(--fill); border-radius: inherit; background: var(--blue); }
-        .traffic-bar-fill.warn { background: var(--orange); }
-        .traffic-bar-fill.danger { background: var(--red); }
+        .traffic-bar { height: 8px; margin-top: 8px; border-radius: 999px; background: #edf2f8; overflow: hidden; }
+        .traffic-bar-fill { display: block; height: 100%; width: var(--fill); border-radius: inherit; background: #8fb0ff; }
+        .traffic-bar-fill.warn { background: #f3b95f; }
+        .traffic-bar-fill.danger { background: #ee8585; }
+        .traffic-ratio { color: var(--muted); font-size: 11px; font-weight: 850; margin-left: 4px; white-space: nowrap; }
+        .traffic-avg { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
         .traffic-status { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 900; white-space: nowrap; }
         .traffic-status.good { color: var(--green); background: var(--green-soft); }
         .traffic-status.warn { color: var(--orange); background: var(--orange-soft); }
@@ -236,8 +238,10 @@
 	        .quota-usage, .quota-countdown { padding: 9px; border-radius: 12px; background: rgba(255,255,255,0.62); border: 1px solid rgba(223,230,240,0.76); }
 	        .quota-usage { margin-top: 6px; }
 	        .quota-row-label { display: flex; justify-content: space-between; gap: 8px; color: #526070; font-size: 11px; font-weight: 850; margin-bottom: 7px; }
-	        .quota-bar { position: relative; height: 14px; border-radius: 999px; background: rgba(82,96,112,0.14); overflow: hidden; }
-	        .quota-bar-fill { position: absolute; top: 0; right: 0; bottom: 0; width: var(--fill); border-radius: inherit; background: currentColor; transition: width 0.25s ease; }
+	        .quota-bar { position: relative; height: 8px; border-radius: 999px; background: #edf2f8; overflow: hidden; }
+	        .quota-bar-fill { position: absolute; top: 0; right: 0; bottom: 0; width: var(--fill); border-radius: inherit; background: #73c59a; transition: width 0.25s ease; }
+	        .quota-window.warn .quota-bar-fill { background: #e5ad55; }
+	        .quota-window.danger .quota-bar-fill { background: #e57979; }
 	        .quota-countdown { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; margin-top: 10px; }
 	        .quota-countdown-track { display: grid; grid-template-columns: repeat(var(--segments), minmax(0, 1fr)); gap: 5px; height: 34px; }
 	        .quota-countdown-segment { position: relative; border-radius: 999px; overflow: hidden; background: rgba(82,96,112,0.14); }
@@ -673,12 +677,14 @@
             const segmentCount = windowName === 'last_5h' ? 5 : 7;
             const countdownValue = countdownPercent(bucket);
             const countdownText = formatCountdown(secondsUntilReset(bucket.reset_at));
+            const quotaTitle = `${bucket.limit_label || '原生窗口'}：剩余 ${formatQuotaPercent(remaining)}，已用 ${formatQuotaPercent(quotaUsedPercent(bucket))}；${resetTitle}`;
+            const countdownTitle = `重置倒计时：${countdownText}；进度条表示距离窗口重置还剩 ${formatQuotaPercent(countdownValue)} 的时间；${bucket.limit_label || '原生窗口'} · ${resetTitle}`;
             return `<div class="quota-window ${level}">
                 <div class="quota-top"><span>${label.replace(' 剩余', '')}</span><strong>${formatQuotaPercent(remaining)}</strong></div>
-                <div class="quota-usage" title="剩余 ${formatQuotaPercent(remaining)}">
+                <div class="quota-usage" title="${escapeHtml(quotaTitle)}">
                     <div class="quota-bar"><span class="quota-bar-fill" style="--fill:${remaining}%"></span></div>
                 </div>
-                <div class="quota-countdown" title="${escapeHtml(`${bucket.limit_label || '原生窗口'} · ${resetTitle}`)}">
+                <div class="quota-countdown" title="${escapeHtml(countdownTitle)}">
                     <div class="quota-row-label"><span class="quota-reset-pill"><span class="quota-clock" aria-hidden="true"></span><span>重置倒计时</span></span><strong>${escapeHtml(countdownText)}</strong></div>
                     ${renderCountdownSegments(countdownValue, segmentCount)}
                 </div>
@@ -949,17 +955,22 @@
             return { cls: 'good', text: '正常' };
         }
 
-        function trafficWindowCell(bucket, maxRequests) {
+        function trafficWindowCell(item, bucket, windowTotalRequests, mode) {
             const requests = Number(bucket?.requests || 0);
             const success = Number(bucket?.success || 0);
             const failure = Number(bucket?.failure || 0);
             const tokens = Number(bucket?.tokens || 0);
-            const fill = maxRequests > 0 ? clampPercent(requests / maxRequests * 100) : 0;
+            const fill = windowTotalRequests > 0 ? clampPercent(requests / windowTotalRequests * 100) : 0;
             const failLevel = nodeFailureClass(bucket?.failure_rate);
-            const detailTitle = `${formatNumberFull(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · ${tokenBreakdownText(bucket)}`;
-            return `<div class="traffic-window">
-                <strong title="${escapeHtml(formatNumberFull(requests))} 请求">${formatNumberFull(requests)}</strong>
-                <span title="${escapeHtml(detailTitle)}">${formatCompactNumber(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
+            const authCount = mode === 'node' ? Number(item?.auth_files || item?.active || 0) : 0;
+            const avgText = authCount > 0 ? `每认证平均 ${formatNumberFull(Math.round(requests / authCount))} 请求` : '';
+            const fillText = mode === 'node' ? `占集群 ${formatQuotaPercent(fill)}` : `占列表 ${formatQuotaPercent(fill)}`;
+            const totalLabel = mode === 'node' ? '节点合计' : '认证文件';
+            const detailTitle = `数据口径：${totalLabel}请求数为加和值，不是最大值；进度条表示该行请求数占当前窗口列表总请求数的比例 ${formatQuotaPercent(fill)}。请求 ${formatNumberFull(requests)} / 总请求 ${formatNumberFull(windowTotalRequests)} · Tokens ${formatNumberFull(tokens)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}${avgText ? ' · ' + avgText : ''} · ${tokenBreakdownText(bucket)}`;
+            return `<div class="traffic-window" title="${escapeHtml(detailTitle)}">
+                <strong title="${escapeHtml(formatNumberFull(requests))} 请求">${formatNumberFull(requests)}<span class="traffic-ratio">${fillText}</span></strong>
+                <span>${formatCompactNumber(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
+                ${avgText ? `<span class="traffic-avg">${escapeHtml(avgText)}</span>` : ''}
                 <div class="traffic-bar"><span class="traffic-bar-fill ${failLevel}" style="--fill:${fill}%"></span></div>
             </div>`;
         }
@@ -1041,7 +1052,10 @@
         function renderTrafficRank(items, mode) {
             if (!items.length) return '<div class="empty-state">暂无流量数据</div>';
             items = sortTrafficItems(items, mode);
-            const maxRequests = Math.max(1, ...items.flatMap(item => ['last_1h', 'last_5h', 'last_24h', 'last_7d'].map(name => Number(item[name]?.requests || 0))));
+            const windowTotalRequests = ['last_1h', 'last_5h', 'last_24h', 'last_7d'].reduce((acc, name) => {
+                acc[name] = items.reduce((sum, item) => sum + Number(item[name]?.requests || 0), 0);
+                return acc;
+            }, {});
             const rows = items.map(item => {
                 const status = trafficStatusFor(item);
                 const key = trafficRowKey(item, mode);
@@ -1056,10 +1070,10 @@
                     : '<span class="node-subtext">-</span>';
                 return `<div class="traffic-rank-row ${expanded ? 'is-expanded' : ''}" data-traffic-key="${escapeHtml(key)}" aria-expanded="${expanded ? 'true' : 'false'}">
                     <div class="traffic-identity"><span class="traffic-expand" aria-hidden="true">›</span><div class="traffic-name"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(sub)}</span></div></div>
-                    ${trafficWindowCell(item.last_1h || {}, maxRequests)}
-                    ${trafficWindowCell(item.last_5h || {}, maxRequests)}
-                    ${trafficWindowCell(item.last_24h || {}, maxRequests)}
-                    ${trafficWindowCell(item.last_7d || {}, maxRequests)}
+                    ${trafficWindowCell(item, item.last_1h || {}, windowTotalRequests.last_1h, mode)}
+                    ${trafficWindowCell(item, item.last_5h || {}, windowTotalRequests.last_5h, mode)}
+                    ${trafficWindowCell(item, item.last_24h || {}, windowTotalRequests.last_24h, mode)}
+                    ${trafficWindowCell(item, item.last_7d || {}, windowTotalRequests.last_7d, mode)}
                     <div><span class="traffic-status ${status.cls}">${status.text}</span></div>
                     ${mode === 'node' ? `<div>${managementLink}</div>` : ''}
                 </div>

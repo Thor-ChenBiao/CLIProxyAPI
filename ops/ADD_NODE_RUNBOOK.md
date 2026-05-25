@@ -1,8 +1,8 @@
 # 新增 CLIProxyAPI 节点 Runbook
 
-最后更新: 2026-05-23
+最后更新: 2026-05-25
 
-本文档说明未来新增 node-c / node-d / node-e 这类工作节点时需要做什么、哪些配置可以复制、哪些必须按节点定制。
+本文档说明未来新增或恢复工作节点时需要做什么、哪些配置可以复制、哪些必须按节点定制。当前生产 active 节点以 `ops/ARCHITECTURE.md` 为准；2026-05-25 起 node-d 已从 NLB 摘除并 stop。
 
 ## 核心原则
 
@@ -304,16 +304,15 @@ proxy_pass http://172.31.17.144:18080;
 
 ### 稳定管理后台入口
 
-每个节点都应支持稳定入口:
+每个 active 节点都应支持稳定入口:
 
 ```text
 /a/management.html -> node-a
 /b/management.html -> node-b
 /c/management.html -> node-c
-/d/management.html -> node-d
 ```
 
-新增 node-d 时，需要在所有节点 Nginx 里增加:
+如果恢复或新增 node-d，需要在所有节点 Nginx 里增加并重新验证:
 
 ```text
 /d/management.html
@@ -433,7 +432,8 @@ curl -k https://token.zasdas.com/
 curl -k https://token.zasdas.com/a/management.html
 curl -k https://token.zasdas.com/b/management.html
 curl -k https://token.zasdas.com/c/management.html
-curl -k https://token.zasdas.com/d/management.html
+# 只有恢复或新增 node-d 后才验证:
+# curl -k https://token.zasdas.com/d/management.html
 ```
 
 重复访问首页至少 20 次，确认没有间歇性 502:
@@ -452,7 +452,7 @@ aws elbv2 describe-target-health \
   --target-group-arn arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-tls-targets/1cd4d8f8d022ef51
 ```
 
-所有目标必须是 `healthy`。
+所有 active 目标必须是 `healthy`。截至 2026-05-25，active targets 是 node-a/b/c；node-d 已 deregister 并 stop，不应出现在 active target health 清单里。
 
 ## 常见故障
 
@@ -500,8 +500,8 @@ proxy_ssl_name token.zasdas.com;
 ## 禁止事项
 
 - 不要复制 `~/.cli-proxy-api/*.json` 到新节点。
-- 不要自动移动、重命名、删除、恢复认证文件。
+- 不要自动移动、重命名、删除、恢复认证文件；下线节点的 auth 文件迁移只能按明确人工指令执行，并在完成后验证各 active 节点 usable auth file 数量。
 - 不要在 node-b/node-c/node-d 启动完整 Key Portal Web 服务。
 - 不要把非 node-a 的 Key Portal route 指到本机 `127.0.0.1:18080`。
 - 不要在未通过 `/healthz` 和 `127.0.0.1:18081/healthz` 前把节点加入 NLB。
-- 不要把 health-agent 接入 Nginx/NLB，除非已经完成单独评审和灰度验证。
+- 不要绕过 health-agent 直接把 Nginx/NLB `/healthz` 指到 cliproxyapi；NLB readiness 应体现本节点 cliproxyapi、LiteLLM 和可用 auth files 的综合结果。

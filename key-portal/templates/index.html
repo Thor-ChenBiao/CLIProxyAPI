@@ -1490,6 +1490,20 @@
                 const jump = previousRank - nextRank;
                 pushRaceEvent(state, jump >= 2 ? `jumps to #${nextRank}` : `takes #${nextRank}`, false, `${state.id}:rank:${nextRank}:${Math.floor(Date.now() / 12000)}`);
             }
+            const now = performance.now();
+            const rate = Number(parts.rate || 0);
+            const baselineRate = Number(state.nitroBaselineRate ?? state.displayRate ?? 0);
+            const baselineAt = Number(state.nitroBaselineAt || 0);
+            const nitroDeltaThreshold = state.metric === 'requests' ? 1 : 20000;
+            if (baselineAt && rate >= Math.max(1, baselineRate) * 1.35 && rate - baselineRate >= nitroDeltaThreshold) {
+                state.nitroUntil = now + 3600;
+                const gain = Math.round((rate / Math.max(1, baselineRate) - 1) * 100);
+                pushRaceEvent(state, `hits NITRO +${gain}%`, true, `${state.id}:nitro:${Math.floor(Date.now() / 10000)}`);
+            }
+            if (!baselineAt || now - baselineAt >= 900 || rate < baselineRate * 0.85) {
+                state.nitroBaselineRate = rate;
+                state.nitroBaselineAt = now;
+            }
             const previousLevelIndex = speedRaceLastLevels[state.id] || 0;
             const levelIndex = Number(level.index || 0);
             if (levelIndex >= 5 && levelIndex > previousLevelIndex) pushRaceLevelEvent(state, level.label);

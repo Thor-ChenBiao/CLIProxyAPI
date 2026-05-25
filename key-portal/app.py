@@ -5500,8 +5500,16 @@ def api_get_user_key_timeseries():
         return jsonify({"error": "时间范围不能超过 90 天"}), 400
 
     user_data = load_user_keys()
-    key_info = user_data.get("keys", {}).get(api_key, {})
-    owner = _normalize_email(key_info.get("email", email))
+    listed_entry = None
+    if email:
+        listed_entry = next(
+            (entry for entry in find_user_key_entries(user_data, email) if entry.get("key") == api_key),
+            None,
+        )
+    key_info = user_data.get("keys", {}).get(api_key, {}) or (listed_entry or {})
+    owner = _normalize_email(key_info.get("email"))
+    if email and listed_entry:
+        owner = email
     if not is_current_admin() and owner != current_user_email():
         return jsonify({"error": "不能查看其他用户的 Key"}), 403
     if email and owner and owner != email and owner.lower() != email.lower():
