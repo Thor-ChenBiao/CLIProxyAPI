@@ -603,33 +603,15 @@ def _notify_user_approved(email, model_group, api_key, max_budget=None):
 
 
 def _send_card(email, card):
-    """Send interactive card via approval app, fallback to notification app."""
-    card_json = json.dumps(card)
-    msg_payload = {
-        "receive_id": email,
-        "msg_type": "interactive",
-        "content": card_json,
-    }
+    chat_id = getattr(config, "FEISHU_APPROVAL_CHAT_ID", "")
+    if chat_id:
+        if feishu.send_feishu_card_to_chat(chat_id, card):
+            print(f"[Approval] Sent card for {email} to chat {chat_id}")
+        else:
+            print(f"[Approval] Failed to send card for {email} to chat {chat_id}")
+        return
 
-    token = _get_approval_token()
-    if token:
-        try:
-            resp = requests.post(
-                "https://open.feishu.cn/open-apis/im/v1/messages",
-                params={"receive_id_type": "email"},
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                json=msg_payload,
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("code") == 0:
-                print(f"[Approval] Sent card to {email}")
-                return
-            print(f"[Approval] Approval app send failed ({data.get('code')}), trying fallback")
-        except Exception as e:
-            print(f"[Approval] Approval app send error: {e}, trying fallback")
-
-    # Fallback to the notification app
+    print(f"[Approval] No approval chat_id configured, falling back to email for {email}")
     fallback_token = feishu.get_feishu_access_token()
     if not fallback_token:
         print(f"[Approval] No fallback token for {email}")
@@ -639,14 +621,14 @@ def _send_card(email, card):
             "https://open.feishu.cn/open-apis/im/v1/messages",
             params={"receive_id_type": "email"},
             headers={"Authorization": f"Bearer {fallback_token}", "Content-Type": "application/json"},
-            json=msg_payload,
+            json={"receive_id": email, "msg_type": "interactive", "content": json.dumps(card, ensure_ascii=False)},
             timeout=10,
         )
         data = resp.json()
         if data.get("code") == 0:
             print(f"[Approval] Sent card to {email} (fallback)")
         else:
-            print(f"[Approval] Fallback send also failed for {email}: {data}")
+            print(f"[Approval] Fallback send failed for {email}: {data}")
     except Exception as e:
         print(f"[Approval] Fallback send error for {email}: {e}")
 
@@ -711,19 +693,7 @@ def _notify_user_rejected(email, model_group, request_type=REQUEST_TYPE_NEW_KEY)
             }
         ]
     }
-    token = _get_approval_token()
-    if not token:
-        return
-    try:
-        requests.post(
-            "https://open.feishu.cn/open-apis/im/v1/messages",
-            params={"receive_id_type": "email"},
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"receive_id": email, "msg_type": "interactive", "content": json.dumps(card)},
-            timeout=10,
-        )
-    except Exception as e:
-        print(f"[Approval] Reject notification error for {email}: {e}")
+    _send_card(email, card)
 
 
 def _portal_url():

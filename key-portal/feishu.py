@@ -116,6 +116,45 @@ def send_feishu_notification(receiver_email, title, content):
         return False
 
 
+def send_feishu_card_to_chat(chat_id, card):
+    """Send an interactive card to a Feishu group chat via app bot."""
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        print("[Feishu] No chat_id configured for card send")
+        return False
+
+    token = get_feishu_access_token()
+    if not token:
+        print(f"[Feishu] No token available. Would send card to chat {chat_id}")
+        return False
+
+    try:
+        resp = requests.post(
+            "https://open.feishu.cn/open-apis/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "receive_id": chat_id,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("code") == 0:
+            message_id = data.get("data", {}).get("message_id", "")
+            print(f"[Feishu] Sent card to chat {chat_id} message_id={message_id}")
+            return True
+        print(f"[Feishu] Failed to send card to chat {chat_id}: {data}")
+        return False
+    except Exception as e:
+        print(f"[Feishu] Error sending card to chat {chat_id}: {e}")
+        return False
+
+
 def send_feishu_webhook(webhook_url, title, content, template="orange"):
     """Send a status card to a Feishu custom bot webhook."""
     webhook_url = str(webhook_url or "").strip()
