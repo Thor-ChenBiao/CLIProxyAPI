@@ -1982,7 +1982,7 @@ def speed_level_for(rate, metric):
 def _litellm_realtime_speed_base(window_seconds=60):
     window_seconds = max(30, min(int(window_seconds or 60), 600))
     identity = litellm_spend_identity_sql()
-    active_seconds = max(15, min(window_seconds // 3, 30))
+    active_seconds = 20
     sql = f"""
 WITH rows AS (
     SELECT

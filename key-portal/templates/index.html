@@ -755,6 +755,7 @@
         let speedLeaderboardClockRunning = false;
         let speedLeaderboardClockRenderedSecond = null;
         let speedRacePositions = {};
+        let speedRaceSnapshots = [];
         let speedRaceLanes = {};
         let speedRaceNodes = {};
         let speedRaceRanks = {};
@@ -802,7 +803,6 @@
             socket.on('usage_update', (data) => {
                 console.log('[WebSocket] Usage update:', data);
                 applyUsageSummary(data);
-                loadSpeedLeaderboard();
                 if (document.getElementById('report')?.classList.contains('active')) {
                     loadPersonalUsageSummary();
                 }
@@ -1164,6 +1164,10 @@
                     metric,
                     seed,
                     phaseMs: seed % 170,
+                    visualLagMs: 80 + (seed % 520),
+                    visualResponsiveness: 0.82 + ((seed % 23) / 100),
+                    visualDriftPhase: seed % 628,
+                    visualDriftPx: 1.5 + (seed % 4),
                     rank: parts.rank || fallbackIndex + 1,
                     displayRate: initialRate,
                     fromRate: initialRate,
@@ -1223,14 +1227,15 @@
             state.displayRate = Math.abs(next) < 1 ? 0 : Math.max(0, next);
         }
 
-        function applyRankSpacing(states, trackWidth) {
+        function applyRankSpacing(states, trackWidth, deltaSeconds = 1 / 60) {
             const maxX = Math.max(180, trackWidth - 190);
             const minGap = Math.max(36, Math.min(76, maxX / Math.max(7, states.length + 2)));
             const ordered = [...states].sort((a, b) => (a.rank || 999) - (b.rank || 999));
+            const retreatStep = Math.max(4, Math.min(18, 260 * deltaSeconds));
             let previousX = maxX;
             ordered.forEach((state, idx) => {
                 const limit = idx === 0 ? maxX : Math.max(8, previousX - minGap);
-                if (state.x != null) state.x = Math.min(state.x, limit);
+                if (state.x != null && state.x > limit) state.x = Math.max(limit, state.x - retreatStep);
                 previousX = state.x == null ? limit : state.x;
             });
         }
@@ -1346,15 +1351,118 @@
             return value == null ? 999999 : Number(value || 999999);
         }
 
-        function currentRaceRows() {
-            const metric = currentSpeedMetric;
-            const data = speedLeaderboardData || {};
-            const top = Array.isArray(data.top) ? [...data.top] : [];
+        function raceRowsFromData(data, metric = currentSpeedMetric) {
+            const top = Array.isArray(data?.top) ? [...data.top] : [];
             top.sort((a, b) => raceRankValue(a, metric) - raceRankValue(b, metric));
             const racers = top.slice(0, raceVisibleRacers);
-            const currentUser = data.current_user;
+            const currentUser = data?.current_user;
             if (currentUser && !racers.some(row => row.is_current_user)) racers.push({ ...currentUser, is_current_user: true });
             return racers.map((row, index) => ({ ...row, race_display_index: index }));
+        }
+
+        function currentRaceRows() {
+            return raceRowsFromData(speedLeaderboardData || {}, currentSpeedMetric);
+        }
+
+        function raceSnapshotTime(now) {
+            return Date.now() - performance.now() + now;
+        }
+
+        function pushSpeedRaceSnapshot(data, now = performance.now()) {
+            const time = raceSnapshotTime(now);
+            const rows = raceRowsFromData(data, currentSpeedMetric);
+            speedRaceSnapshots.push({ time, data, rows });
+            speedRaceSnapshots = speedRaceSnapshots.slice(-8);
+        }
+
+        function rowPointMap(snapshot, metric) {
+            const map = new Map();
+            (snapshot?.rows || []).forEach((row, idx) => {
+                const id = raceIdentity(row, metric, idx);
+                map.set(id, { row, parts: raceMetricParts(row, metric), index: idx });
+            });
+            return map;
+        }
+
+        function catmullRomValue(p0, p1, p2, p3, t) {
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const value = 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+            return clamp(value, Math.min(p1, p2), Math.max(p1, p2));
+        }
+
+        function raceDebugRows(data, metric = currentSpeedMetric) {
+            return raceRowsFromData(data || {}, metric).slice(0, 8).map((row, idx) => {
+                const parts = raceMetricParts(row, metric);
+                return `${idx + 1}:${row.email_mask || '??'}#${parts.rank || '-'}=${Math.round(parts.rate || 0)}`;
+            }).join(' | ');
+        }
+
+        function logRaceSnapshotDebug(data, now = performance.now()) {
+            const times = speedRaceSnapshots.map(snapshot => Math.round((snapshot.time - speedRaceSnapshots[0].time) / 1000));
+            console.info('[TokenRace]', {
+                now: Math.round(now),
+                metric: currentSpeedMetric,
+                cache: data?.cache_status,
+                cacheAge: data?.cache_age_seconds,
+                activeSeconds: data?.active_seconds,
+                dataAsOf: data?.data_as_of,
+                generatedAt: data?.generated_at,
+                snapshots: speedRaceSnapshots.length,
+                snapshotOffsets: times,
+                rows: raceDebugRows(data)
+            });
+        }
+
+        function playbackRaceRows(now = performance.now()) {
+            if (speedRaceSnapshots.length < 2) return currentRaceRows();
+            const newestTime = speedRaceSnapshots[speedRaceSnapshots.length - 1].time;
+            const playbackTime = Math.min(Date.now() - 10000, newestTime - 1000);
+            const previousPlaybackLog = playbackRaceRows.lastLogAt || 0;
+            if (now - previousPlaybackLog > 5000) {
+                playbackRaceRows.lastLogAt = now;
+                console.debug('[TokenRacePlayback]', {
+                    now: Math.round(now),
+                    playbackLagMs: Math.round(Date.now() - playbackTime),
+                    newestLagMs: Math.round(Date.now() - newestTime),
+                    snapshots: speedRaceSnapshots.length
+                });
+            }
+            let endIndex = speedRaceSnapshots.findIndex(snapshot => snapshot.time >= playbackTime);
+            if (endIndex <= 0) endIndex = Math.min(1, speedRaceSnapshots.length - 1);
+            const startIndex = endIndex - 1;
+            const s0 = speedRaceSnapshots[Math.max(0, startIndex - 1)];
+            const s1 = speedRaceSnapshots[startIndex];
+            const s2 = speedRaceSnapshots[endIndex];
+            const s3 = speedRaceSnapshots[Math.min(speedRaceSnapshots.length - 1, endIndex + 1)];
+            const span = Math.max(1, s2.time - s1.time);
+            const t = clamp((playbackTime - s1.time) / span, 0, 1);
+            const metric = currentSpeedMetric;
+            const maps = [s0, s1, s2, s3].map(snapshot => rowPointMap(snapshot, metric));
+            return s1.rows.map((baseRow, idx) => {
+                const id = raceIdentity(baseRow, metric, idx);
+                const points = maps.map(map => map.get(id));
+                const p1 = points[1];
+                const p2 = points[2];
+                if (!p1 || !p2) return { ...baseRow };
+                const fallbackRate = raceMetricParts(baseRow, metric).rate;
+                const ratePoints = points.map(point => Number(point?.parts?.rate ?? fallbackRate));
+                const rankPoints = points.map(point => Number(point?.parts?.rank ?? p1.parts.rank ?? idx + 1));
+                const row = { ...(p2.row || baseRow) };
+                const rate = Math.max(0, catmullRomValue(ratePoints[0], ratePoints[1], ratePoints[2], ratePoints[3], t));
+                const rank = Math.round(catmullRomValue(rankPoints[0], rankPoints[1], rankPoints[2], rankPoints[3], t));
+                if (metric === 'requests') {
+                    row.requests_per_minute = rate;
+                    row.request_rank = rank;
+                    row.request_level = levelForDisplayRate(rate, 'requests');
+                } else {
+                    row.tokens_per_minute = rate;
+                    row.token_rank = rank;
+                    row.token_level = levelForDisplayRate(rate, 'tokens');
+                }
+                row.race_display_index = idx;
+                return row;
+            });
         }
 
         function syncRaceSnapshot(now = performance.now()) {
@@ -1374,14 +1482,20 @@
 
         function liveRaceStates(now = performance.now()) {
             const metric = currentSpeedMetric;
-            const racers = currentRaceRows();
-            const states = racers.map((row, idx) => {
+            const racers = playbackRaceRows(now);
+            return racers.map((row, idx) => {
                 const state = raceStateFor(row, metric, idx, now);
+                const parts = state.parts || raceMetricParts(row, metric);
+                const rate = Number(parts.rate || 0);
+                state.rank = parts.rank || idx + 1;
+                state.displayRate = rate;
+                state.fromRate = rate;
+                state.targetRate = rate;
+                state.transitionStart = now;
+                state.transitionEnd = now + 1;
                 state.lastSeenAt = now;
                 return state;
             });
-            states.forEach(state => updateRaceState(state, now));
-            return states;
         }
 
         function moonPhaseIndex(date) {
@@ -1450,11 +1564,15 @@
             states.forEach((state, idx) => {
                 const targetX = segmentTargetX(state, trackWidth);
                 const previous = state.x;
-                const delta = targetX - (previous == null ? targetX : previous);
-                const factor = delta > 0 ? 0.042 : 0.026;
-                state.x = previous == null ? targetX : clamp(previous + delta * factor, 8, trackWidth - 190);
+                const visualTime = Math.max(0, now - state.visualLagMs);
+                const drift = Math.sin((visualTime / 820) + state.visualDriftPhase) * state.visualDriftPx;
+                const visualTargetX = targetX + drift;
+                const delta = visualTargetX - (previous == null ? visualTargetX : previous);
+                const frameScale = Math.min(2.5, Math.max(0.4, deltaSeconds * 60));
+                const baseFactor = (delta > 0 ? 0.042 : 0.026) * state.visualResponsiveness;
+                const factor = 1 - Math.pow(1 - baseFactor, frameScale);
+                state.x = previous == null ? visualTargetX : clamp(previous + delta * factor, 8, trackWidth - 190);
             });
-            applyRankSpacing(states, trackWidth);
             if (states.length) {
                 states.forEach((state, idx) => updateRaceNode(raceEl, state, idx, trackWidth, states.length, activeIds));
                 pruneRaceNodes(raceEl, activeIds);
@@ -1516,6 +1634,7 @@
         function setSpeedMetric(metric) {
             currentSpeedMetric = metric === 'requests' ? 'requests' : 'tokens';
             speedRacePositions = {};
+            speedRaceSnapshots = [];
             speedRaceLanes = {};
             speedRaceStates = {};
             clearRaceNodes();
@@ -1532,6 +1651,7 @@
             const selector = document.getElementById('raceSizeSelect');
             if (selector) selector.value = String(size);
             speedRacePositions = {};
+            speedRaceSnapshots = [];
             speedRaceLanes = {};
             clearRaceNodes();
             loadSpeedLeaderboard();
@@ -1547,8 +1667,9 @@
                 if (!resp.ok || data.error) throw new Error(data.error || '速度榜加载失败');
                 const now = performance.now();
                 speedLeaderboardData = data;
+                pushSpeedRaceSnapshot(data, now);
                 applyRaceClock(data, now);
-                syncRaceSnapshot(now);
+                logRaceSnapshotDebug(data, now);
             } catch (e) {
                 console.error('Load speed leaderboard error:', e);
                 const rowsEl = document.getElementById('speedLeaderboardRows');
@@ -1562,7 +1683,7 @@
             if (speedLeaderboardPollTimer) return;
             loadSpeedLeaderboard();
             startSpeedRaceAnimation();
-            speedLeaderboardPollTimer = setInterval(loadSpeedLeaderboard, 2000);
+            speedLeaderboardPollTimer = setInterval(loadSpeedLeaderboard, 5000);
         }
 
         function stopSpeedLeaderboardPolling() {
