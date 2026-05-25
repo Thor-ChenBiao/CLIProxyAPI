@@ -39,12 +39,21 @@
         .speed-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
         .speed-panel h3 { margin: 0; color: #ffe66d; font-family: 'Courier New', monospace; letter-spacing: 0.04em; text-shadow: 2px 2px 0 #5f3dc4; }
         .speed-panel-subtitle { font-size: 12px; color: #9fb1ff; margin-top: 3px; font-family: 'Courier New', monospace; }
+        .speed-panel-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+        .pixel-toggle .race-apply-cta { color: #fde68a; }
+        .race-guide { display: none; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 14px; padding: 13px 16px; border: 1px solid rgba(102,126,234,0.26); border-radius: 14px; background: linear-gradient(135deg, rgba(240,244,255,0.96), rgba(255,251,235,0.92)); color: #2c334a; box-shadow: 0 8px 24px rgba(31,45,90,0.08); }
+        .race-guide.show { display: flex; }
+        .race-guide-text { font-size: 14px; line-height: 1.45; }
+        .race-guide-text strong { color: #4f5fd7; }
+        .race-guide-action { flex-shrink: 0; border: none; border-radius: 999px; padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 800; cursor: pointer; box-shadow: 0 6px 16px rgba(102,126,234,0.28); white-space: nowrap; }
+        .race-guide-action:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(102,126,234,0.36); }
+        @media (max-width: 720px) { .race-guide { align-items: flex-start; flex-direction: column; } .race-guide-action { width: 100%; } }
         .pixel-toggle { display: flex; gap: 8px; margin-bottom: 0; }
         .pixel-toggle .view-btn, .pixel-toggle .pixel-select { margin: 0; padding: 8px 12px; border: 3px solid #7dd3fc; border-radius: 0; background: #182047; color: #dbeafe; font: 800 12px 'Courier New', monospace; box-shadow: 3px 3px 0 rgba(0,0,0,0.35); text-shadow: 2px 2px 0 #101633; }
         .pixel-toggle .view-btn:hover, .pixel-toggle .pixel-select:hover { background: #24306b; transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(0,0,0,0.35); }
         .pixel-toggle .view-btn.active { background: #ffe66d; color: #101633; border-color: #ffe66d; text-shadow: none; box-shadow: 3px 3px 0 #5f3dc4; }
         .pixel-toggle .pixel-select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, #ffe66d 50%), linear-gradient(135deg, #ffe66d 50%, transparent 50%); background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; cursor: pointer; }
-        .pixel-track { position: relative; min-height: 390px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #5fb657 156px 184px, #4f9d4a 184px 196px, #565b7a 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; transition: background 1.2s ease, box-shadow 1.2s ease; contain: layout paint; transform: translateZ(0); }
+        .pixel-track { position: relative; min-height: 430px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #5fb657 156px 184px, #4f9d4a 184px 196px, #565b7a 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; transition: background 1.2s ease, box-shadow 1.2s ease, min-height 0.35s ease; contain: layout paint; transform: translateZ(0); }
         .pixel-track.sky-boost { background: linear-gradient(#4f46e5 0 70px, #fb7185 70px 118px, #facc15 118px 144px, #7fd06a 144px 166px, #5fb657 166px 184px, #4f9d4a 184px 196px, #3f4568 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.18), inset 0 0 80px rgba(250,204,21,0.22); }
         .pixel-track.sky-ufo { background: linear-gradient(#111827 0 82px, #312e81 82px 128px, #0f766e 128px 160px, #5fb657 160px 184px, #4f9d4a 184px 196px, #30364f 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.18), inset 0 0 90px rgba(94,234,212,0.25); }
         .pixel-track.sky-evening { background: linear-gradient(#7c3aed 0 70px, #fb7185 70px 118px, #fbbf24 118px 144px, #7fd06a 144px 166px, #5fb657 166px 184px, #4f9d4a 184px 196px, #4b526f 196px 100%); }
@@ -144,6 +153,8 @@
         .tab.active { background: #667eea; color: white; }
         .tab-content { display: none; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .tab-content.active { display: block; }
+        .tab-content.apply-focus { animation: applyFocusPulse 1.4s ease; }
+        @keyframes applyFocusPulse { 0% { box-shadow: 0 0 0 0 rgba(255,230,109,0.88), 0 2px 10px rgba(0,0,0,0.1); } 45% { box-shadow: 0 0 0 8px rgba(255,230,109,0.34), 0 8px 24px rgba(95,61,196,0.22); } 100% { box-shadow: 0 2px 10px rgba(0,0,0,0.1); } }
         .info-box { background: #f0f4ff; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
         .info-box h3 { color: #667eea; margin-bottom: 10px; }
         .copy-field { display: flex; align-items: center; gap: 10px; background: white; padding: 12px 15px; border-radius: 8px; margin-top: 10px; }
@@ -278,6 +289,76 @@
     </div>
 
     <div class="container">
+        <div class="race-guide" id="raceApplyGuide">
+            <div class="race-guide-text"><strong>还没有个人 API Key？</strong> 先申请一个 Key，开始使用后，你的 Token 使用速度会自动加入上方比赛。</div>
+            <button class="race-guide-action" onclick="jumpToApplyKey({ rememberGuide: true })">申请个人 API Key</button>
+        </div>
+            <div class="speed-panel">
+                <div class="speed-panel-head">
+                    <div>
+                        <h3>TOKEN ENERGY RACE</h3>
+                        <div class="speed-panel-subtitle" id="speedLeaderboardSubtitle">最近 5 分钟滚动统计；按人聚合所有 Key，只展示邮箱前两个字母。</div>
+                    </div>
+                    <div class="speed-panel-actions">
+                        <div class="pixel-toggle">
+                            <button class="view-btn race-apply-cta" onclick="jumpToApplyKey()" title="申请个人 API Key 后即可开始使用；你的 Token 使用速度会展示在这场比赛里。">申请参赛</button>
+                            <button class="view-btn active" onclick="setSpeedMetric('tokens')" id="speedMetricTokens">TOKENS</button>
+                            <button class="view-btn" onclick="setSpeedMetric('requests')" id="speedMetricRequests">REQUESTS</button>
+                            <select class="pixel-select" id="raceSizeSelect" onchange="setRaceSize(this.value)" aria-label="选择赛车人数">
+                                <option value="5" selected>TOP 5</option>
+                                <option value="10">TOP 10</option>
+                                <option value="20">TOP 20</option>
+                                <option value="30">TOP 30</option>
+                                <option value="50">TOP 50</option>
+                                <option value="100">TOP 100</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="pixel-track" id="speedRaceTrack">
+                    <div class="pixel-stars"></div>
+                    <div class="pixel-sun"></div>
+                    <div class="pixel-moon"></div>
+                    <div class="pixel-cloud"></div>
+                    <div class="pixel-cloud c2"></div>
+                    <div class="pixel-scenery">
+                        <div class="pixel-scenery-strip">
+                            <div class="pixel-scenery-copy">
+                                <div class="pixel-mountain m1"></div>
+                                <div class="pixel-mountain m2"></div>
+                                <div class="pixel-house h1"></div>
+                                <div class="pixel-house h2"></div>
+                                <div class="pixel-house h3"></div>
+                                <div class="pixel-tree t1"></div>
+                                <div class="pixel-tree t2"></div>
+                                <div class="pixel-tree t3"></div>
+                                <div class="pixel-tree t4"></div>
+                            </div>
+                            <div class="pixel-scenery-copy repeat">
+                                <div class="pixel-mountain m1"></div>
+                                <div class="pixel-mountain m2"></div>
+                                <div class="pixel-house h1"></div>
+                                <div class="pixel-house h2"></div>
+                                <div class="pixel-house h3"></div>
+                                <div class="pixel-tree t1"></div>
+                                <div class="pixel-tree t2"></div>
+                                <div class="pixel-tree t3"></div>
+                                <div class="pixel-tree t4"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pixel-hud">
+                        <div class="pixel-hud-board">
+                            <div class="pixel-hud-header"><span>RACE BOARD</span><span><span id="raceBoardClock">--:--:--</span> <span class="pixel-hud-live">LIVE</span></span></div>
+                            <div class="pixel-hud-card" id="mySpeedCard"><span class="pixel-hud-title">MY RACER</span> LOADING...</div>
+                            <div class="pixel-hud-card" id="speedLeaderboardRows"><span class="pixel-hud-title">TOP RACERS</span> LOADING...</div>
+                        </div>
+                    </div>
+                    <div class="pixel-radio-panel" id="speedRaceEvents"><span class="pixel-hud-title">RACE RADIO</span> STANDBY...</div>
+                    <div id="speedRaceRows"><div class="speed-empty" style="margin:140px 18px 0;">正在加载赛道...</div></div>
+                </div>
+            </div>
+
         <div class="tabs">
             <button class="tab active" onclick="showTab('register')">申请个人 Key</button>
             <button class="tab" onclick="showTab('report')">用量报表</button>
@@ -340,64 +421,6 @@
         <!-- login and status tabs removed -->
 
         <div id="report" class="tab-content">
-            <div class="speed-panel">
-                <div class="speed-panel-head">
-                    <div>
-                        <h3>TOKEN ENERGY RACE</h3>
-                        <div class="speed-panel-subtitle" id="speedLeaderboardSubtitle">最近 5 分钟滚动统计；按人聚合所有 Key，只展示邮箱前两个字母。</div>
-                    </div>
-                    <div class="pixel-toggle">
-                        <button class="view-btn active" onclick="setSpeedMetric('tokens')" id="speedMetricTokens">TOKENS</button>
-                        <button class="view-btn" onclick="setSpeedMetric('requests')" id="speedMetricRequests">REQUESTS</button>
-                        <select class="pixel-select" id="raceSizeSelect" onchange="setRaceSize(this.value)" aria-label="选择赛车人数">
-                            <option value="5" selected>TOP 5</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="pixel-track" id="speedRaceTrack">
-                    <div class="pixel-stars"></div>
-                    <div class="pixel-sun"></div>
-                    <div class="pixel-moon"></div>
-                    <div class="pixel-cloud"></div>
-                    <div class="pixel-cloud c2"></div>
-                    <div class="pixel-scenery">
-                        <div class="pixel-scenery-strip">
-                            <div class="pixel-scenery-copy">
-                                <div class="pixel-mountain m1"></div>
-                                <div class="pixel-mountain m2"></div>
-                                <div class="pixel-house h1"></div>
-                                <div class="pixel-house h2"></div>
-                                <div class="pixel-house h3"></div>
-                                <div class="pixel-tree t1"></div>
-                                <div class="pixel-tree t2"></div>
-                                <div class="pixel-tree t3"></div>
-                                <div class="pixel-tree t4"></div>
-                            </div>
-                            <div class="pixel-scenery-copy repeat">
-                                <div class="pixel-mountain m1"></div>
-                                <div class="pixel-mountain m2"></div>
-                                <div class="pixel-house h1"></div>
-                                <div class="pixel-house h2"></div>
-                                <div class="pixel-house h3"></div>
-                                <div class="pixel-tree t1"></div>
-                                <div class="pixel-tree t2"></div>
-                                <div class="pixel-tree t3"></div>
-                                <div class="pixel-tree t4"></div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="pixel-hud">
-                        <div class="pixel-hud-board">
-                            <div class="pixel-hud-header"><span>RACE BOARD</span><span><span id="raceBoardClock">--:--:--</span> <span class="pixel-hud-live">LIVE</span></span></div>
-                            <div class="pixel-hud-card" id="mySpeedCard"><span class="pixel-hud-title">MY RACER</span> LOADING...</div>
-                            <div class="pixel-hud-card" id="speedLeaderboardRows"><span class="pixel-hud-title">TOP RACERS</span> LOADING...</div>
-                        </div>
-                    </div>
-                    <div class="pixel-radio-panel" id="speedRaceEvents"><span class="pixel-hud-title">RACE RADIO</span> STANDBY...</div>
-                    <div id="speedRaceRows"><div class="speed-empty" style="margin:140px 18px 0;">正在加载赛道...</div></div>
-                </div>
-            </div>
-
             <div style="margin-bottom: 20px;">
                 <h2 style="margin: 0; color: #667eea;">📊 用量报表</h2>
                 <div style="font-size:12px;color:#999;margin-top:4px;">上方展示当前登录用户的个人实时用量；下方图表和表格展示全站聚合数据。</div>
@@ -490,9 +513,7 @@
             document.getElementById(name).classList.add('active');
             if (name === 'report') {
                 loadPersonalUsageSummary();
-                loadSpeedLeaderboard();
                 if (!usageSocketConnected) startPersonalUsageSummaryPolling();
-                startSpeedLeaderboardPolling();
                 loadUsage().then(() => {
                     setTimeout(() => {
                         renderChart();
@@ -501,8 +522,27 @@
                 });
             } else {
                 stopPersonalUsageSummaryPolling();
-                stopSpeedLeaderboardPolling();
             }
+        }
+
+        function jumpToApplyKey(options = {}) {
+            if (options.rememberGuide) {
+                try { localStorage.setItem('tokenRaceApplyGuideSeen', '1'); } catch (e) {}
+                document.getElementById('raceApplyGuide')?.classList.remove('show');
+            }
+            showTab('register');
+            const target = document.getElementById('register');
+            if (!target) return;
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            target.classList.remove('apply-focus');
+            void target.offsetWidth;
+            target.classList.add('apply-focus');
+        }
+
+        function initRaceApplyGuide() {
+            let seen = false;
+            try { seen = localStorage.getItem('tokenRaceApplyGuideSeen') === '1'; } catch (e) {}
+            if (!seen) document.getElementById('raceApplyGuide')?.classList.add('show');
         }
 
         function copyText(id, btn) {
@@ -729,11 +769,12 @@
         let speedRaceTrackWidth = 900;
         let speedRaceTrackWidthAt = 0;
         let raceVisibleRacers = 5;
-        let raceLaneCountSetting = 5;
-        const RACE_SIZE_LANES = { 5: 5 };
+        let raceLaneCountSetting = 6;
+        const RACE_SIZE_OPTIONS = [5, 10, 20, 30, 50, 100];
+        const RACE_SIZE_LANES = { 5: 6, 10: 10, 20: 20, 30: 30, 50: 50, 100: 100 };
         const RACE_LANE_TOP = 196;
         const RACE_LANE_HEIGHT = 32;
-        const RACE_TRACK_BOTTOM_PAD = 34;
+        const RACE_TRACK_BOTTOM_PAD = 42;
         let currentSpeedMetric = 'tokens';
         let usageHistoryRefreshTimer = null;
         let usageSocketConnected = false;
@@ -755,14 +796,15 @@
                     stopPersonalUsageSummaryPolling();
                     loadPersonalUsageSummary();
                 }
+                loadSpeedLeaderboard();
             });
 
             socket.on('usage_update', (data) => {
                 console.log('[WebSocket] Usage update:', data);
                 applyUsageSummary(data);
+                loadSpeedLeaderboard();
                 if (document.getElementById('report')?.classList.contains('active')) {
                     loadPersonalUsageSummary();
-                    loadSpeedLeaderboard();
                 }
             });
 
@@ -1212,7 +1254,7 @@
         }
 
         function raceLaneCount() {
-            return raceLaneCountSetting;
+            return Math.max(raceLaneCountSetting, currentRaceRows().length, 6);
         }
 
         function raceTrackHeight(laneCount) {
@@ -1299,16 +1341,20 @@
             });
         }
 
+        function raceRankValue(row, metric) {
+            const value = metric === 'requests' ? row.request_rank : row.token_rank;
+            return value == null ? 999999 : Number(value || 999999);
+        }
+
         function currentRaceRows() {
             const metric = currentSpeedMetric;
             const data = speedLeaderboardData || {};
             const top = Array.isArray(data.top) ? [...data.top] : [];
-            top.sort((a, b) => metric === 'requests'
-                ? Number(a.request_rank || 999999) - Number(b.request_rank || 999999)
-                : Number(a.token_rank || 999999) - Number(b.token_rank || 999999));
+            top.sort((a, b) => raceRankValue(a, metric) - raceRankValue(b, metric));
             const racers = top.slice(0, raceVisibleRacers);
-            if (data.current_user && !racers.some(row => row.is_current_user)) racers.push(data.current_user);
-            return racers;
+            const currentUser = data.current_user;
+            if (currentUser && !racers.some(row => row.is_current_user)) racers.push({ ...currentUser, is_current_user: true });
+            return racers.map((row, index) => ({ ...row, race_display_index: index }));
         }
 
         function syncRaceSnapshot(now = performance.now()) {
@@ -1329,12 +1375,13 @@
         function liveRaceStates(now = performance.now()) {
             const metric = currentSpeedMetric;
             const racers = currentRaceRows();
-            const states = racers.map((row, idx) => raceStateFor(row, metric, idx, now));
-            Object.values(speedRaceStates).forEach(state => {
-                if (state.metric === metric && now - state.lastSeenAt <= 9000 && !states.includes(state)) states.push(state);
+            const states = racers.map((row, idx) => {
+                const state = raceStateFor(row, metric, idx, now);
+                state.lastSeenAt = now;
+                return state;
             });
             states.forEach(state => updateRaceState(state, now));
-            return states.filter(state => now - state.lastSeenAt <= 9000 || state.displayRate > 0);
+            return states;
         }
 
         function moonPhaseIndex(date) {
@@ -1394,7 +1441,12 @@
             const activeIds = new Set();
             const emptyEl = raceEl.querySelector('.speed-empty');
             if (emptyEl && states.length) emptyEl.remove();
-            states.sort((a, b) => (a.rank || 999) - (b.rank || 999));
+            states.sort((a, b) => {
+                const ai = Number.isFinite(Number(a.row?.race_display_index)) ? Number(a.row.race_display_index) : 999999;
+                const bi = Number.isFinite(Number(b.row?.race_display_index)) ? Number(b.row.race_display_index) : 999999;
+                if (ai !== bi) return ai - bi;
+                return (a.rank || 999999) - (b.rank || 999999);
+            });
             states.forEach((state, idx) => {
                 const targetX = segmentTargetX(state, trackWidth);
                 const previous = state.x;
@@ -1417,14 +1469,15 @@
             } else {
                 myEl.innerHTML = '<span class="pixel-hud-title">MY RACER</span> WAITING...';
             }
+            const hudStates = states.filter(state => Number(state.row?.race_display_index ?? 999999) < raceVisibleRacers || state.row?.is_current_user);
             hudEl.innerHTML = states.length
-                ? `<span class="pixel-hud-title">TOP RACERS</span><span style="color:#9fb1ff;">${states.length}/${raceVisibleRacers}</span>` + states.slice(0, 6).map(state => {
+                ? `<span class="pixel-hud-title">TOP RACERS</span><span style="color:#9fb1ff;">${states.length}/${raceVisibleRacers}</span>` + hudStates.map(state => {
                     const p = state.parts || raceMetricParts(state.row, metric);
                     const level = levelForDisplayRate(state.displayRate, metric);
                     const prevRank = speedRaceRanks[state.id];
                     const moveClass = prevRank && p.rank ? (p.rank < prevRank ? ' up' : (p.rank > prevRank ? ' down' : '')) : '';
                     speedRaceRanks[state.id] = p.rank || prevRank || 999;
-                    return `<div class="pixel-hud-row${moveClass}"><span>#${p.rank || '-'} ${state.row.email_mask || '??'}</span><span>${level.label} · ${formatNumber(displayedRaceRate(state.displayRate))}${p.unit}</span></div>`;
+                    return `<div class="pixel-hud-row${moveClass}"><span>#${p.rank || '-'} ${state.row.email_mask || '??'}${state.row.is_current_user ? ' YOU' : ''}</span><span>${level.label} · ${formatNumber(displayedRaceRate(state.displayRate))}${p.unit}</span></div>`;
                 }).join('')
                 : '<span class="pixel-hud-title">TOP RACERS</span> WAITING...';
             renderRaceEvents();
@@ -1471,11 +1524,13 @@
             renderSpeedLeaderboard();
         }
 
-        function setRaceSize() {
-            raceVisibleRacers = 5;
-            raceLaneCountSetting = RACE_SIZE_LANES[5];
+        function setRaceSize(value) {
+            const parsed = Number(value);
+            const size = RACE_SIZE_OPTIONS.includes(parsed) ? parsed : 5;
+            raceVisibleRacers = size;
+            raceLaneCountSetting = RACE_SIZE_LANES[size] || size;
             const selector = document.getElementById('raceSizeSelect');
-            if (selector) selector.value = '5';
+            if (selector) selector.value = String(size);
             speedRacePositions = {};
             speedRaceLanes = {};
             clearRaceNodes();
@@ -2401,6 +2456,8 @@ export OPENAI_API_KEY="${apiKey}"`;
 
         // Keep the lightweight counters initialized; live updates come from Socket.IO when available.
         loadUsageSummary();
+        initRaceApplyGuide();
+        startSpeedLeaderboardPolling();
 
         // Fill dynamic API URL shown in UI
         const dynamicApiUrl = {{ service_info.base_url|tojson }};

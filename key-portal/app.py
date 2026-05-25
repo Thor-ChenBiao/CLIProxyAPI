@@ -2025,7 +2025,7 @@ def _litellm_realtime_speed_base_cached(window_seconds=60):
 
 def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
     email = _normalize_email(email)
-    limit = max(3, min(int(limit or 8), 20))
+    limit = max(3, min(int(limit or 8), 100))
     base, cache_status, cache_age = _litellm_realtime_speed_base_cached(window_seconds)
     current = None
     top = []
@@ -3662,7 +3662,11 @@ def get_realtime_speed_leaderboard():
         window_seconds = int(request.args.get("window_seconds") or 60)
     except Exception:
         window_seconds = 60
-    return jsonify(litellm_realtime_speed_leaderboard(email, window_seconds=window_seconds, limit=8))
+    try:
+        limit = int(request.args.get("limit") or 8)
+    except Exception:
+        limit = 8
+    return jsonify(litellm_realtime_speed_leaderboard(email, window_seconds=window_seconds, limit=limit))
 
 
 @app.route("/api/auth-stats")
