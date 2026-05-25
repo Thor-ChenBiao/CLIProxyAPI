@@ -747,7 +747,8 @@ class PortalState:
                     (dedupe_key,),
                 ).fetchone()
                 created = existing is None
-                changed = created or existing.get("status") != status
+                reopening = bool(existing and status == "open" and existing.get("status") == "resolved")
+                changed = created or reopening or existing.get("status") != status
                 with conn.cursor() as cur:
                     if existing:
                         cur.execute(
@@ -761,7 +762,7 @@ class PortalState:
                                 reason = %s,
                                 affected_nodes = %s,
                                 metadata = %s,
-                                started_at = CASE WHEN %s = 'open' THEN started_at ELSE started_at END,
+                                started_at = CASE WHEN %s THEN %s ELSE started_at END,
                                 resolved_at = CASE WHEN %s = 'open' THEN NULL ELSE resolved_at END,
                                 last_seen_at = %s,
                                 updated_at = now()
@@ -777,7 +778,8 @@ class PortalState:
                                 reason or "",
                                 Jsonb(affected_nodes),
                                 Jsonb(metadata),
-                                status,
+                                reopening,
+                                started_at,
                                 status,
                                 now,
                                 dedupe_key,
@@ -814,7 +816,8 @@ class PortalState:
         with _status_events_lock:
             existing = _status_events_memory.get(dedupe_key)
             created = existing is None
-            changed = created or existing.get("status") != status
+            reopening = bool(existing and status == "open" and existing.get("status") == "resolved")
+            changed = created or reopening or existing.get("status") != status
             if existing:
                 existing.update({
                     "event_type": event_type,
@@ -825,6 +828,7 @@ class PortalState:
                     "reason": reason or "",
                     "affected_nodes": affected_nodes,
                     "metadata": metadata,
+                    "started_at": started_at if reopening else existing.get("started_at"),
                     "resolved_at": None if status == "open" else existing.get("resolved_at"),
                     "last_seen_at": now,
                     "updated_at": now,
