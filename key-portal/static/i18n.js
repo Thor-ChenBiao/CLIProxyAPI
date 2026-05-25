@@ -26,6 +26,10 @@
         "用量报表": "Usage",
         "申请个人 API Key": "Get your personal API key",
         "使用教程": "Setup guide",
+        "1. 飞书登录": "1. Feishu sign-in",
+        "2. 申请 Key": "2. Create a key",
+        "3. 配置工具": "3. Configure your tool",
+        "4. 看用量": "4. View usage",
         "查看统计": "View usage",
         "剩余可用 Key": "Keys available",
         "标识 *": "Label *",
@@ -35,6 +39,23 @@
         "申请中...": "Creating key...",
         "公司级 Claude Skills": "Company Claude Skills",
         "提升 Claude Code 能力，安装公司定制的技能包": "Install the team's Claude Code skills package.",
+        "最近 5 分钟滚动统计；按人聚合所有 Key，只展示邮箱前两个字母。": "Rolling stats for the last 5 minutes. Keys are grouped by person, and only the first two email letters are shown.",
+        "使用标识 / 标签 *": "Usage label *",
+        "用于区分设备或用途，会作为 Key 标签展示": "Used to distinguish devices or purposes. It will be shown as the key label.",
+        "上方展示当前登录用户的个人实时用量；下方图表和表格展示全站聚合数据。": "The top section shows real-time usage for the signed-in user. Charts and tables below show site-wide aggregate data.",
+        "我的实时用量": "My real-time usage",
+        "仅统计当前登录邮箱名下的 Key，自动刷新。": "Only keys owned by the signed-in email are counted. Refreshes automatically.",
+        "我的今日 Tokens": "My tokens today",
+        "我的今日请求数": "My requests today",
+        "我的累计 Tokens": "My total tokens",
+        "我的累计请求数": "My total requests",
+        "全站用量趋势": "Site-wide usage trend",
+        "这里是全站聚合数据，不是个人数据；橙线是 Token/请求，紫线是平均 Token/小时。": "This is site-wide aggregate data, not personal data. The orange line is tokens/request, and the purple line is average tokens/hour.",
+        "刷新全站数据": "Refresh site-wide data",
+        "每小时请求与成功/失败率": "Hourly requests and success/failure rate",
+        "全站聚合数据；柱子是每小时请求数，绿线是成功率，红线是失败率。": "Site-wide aggregate data. Bars show hourly requests, the green line shows success rate, and the red line shows failure rate.",
+        "按模型类型统计": "Usage by model type",
+        "全站聚合数据；最近 7 天按模型类型聚合 Token、请求、成功率和估算费用。": "Site-wide aggregate data for the last 7 days, grouped by model type with tokens, requests, success rate, and estimated cost.",
         "访问 GitHub 仓库 →": "Open GitHub repo →",
         "访问 GitHub 仓库": "Open GitHub repo",
         "我申请过的 Keys": "My keys",
@@ -63,6 +84,12 @@
         "已复制到剪贴板": "Copied to clipboard.",
         "请输入标识": "Enter a label.",
         "申请成功！": "Your key is ready",
+        "✅ 申请成功！": "Your key is ready",
+        "❌ 申请失败": "Could not create the key",
+        "❌ 网络错误": "Network error",
+        "❌ 请输入 @zilliz.com 前面的邮箱部分": "Enter the part before @zilliz.com.",
+        "❌ 申请该模型组需要填写申请理由": "This model group requires an approval reason.",
+        "❌ 请填写额度": "Enter a budget.",
         "API Key：": "API key:",
         "API URL：": "API URL:",
         "Claude Code 一键配置命令：": "Claude Code setup command:",
@@ -73,9 +100,11 @@
         "申请失败": "Could not create the key",
         "网络错误": "Network error",
         "我的 Keys - Key Portal": "My Keys - Key Portal",
+        "我的 Keys": "My keys",
         "我的 API Keys": "My API keys",
         "返回首页": "Home",
         "输入你的 API Key（如：usr_pool_0001_xxxx）": "Enter your API key, for example usr_pool_0001_xxxx",
+        "查看当前登录账号名下的 API Keys、额度消耗和最近使用情况；也可以输入指定 Key 做快速查询。": "View API keys, budget usage, and recent activity for the signed-in account. You can also search a specific key quickly.",
         "查询": "Search",
         "如何查看我的 API Key？": "How do I find my API key?",
         "在终端执行以下命令：": "Run this in your terminal:",
@@ -106,6 +135,11 @@
         "点击下方按钮，系统会打开 Claude 登录页面。请使用你的 Claude 账号登录并完成授权。": "Click the button below. A Claude login window will open. Sign in with your Claude account and approve access.",
         "开始授权": "Start authorization",
         "正在获取授权链接...": "Getting authorization link...",
+        "🚀 开始授权": "Start authorization",
+        "📋 从剪贴板粘贴": "Paste from clipboard",
+        "✅ 提交完成授权": "Finish authorization",
+        "← 返回教程": "Back to guide",
+        "查看服务状态 →": "View service status →",
         "已打开授权页面": "Authorization page opened",
         "复制回调地址": "Copy the callback URL",
         "重要提示：": "Important:",
@@ -286,6 +320,7 @@
         "用户使用统计": "User usage stats",
         "点击用户展开 Key，点击 Key 查看当天请求次数和 Token 曲线": "Click a user to expand keys. Click a key to view request and token charts for the day.",
         "Key 类型": "Key type",
+        "Key 类型：": "Key type:",
         "最后消耗": "Last usage",
         "用量曲线": "Usage chart",
         "北京时间（UTC+8）": "Beijing time (UTC+8)",
@@ -315,6 +350,11 @@
         "配置命令": "Setup commands",
         "常用资源": "Common resources",
         "安全习惯": "Security habits",
+        "用户侧只使用公开模型名，例如": "Use only public model names on the user side, for example",
+        "；不要使用内部": "; do not use internal",
+        "名称。": "names.",
+        "大多数开发、Claude Code、Codex CLI 任务都先用 GPT Key，模型选": "For most development, Claude Code, and Codex CLI tasks, start with GPT Key and use",
+        "。只有明确需要真实 Claude/DeepSeek 后端时，再申请对应 Key。": ". Apply for Claude or DeepSeek only when you clearly need the real backend.",
         "类型": "Type",
         "模型": "Model",
         "审批": "Approval",
@@ -345,6 +385,7 @@
         "总额度 (USD) *": "Total budget (USD) *",
         "提交审批申请": "Submit approval request",
         "审批已提交": "Approval submitted",
+        "📋 审批已提交": "Approval submitted",
         "审批请求已发送到飞书，审批通过后将自动生成 Key 并通过飞书消息通知你。": "The approval request was sent to Feishu. After approval, a key will be generated automatically and sent to you in Feishu.",
         "请在飞书中关注审批进度。": "Track approval progress in Feishu.",
         "请输入 @zilliz.com 前面的邮箱部分": "Enter the part before @zilliz.com.",
@@ -391,6 +432,8 @@
         "累计+今日": "Total + today",
         "默认": "Default",
         "输入 API Key（如：sk-... 或 usr_pool_...）": "Enter an API key, such as sk-... or usr_pool_...",
+        "📋 本机历史申请记录": "Local request history",
+        "💡 如何查看我的 API Key？": "How do I find my API key?",
         "查询 Key": "Search key",
         "状态": "Status",
         "管理": "Manage",
@@ -408,6 +451,9 @@
         "导出 CSV": "Export CSV",
         "最近窗口还没有赛车出发。": "No race has started in the recent window yet.",
         "正在加载赛道...": "Loading race track...",
+        "还没有个人 API Key？": "No personal API key yet?",
+        "先申请一个 Key，开始使用后，你的 Token 使用速度会自动加入 TOKEN ENERGY RACE。": "Create a key first. Once you start using it, your token usage speed will automatically join TOKEN ENERGY RACE.",
+        "申请个人 API Key 后即可开始使用；你的 Token 使用速度会展示在这场比赛里。": "Create a personal API key to start. Your token usage speed will appear in this race.",
         "申请参赛": "Join race",
         "步行": "Walking",
         "跑步": "Running",
@@ -432,6 +478,10 @@
         "账户": "Account",
         "提交中...": "Submitting...",
         "Bedrock / Claude 按量计费成本较高，请说明必须使用它完成任务的紧急或必要场景；常规用量推荐优先使用 GPT Key。": "Bedrock / Claude pay-as-you-go usage is expensive. Explain why this task urgently or necessarily requires it; for regular usage, prefer GPT Key.",
+        "GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。": "GPT Key is open by default. It mainly includes GPT models and GPT-backed Claude-compatible models, with no quota limit.",
+        "⚠️ Claude / Bedrock 按量计费成本较高，请仅在必要、紧急或 GPT 无法满足任务时申请；常规用量推荐优先使用 GPT Key。审批通过后自动生成 Key 并通过飞书通知你。当前仅支持 Opus 4.6（模型名选 claude-opus-4-6），暂不支持 4.7。": "Claude / Bedrock pay-as-you-go usage is expensive. Apply only when the task is necessary, urgent, or cannot be handled by GPT. For regular usage, prefer GPT Key. After approval, a key will be generated automatically and sent to you in Feishu. Currently only Opus 4.6 is supported; use model name claude-opus-4-6. 4.7 is not supported yet.",
+        "⚠️ DeepSeek Key 需要飞书审批。审批通过后自动生成 Key 并通过飞书通知你。": "DeepSeek Key requires Feishu approval. After approval, a key will be generated automatically and sent to you in Feishu.",
+        "额度用完后请求将被拒绝，不会按天自动重置；需要追加额度后继续使用": "Requests will be rejected after the budget is used up. It does not reset daily; request additional budget to continue.",
         "选择赛车人数": "Select racers"
     };
 
@@ -555,18 +605,15 @@
         if (Object.prototype.hasOwnProperty.call(EXACT, normalized)) {
             return EXACT[normalized];
         }
-        const exactKeys = Object.keys(EXACT).sort((a, b) => b.length - a.length);
         let translated = normalized;
-        for (const key of exactKeys) {
-            if (translated.includes(key)) {
-                translated = translated.split(key).join(EXACT[key]);
-            }
-        }
         for (const pair of PHRASES) {
             translated = translated.split(pair[0]).join(pair[1]);
         }
         for (const pair of REPLACEMENTS) {
             translated = translated.replace(pair[0], pair[1]);
+        }
+        if (translated !== normalized && HAN_RE.test(translated)) {
+            return text;
         }
         return translated === normalized ? text : translated;
     }

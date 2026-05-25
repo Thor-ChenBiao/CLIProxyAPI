@@ -1093,7 +1093,7 @@
                         <line x1="${width - right}" y1="${top}" x2="${width - right}" y2="${height - bottom}" stroke="#d1d5db"/>
                         <line x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}" stroke="#d1d5db"/>
                         <text x="${left}" y="15" text-anchor="start" fill="#667eea" font-size="12">Token max ${formatNumber(maxTokens)}</text>
-                        <text x="${width - right}" y="15" text-anchor="end" fill="#16a34a" font-size="12">请求 max ${formatNumber(maxRequests)}</text>
+                        <text x="${width - right}" y="15" text-anchor="end" fill="#16a34a" font-size="12">${window.keyPortalI18n?.getLanguage?.() === 'en' ? 'Request max' : '请求 max'} ${formatNumber(maxRequests)}</text>
                         <polyline points="${tokenPoints}" fill="none" stroke="#667eea" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
                         <polyline points="${requestPoints}" fill="none" stroke="#16a34a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
                         ${dots}
