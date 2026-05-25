@@ -1448,7 +1448,7 @@
                 const fallbackRate = raceMetricParts(baseRow, metric).rate;
                 const ratePoints = points.map(point => Number(point?.parts?.rate ?? fallbackRate));
                 const rankPoints = points.map(point => Number(point?.parts?.rank ?? p1.parts.rank ?? idx + 1));
-                const row = { ...(p2.row || baseRow) };
+                const row = { ...baseRow };
                 const rate = Math.max(0, catmullRomValue(ratePoints[0], ratePoints[1], ratePoints[2], ratePoints[3], t));
                 const rank = Math.round(catmullRomValue(rankPoints[0], rankPoints[1], rankPoints[2], rankPoints[3], t));
                 if (metric === 'requests') {
@@ -1480,13 +1480,30 @@
             return racers;
         }
 
+        function updatePlaybackRaceEvents(state, parts, level) {
+            const previousRank = state.rank;
+            const nextRank = parts.rank || state.row?.race_display_index + 1 || 999;
+            if (previousRank && nextRank && nextRank < previousRank) {
+                const jump = previousRank - nextRank;
+                pushRaceEvent(state, jump >= 2 ? `jumps to #${nextRank}` : `takes #${nextRank}`, false, `${state.id}:rank:${nextRank}:${Math.floor(Date.now() / 12000)}`);
+            }
+            const previousLevelIndex = speedRaceLastLevels[state.id] || 0;
+            const levelIndex = Number(level.index || 0);
+            if (levelIndex >= 5 && levelIndex > previousLevelIndex) pushRaceLevelEvent(state, level.label);
+            speedRaceLastLevels[state.id] = Math.max(previousLevelIndex, levelIndex);
+        }
+
         function liveRaceStates(now = performance.now()) {
             const metric = currentSpeedMetric;
             const racers = playbackRaceRows(now);
             return racers.map((row, idx) => {
                 const state = raceStateFor(row, metric, idx, now);
-                const parts = state.parts || raceMetricParts(row, metric);
+                const parts = raceMetricParts(row, metric);
                 const rate = Number(parts.rate || 0);
+                const level = levelForDisplayRate(rate, metric);
+                state.row = row;
+                state.parts = parts;
+                updatePlaybackRaceEvents(state, parts, level);
                 state.rank = parts.rank || idx + 1;
                 state.displayRate = rate;
                 state.fromRate = rate;
