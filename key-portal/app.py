@@ -77,6 +77,14 @@ _realtime_speed_cache = {
 }
 _realtime_speed_cache_lock = threading.Lock()
 
+_realtime_speed_snapshot_cache = {
+    "data": {},
+    "refreshing": {},
+    "ttl": 1.0,
+    "stale_ttl": 3.0,
+}
+_realtime_speed_snapshot_cache_lock = threading.Lock()
+
 _persistent_floor_cache = {
     "data": None,
     "last_update": 0,
@@ -1718,6 +1726,39 @@ def litellm_keys_match_sql(keys, alias_expr="v.key_alias", api_key_expr="s.api_k
     return f"({api_key_expr} IN ({token_sql}) OR {alias_expr} IN ({key_values}) OR {suffix_terms})"
 
 
+def index_litellm_key_totals(rows):
+    index = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for field in ("key_id", "api_key", "key_label"):
+            value = str(row.get(field) or "").strip()
+            if value and value not in index:
+                index[value] = row
+    return index
+
+
+def litellm_key_total_for(index, api_key, key_meta=None):
+    api_key = str(api_key or "").strip()
+    key_meta = key_meta or {}
+    candidates = []
+    if api_key:
+        candidates.extend([api_key, _litellm_token_hash(api_key)])
+    label = str(key_meta.get("label") or "").strip()
+    model_group = normalize_model_group(key_meta.get("model_group", "common"))
+    if label:
+        candidates.extend([label, f"{model_group}:{label}"])
+    for candidate in candidates:
+        if candidate in index:
+            return index[candidate]
+    for candidate in candidates:
+        suffix = f":{candidate}"
+        for key, row in index.items():
+            if key.endswith(suffix):
+                return row
+    return {}
+
+
 def litellm_key_lookup(api_key):
     api_key = str(api_key or "").strip()
     if not api_key:
@@ -1822,6 +1863,96 @@ WITH rows AS (
 SELECT coalesce(json_agg(row_to_json(rows) ORDER BY total_tokens DESC), '[]'::json) FROM rows;
 """
     return litellm_psql_json(sql, timeout=30) or []
+
+
+def litellm_key_total(api_key, email=""):
+    rows = litellm_key_totals_for_entries(email, [{"key": api_key}])
+    return rows.get(str(api_key or "").strip(), {})
+
+
+def litellm_key_totals_for_entries(email, key_entries):
+    email = _normalize_email(email)
+    values = []
+    seen = set()
+    for entry in key_entries or []:
+        api_key = str(entry.get("key") or "").strip()
+        if not api_key or api_key in seen:
+            continue
+        seen.add(api_key)
+        label = str(entry.get("label") or "").strip()
+        model_group = normalize_model_group(entry.get("model_group", "common"))
+        alias = f"{model_group}:{label}" if label else ""
+        values.append("(" + ",".join(_sql_literal(item) for item in (api_key, _litellm_token_hash(api_key), label, alias)) + ")")
+    if not values:
+        return {}
+    identity = litellm_spend_identity_sql()
+    email_clause = f"AND lower({identity}) = lower({_sql_literal(email)})" if email else ""
+    today = _sql_literal(beijing_today())
+    sql = f"""
+WITH input_keys(raw_key, token_hash, label, alias) AS (
+    VALUES {','.join(values)}
+), matched AS (
+    SELECT
+        input_keys.raw_key, s.api_key, coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
+        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label, {identity} AS user_email,
+        s.status, s.total_tokens, s.prompt_tokens, s.completion_tokens, s.metadata, s.spend, s."endTime"
+    FROM input_keys
+    JOIN "LiteLLM_SpendLogs" s ON s.api_key IN (input_keys.raw_key, input_keys.token_hash)
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    WHERE true {email_clause}
+    UNION ALL
+    SELECT
+        input_keys.raw_key, s.api_key, coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
+        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label, {identity} AS user_email,
+        s.status, s.total_tokens, s.prompt_tokens, s.completion_tokens, s.metadata, s.spend, s."endTime"
+    FROM input_keys
+    JOIN "LiteLLM_VerificationToken" v ON (
+        v.key_alias IN (input_keys.raw_key, input_keys.label, input_keys.alias)
+        OR right(coalesce(v.key_alias, ''), length(input_keys.raw_key) + 1) = ':' || input_keys.raw_key
+        OR (nullif(input_keys.label, '') IS NOT NULL AND right(coalesce(v.key_alias, ''), length(input_keys.label) + 1) = ':' || input_keys.label)
+    )
+    JOIN "LiteLLM_SpendLogs" s ON s.api_key = v.token
+    WHERE true {email_clause}
+), deduped AS (
+    SELECT DISTINCT ON (raw_key, api_key, "endTime", coalesce(total_tokens, 0), coalesce(spend, 0)) *
+    FROM matched
+), rows AS (
+    SELECT
+        raw_key, max(api_key) AS api_key, max(key_id) AS key_id, max(key_label) AS key_label, max(user_email) AS user_email,
+        count(*)::bigint AS total_requests,
+        count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS success_count,
+        count(*) FILTER (WHERE coalesce(status, 'success') = 'failure')::bigint AS failure_count,
+        coalesce(sum(total_tokens), 0)::bigint AS total_tokens,
+        coalesce(sum(prompt_tokens), 0)::bigint AS input_tokens,
+        coalesce(sum(completion_tokens), 0)::bigint AS output_tokens,
+        coalesce(sum(coalesce((metadata->'usage_object'->'prompt_tokens_details'->>'cached_tokens')::bigint, 0)), 0)::bigint AS cached_tokens,
+        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
+        coalesce(sum(spend), 0)::float8 AS spend_usd,
+        max("endTime") AS last_used_at,
+        count(*) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours'))::bigint AS today_requests,
+        count(*) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours') AND coalesce(status, 'success') != 'failure')::bigint AS today_success_count,
+        count(*) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours') AND coalesce(status, 'success') = 'failure')::bigint AS today_failure_count,
+        coalesce(sum(total_tokens) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_tokens,
+        coalesce(sum(prompt_tokens) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_input_tokens,
+        coalesce(sum(completion_tokens) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_output_tokens,
+        coalesce(sum(coalesce((metadata->'usage_object'->'prompt_tokens_details'->>'cached_tokens')::bigint, 0)) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_cached_tokens,
+        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_reasoning_tokens,
+        coalesce(sum(spend) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8 AS today_spend_usd
+    FROM deduped
+    GROUP BY raw_key
+)
+SELECT coalesce(json_object_agg(raw_key, row_to_json(rows)), '{{}}'::json) FROM rows;
+"""
+    payload = litellm_psql_json(sql, timeout=30) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def litellm_stats_have_usage(stats):
+    return bool(
+        _int_usage_value((stats or {}).get("total_requests"))
+        or _int_usage_value((stats or {}).get("total_tokens"))
+        or _float_usage_value((stats or {}).get("spend_usd"))
+    )
 
 
 def litellm_user_usage_summary(email, keys=None):
@@ -2051,6 +2182,86 @@ SELECT coalesce(json_agg(row_to_json(ranked) ORDER BY token_rank), '[]'::json) F
     }
 
 
+def litellm_redis_speed_rows():
+    state = portal_state.current()
+    client = getattr(state, "_redis", None)
+    if not getattr(state, "redis_enabled", False) or client is None:
+        return [], "disabled"
+    rows = []
+    try:
+        for key in client.scan_iter(match="{user:*}:tokens", count=500):
+            match = re.match(r"^\{user:(.*)\}:tokens$", str(key or ""))
+            if not match:
+                continue
+            row_email = _normalize_email(match.group(1))
+            if not row_email or row_email == "unknown" or row_email.startswith("__"):
+                continue
+            tokens = _int_usage_value(client.get(key))
+            ttl = client.ttl(key)
+            if tokens <= 0 or ttl <= 0:
+                continue
+            rows.append({
+                "_email": row_email,
+                "email_mask": mask_speed_identity(row_email),
+                "tokens": 0,
+                "requests": 0,
+                "active_tokens": tokens,
+                "active_requests": 0,
+                "tokens_per_minute": tokens,
+                "requests_per_minute": 0,
+                "token_rank": None,
+                "request_rank": None,
+                "last_seen": datetime.now(timezone.utc).isoformat(),
+                "redis_ttl_seconds": ttl,
+                "speed_source": "redis",
+            })
+        rows.sort(key=lambda item: (-_int_usage_value(item.get("active_tokens")), item.get("_email") or ""))
+        for idx, item in enumerate(rows, 1):
+            item["token_rank"] = idx
+            item["token_level"] = speed_level_for(item["tokens_per_minute"], "tokens")
+            item["request_level"] = speed_level_for(0, "requests")
+        return rows, "redis"
+    except Exception as exc:
+        print(f"[KeyPortal] Redis speed leaderboard unavailable: {exc}")
+        return [], "error"
+
+
+def merge_redis_speed_rows(base, redis_rows):
+    if not redis_rows:
+        return base
+    merged = {row.get("_email"): dict(row) for row in base.get("rows", []) if row.get("_email")}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for redis_row in redis_rows:
+        row_email = redis_row.get("_email")
+        if not row_email:
+            continue
+        item = merged.get(row_email, {**redis_row})
+        item["email_mask"] = item.get("email_mask") or redis_row.get("email_mask")
+        item["tokens"] = max(_int_usage_value(item.get("tokens")), _int_usage_value(redis_row.get("active_tokens")))
+        item["active_tokens"] = _int_usage_value(redis_row.get("active_tokens"))
+        item["tokens_per_minute"] = redis_row.get("tokens_per_minute") or item.get("tokens_per_minute") or 0
+        item["last_seen"] = redis_row.get("last_seen") or item.get("last_seen") or now_iso
+        item["redis_ttl_seconds"] = redis_row.get("redis_ttl_seconds")
+        item["speed_source"] = "redis"
+        item["token_level"] = speed_level_for(item["tokens_per_minute"], "tokens")
+        item["request_level"] = speed_level_for(item.get("requests_per_minute") or 0, "requests")
+        merged[row_email] = item
+    rows = list(merged.values())
+    token_order = sorted(rows, key=lambda item: (-float(item.get("tokens_per_minute") or 0), -_int_usage_value(item.get("active_tokens")), item.get("_email") or ""))
+    for idx, item in enumerate(token_order, 1):
+        item["token_rank"] = idx
+    request_order = sorted(rows, key=lambda item: (-float(item.get("requests_per_minute") or 0), -_int_usage_value(item.get("active_requests")), item.get("_email") or ""))
+    for idx, item in enumerate(request_order, 1):
+        item["request_rank"] = idx
+    rows.sort(key=lambda item: item.get("token_rank") or 999999)
+    result = dict(base or {})
+    result["rows"] = rows
+    result["data_as_of"] = now_iso
+    result["redis_rows"] = len(redis_rows)
+    result["speed_source"] = "redis+postgres"
+    return result
+
+
 def _litellm_realtime_speed_base_cached(window_seconds=60):
     window_seconds = max(30, min(int(window_seconds or 60), 600))
     key = str(window_seconds)
@@ -2094,10 +2305,68 @@ def _litellm_realtime_speed_base_cached(window_seconds=60):
                 refresh_event.set()
 
 
+def litellm_realtime_speed_snapshot_cached(window_seconds=60):
+    window_seconds = max(30, min(int(window_seconds or 60), 600))
+    key = str(window_seconds)
+    now = time.time()
+    refresh_event = None
+    wait_event = None
+    with _realtime_speed_snapshot_cache_lock:
+        entry = _realtime_speed_snapshot_cache["data"].get(key)
+        age = now - entry["last_update"] if entry else None
+        if entry and age <= _realtime_speed_snapshot_cache["ttl"]:
+            return entry["payload"], "hit", age
+        if key in _realtime_speed_snapshot_cache["refreshing"]:
+            if entry and age <= _realtime_speed_snapshot_cache["stale_ttl"]:
+                return entry["payload"], "stale", age
+            wait_event = _realtime_speed_snapshot_cache["refreshing"][key]
+        else:
+            refresh_event = threading.Event()
+            _realtime_speed_snapshot_cache["refreshing"][key] = refresh_event
+    if wait_event:
+        wait_event.wait(timeout=2)
+        now = time.time()
+        with _realtime_speed_snapshot_cache_lock:
+            entry = _realtime_speed_snapshot_cache["data"].get(key)
+            if entry:
+                age = now - entry["last_update"]
+                status = "hit" if age <= _realtime_speed_snapshot_cache["ttl"] else "stale"
+                return entry["payload"], status, age
+            refresh_event = threading.Event()
+            _realtime_speed_snapshot_cache["refreshing"][key] = refresh_event
+    try:
+        base, pg_cache_status, pg_cache_age = _litellm_realtime_speed_base_cached(window_seconds)
+        redis_rows, redis_status = litellm_redis_speed_rows()
+        if redis_status == "disabled" and not getattr(config, "KEY_PORTAL_REDIS_URL", "") and getattr(config, "LITELLM_DATABASE_URL", ""):
+            redis_status = "not_configured"
+        payload = merge_redis_speed_rows(base, redis_rows)
+        cache_status = pg_cache_status
+        if redis_rows:
+            cache_status = f"{cache_status}+redis"
+        payload["cache_status"] = cache_status
+        payload["cache_age_seconds"] = pg_cache_age or 0
+        payload["redis_status"] = redis_status
+        now = time.time()
+        with _realtime_speed_snapshot_cache_lock:
+            _realtime_speed_snapshot_cache["data"][key] = {"payload": payload, "last_update": now}
+        return payload, "miss", 0
+    finally:
+        with _realtime_speed_snapshot_cache_lock:
+            active_event = _realtime_speed_snapshot_cache["refreshing"].get(key)
+            if active_event is refresh_event:
+                _realtime_speed_snapshot_cache["refreshing"].pop(key, None)
+                refresh_event.set()
+
+
 def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
     email = _normalize_email(email)
     limit = max(3, min(int(limit or 8), 100))
-    base, cache_status, cache_age = _litellm_realtime_speed_base_cached(window_seconds)
+    base, snapshot_cache_status, snapshot_cache_age = litellm_realtime_speed_snapshot_cached(window_seconds)
+    cache_status = base.get("cache_status") or snapshot_cache_status
+    if snapshot_cache_status in {"hit", "stale"}:
+        cache_status = f"{cache_status}+snapshot_{snapshot_cache_status}"
+    cache_age = base.get("cache_age_seconds") or snapshot_cache_age or 0
+    redis_status = base.get("redis_status") or "unknown"
     current = None
     top = []
     for row in base.get("rows", []):
@@ -2134,6 +2403,9 @@ def litellm_realtime_speed_leaderboard(email, window_seconds=60, limit=8):
         "generated_at": base.get("generated_at"),
         "cache_status": cache_status,
         "cache_age_seconds": round(cache_age or 0, 3),
+        "redis_status": redis_status,
+        "redis_rows": base.get("redis_rows", 0),
+        "speed_source": base.get("speed_source", "postgres"),
     }
 
 
@@ -4612,16 +4884,26 @@ def get_my_keys():
 
     user_data = load_user_keys()
     user = user_data["users"].get(email)
+    key_entries = find_user_key_entries(user_data, email)
 
-    if not user:
+    if not user and not key_entries:
         return jsonify({"email": email, "name": email, "keys": []})
 
-    key_totals = {row.get("key_id"): row for row in litellm_user_key_totals(email, user.get("api_keys", []))}
+    key_totals = litellm_key_totals_for_entries(email, key_entries)
 
     keys_info = []
-    for api_key in user.get("api_keys", []):
-        key_meta = user_data["keys"].get(api_key, {})
-        key_stats = key_totals.get(api_key) or key_totals.get(key_meta.get("label", "")) or {}
+    for entry in key_entries:
+        api_key = entry.get("key", "")
+        key_meta = {**entry, **user_data.get("keys", {}).get(api_key, {})}
+        key_stats = key_totals.get(api_key, {})
+
+        total_tokens = _int_usage_value(key_stats.get("total_tokens"))
+        input_tokens = _int_usage_value(key_stats.get("input_tokens"))
+        output_tokens = _int_usage_value(key_stats.get("output_tokens"))
+        cached_tokens = _int_usage_value(key_stats.get("cached_tokens"))
+        reasoning_tokens = _int_usage_value(key_stats.get("reasoning_tokens"))
+        spend_usd = round(_float_usage_value(key_stats.get("spend_usd", 0)), 6)
+        breakdown = build_litellm_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
 
         max_budget = _key_budget(key_meta, api_key)
         keys_info.append({
@@ -4632,15 +4914,36 @@ def get_my_keys():
             "max_budget": max_budget,
             "can_topup": key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
             "created_at": key_meta.get("created_at", ""),
-            "total_requests": key_stats.get("total_requests", 0),
-            "total_tokens": key_stats.get("total_tokens", 0),
-            "spend_usd": round(_float_usage_value(key_stats.get("spend_usd", 0)), 6),
+            "total_requests": _int_usage_value(key_stats.get("total_requests")),
+            "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "spend_usd": spend_usd,
+            "token_breakdown": breakdown,
+            "estimated_cost_usd": breakdown["cost_usd"],
+            "today_requests": _int_usage_value(key_stats.get("today_requests")),
+            "today_success_count": _int_usage_value(key_stats.get("today_success_count")),
+            "today_failure_count": _int_usage_value(key_stats.get("today_failure_count")),
+            "today_tokens": _int_usage_value(key_stats.get("today_tokens")),
+            "today_input_tokens": _int_usage_value(key_stats.get("today_input_tokens")),
+            "today_output_tokens": _int_usage_value(key_stats.get("today_output_tokens")),
+            "today_cached_tokens": _int_usage_value(key_stats.get("today_cached_tokens")),
+            "today_reasoning_tokens": _int_usage_value(key_stats.get("today_reasoning_tokens")),
+            "today_spend_usd": round(_float_usage_value(key_stats.get("today_spend_usd")), 6),
+            "usage_scope": "total_and_today",
+            "last_used_at": key_stats.get("last_used_at") or "",
         })
 
     return jsonify({
         "email": email,
-        "name": user.get("name", email),
-        "keys": keys_info
+        "name": (user or {}).get("name", email),
+        "keys": keys_info,
+        "usage_source": "litellm_spendlogs_pg",
+        "usage_scope": "total_and_today",
+        "usage_note": "total_* 为历史累计；today_* 为北京时间今天；last_used_at 为 PG 记录里的最后一次 token 消耗时间。",
+        "token_pricing": litellm_spend_pricing_metadata(),
     })
 
 
@@ -4830,7 +5133,9 @@ def query_by_key():
 
     for key in user.get("api_keys", []):
         key_meta = user_data["keys"].get(key, {}) or (key_info if key == api_key else {})
-        key_stats = key_totals.get(key) or key_totals.get(_litellm_token_hash(key)) or key_totals.get(key_meta.get("label", "")) or {}
+        key_stats = litellm_key_total_for(key_totals, key, key_meta)
+        if not litellm_stats_have_usage(key_stats):
+            key_stats = litellm_key_total(key, identifier)
         if key == api_key and litellm_lookup:
             key_stats = {**key_stats, **litellm_lookup}
         max_budget = _key_budget(key_meta, key)
@@ -4964,13 +5269,12 @@ def api_get_user_keys():
         return jsonify({"error": "用户不存在"}), 404
 
     api_keys = [entry.get("key", "") for entry in key_entries if entry.get("key", "")]
-    stats_rows = litellm_user_key_totals(email, api_keys)
-    stats_by_key = {row.get("key_id"): row for row in stats_rows}
+    stats_by_key = litellm_key_totals_for_entries(email, key_entries) if not date else {}
 
     keys_info = []
     for api_key in api_keys:
         key_meta = user_data.get("keys", {}).get(api_key, {})
-        key_stats = stats_by_key.get(api_key) or stats_by_key.get(key_meta.get("label", "")) or {}
+        key_stats = stats_by_key.get(api_key, {})
         if date:
             series = {row.get("date"): row for row in litellm_key_timeseries(api_key, date, date, email=email)}
             day_stats = series.get(date, {})
@@ -4985,6 +5289,7 @@ def api_get_user_keys():
                 "cached_tokens": day_stats.get("cached_tokens", 0),
                 "reasoning_tokens": day_stats.get("reasoning_tokens", 0),
                 "spend_usd": day_stats.get("spend_usd", 0),
+                "last_used_at": day_stats.get("last_used_at", ""),
             }
         spend_usd = round(_float_usage_value(key_stats.get("spend_usd", 0)), 6)
         breakdown = build_litellm_token_breakdown(key_stats.get("total_tokens", 0), key_stats.get("input_tokens", 0), key_stats.get("output_tokens", 0), key_stats.get("cached_tokens", 0), key_stats.get("reasoning_tokens", 0), spend_usd)
@@ -5008,6 +5313,17 @@ def api_get_user_keys():
             "spend_usd": spend_usd,
             "token_breakdown": breakdown,
             "estimated_cost_usd": breakdown["cost_usd"],
+            "today_requests": _int_usage_value(key_stats.get("today_requests")),
+            "today_success_count": _int_usage_value(key_stats.get("today_success_count")),
+            "today_failure_count": _int_usage_value(key_stats.get("today_failure_count")),
+            "today_tokens": _int_usage_value(key_stats.get("today_tokens")),
+            "today_input_tokens": _int_usage_value(key_stats.get("today_input_tokens")),
+            "today_output_tokens": _int_usage_value(key_stats.get("today_output_tokens")),
+            "today_cached_tokens": _int_usage_value(key_stats.get("today_cached_tokens")),
+            "today_reasoning_tokens": _int_usage_value(key_stats.get("today_reasoning_tokens")),
+            "today_spend_usd": round(_float_usage_value(key_stats.get("today_spend_usd")), 6),
+            "last_used_at": key_stats.get("last_used_at") or "",
+            "usage_scope": "day" if date else "total_and_today",
         })
 
     keys_info.sort(key=lambda item: item.get("total_tokens", 0), reverse=True)

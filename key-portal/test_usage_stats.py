@@ -113,6 +113,64 @@ class UsageMergeTests(unittest.TestCase):
         self.assertEqual(results[1], ("node-b", None, "timeout"))
 
 
+class AuthStatsTests(unittest.TestCase):
+    def test_duplicate_auth_index_and_account_are_matched_by_node(self):
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        usage_payload = {
+            "usage": {
+                "apis": {
+                    "k1": {
+                        "models": {
+                            "m": {
+                                "details": [
+                                    {
+                                        "node": "node-a",
+                                        "timestamp": now,
+                                        "source": "openai-4@zasdas.com",
+                                        "auth_index": "shared-index",
+                                        "tokens": {"total_tokens": 100},
+                                        "failed": False,
+                                    },
+                                    {
+                                        "node": "node-c",
+                                        "timestamp": now,
+                                        "source": "openai-4@zasdas.com",
+                                        "auth_index": "shared-index",
+                                        "tokens": {"total_tokens": 200},
+                                        "failed": False,
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        files = [
+            {"node": "node-a", "account": "openai-4@zasdas.com", "auth_index": "shared-index", "provider": "test"},
+            {"node": "node-c", "account": "openai-4@zasdas.com", "auth_index": "shared-index", "provider": "test"},
+        ]
+        service = portal_app.auth_stats_service.AuthStatsService(
+            portal_state=object(),
+            nodes=[{"name": "node-a", "url": "http://node-a"}, {"name": "node-c", "url": "http://node-c"}],
+            call_management_api_node=lambda *args, **kwargs: ({}, None),
+            get_cluster_usage=lambda: usage_payload,
+            get_cluster_auth_files=lambda: (files, []),
+            usage_summary_loader=lambda: ({}, None),
+            parse_detail_time=portal_app.parse_detail_time,
+            parse_detail_time_utc=portal_app.parse_detail_time_utc,
+            build_token_breakdown=portal_app.build_token_breakdown,
+        )
+
+        stats = service.build()["auth_files"]
+        by_node = {item["node"]: item for item in stats}
+
+        self.assertEqual(by_node["node-a"]["total"]["requests"], 1)
+        self.assertEqual(by_node["node-a"]["total"]["tokens"], 100)
+        self.assertEqual(by_node["node-c"]["total"]["requests"], 1)
+        self.assertEqual(by_node["node-c"]["total"]["tokens"], 200)
+
+
 class DatabaseTests(TempUsageDb):
     def test_upserts_are_monotonic(self):
         db.upsert_daily_usage("2026-05-11", 10, 9, 1, 100, 40, 60)
@@ -266,6 +324,150 @@ class FlaskSmokeTests(unittest.TestCase):
         self.assertEqual(payload["monitor_logs"]["requests"], 2)
         self.assertEqual(payload["difference"], 0)
         self.assertTrue(payload["within_one_percent"])
+
+    def test_litellm_key_total_for_matches_alias_variants(self):
+        row = {
+            "key_id": "claude:prod-key",
+            "key_label": "claude:prod-key",
+            "api_key": "hashed-token",
+            "total_requests": 7,
+        }
+        index = portal_app.index_litellm_key_totals([row])
+
+        matched = portal_app.litellm_key_total_for(index, "sk-prod", {"label": "prod-key", "model_group": "claude"})
+
+        self.assertIs(matched, row)
+
+    def test_my_keys_returns_litellm_totals_matched_by_alias_and_hash(self):
+        user_data = {
+            "users": {"u@example.com": {"name": "User", "api_keys": ["sk-raw", "sk-hash", "sk-unused"]}},
+            "keys": {
+                "sk-raw": {"email": "u@example.com", "label": "raw-label", "model_group": "common", "source": "cliproxy"},
+                "sk-hash": {"email": "u@example.com", "label": "hash-label", "model_group": "claude", "source": "cliproxy"},
+                "sk-unused": {"email": "u@example.com", "label": "unused", "model_group": "common", "source": "cliproxy"},
+            },
+        }
+        rows = [
+            {
+                "key_id": "common:raw-label",
+                "key_label": "common:raw-label",
+                "api_key": "alias-token",
+                "total_requests": 3,
+                "total_tokens": 30,
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cached_tokens": 4,
+                "reasoning_tokens": 2,
+                "spend_usd": 0.123456,
+            },
+            {
+                "key_id": "hashed-row",
+                "key_label": "hashed-row",
+                "api_key": portal_app._litellm_token_hash("sk-hash"),
+                "total_requests": 5,
+                "total_tokens": 50,
+                "input_tokens": 15,
+                "output_tokens": 35,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "spend_usd": 0.5,
+            },
+        ]
+        batch_rows = {
+            "sk-raw": rows[0],
+            "sk-hash": rows[1],
+        }
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batch_rows):
+            response = client.post("/api/my-keys", json={})
+
+        self.assertEqual(response.status_code, 200)
+        by_key = {item["key"]: item for item in response.get_json()["keys"]}
+        self.assertEqual(by_key["sk-raw"]["total_requests"], 3)
+        self.assertEqual(by_key["sk-raw"]["total_tokens"], 30)
+        self.assertEqual(by_key["sk-raw"]["token_breakdown"]["cached_tokens"], 4)
+        self.assertEqual(by_key["sk-raw"]["estimated_cost_usd"], 0.1235)
+        self.assertEqual(by_key["sk-hash"]["total_requests"], 5)
+        self.assertEqual(by_key["sk-hash"]["total_tokens"], 50)
+        self.assertEqual(by_key["sk-unused"]["total_requests"], 0)
+        self.assertEqual(by_key["sk-unused"]["total_tokens"], 0)
+
+    def test_my_keys_returns_batched_total_today_and_last_used_for_index_only_key(self):
+        user_data = {
+            "users": {"u@example.com": {"name": "User", "api_keys": []}},
+            "keys": {"usr_pool_0181_x660001": {"email": "u@example.com", "label": "biao", "model_group": "common", "source": "cliproxy"}},
+        }
+        batched = {"usr_pool_0181_x660001": {
+            "total_requests": 28,
+            "total_tokens": 2193870,
+            "input_tokens": 2177802,
+            "output_tokens": 16068,
+            "cached_tokens": 548864,
+            "reasoning_tokens": 2157,
+            "spend_usd": 8.9,
+            "today_requests": 4,
+            "today_tokens": 2326372,
+            "today_input_tokens": 2309217,
+            "today_output_tokens": 17155,
+            "today_cached_tokens": 571392,
+            "today_reasoning_tokens": 2157,
+            "today_spend_usd": 9.49,
+            "last_used_at": "2026-05-26T08:00:00Z",
+        }}
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batched):
+            response = client.post("/api/my-keys", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["usage_scope"], "total_and_today")
+        self.assertEqual(payload["keys"][0]["key"], "usr_pool_0181_x660001")
+        self.assertEqual(payload["keys"][0]["total_requests"], 28)
+        self.assertEqual(payload["keys"][0]["total_tokens"], 2193870)
+        self.assertEqual(payload["keys"][0]["today_tokens"], 2326372)
+        self.assertEqual(payload["keys"][0]["last_used_at"], "2026-05-26T08:00:00Z")
+
+    def test_user_keys_returns_litellm_totals_matched_by_alias_and_keeps_unmatched_zero(self):
+        user_data = {
+            "users": {"u@example.com": {"name": "User", "api_keys": ["sk-alias", "sk-unused"]}},
+            "keys": {
+                "sk-alias": {"email": "u@example.com", "label": "team-key", "model_group": "deepseek", "source": "cliproxy"},
+                "sk-unused": {"email": "u@example.com", "label": "unused", "model_group": "common", "source": "cliproxy"},
+            },
+        }
+        rows = [{
+            "key_id": "deepseek:team-key",
+            "key_label": "deepseek:team-key",
+            "api_key": "stored-token",
+            "total_requests": 11,
+            "success_count": 10,
+            "failure_count": 1,
+            "total_tokens": 110,
+            "input_tokens": 40,
+            "output_tokens": 70,
+            "cached_tokens": 6,
+            "reasoning_tokens": 3,
+            "spend_usd": 1.23456,
+        }]
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value={"sk-alias": rows[0]}), \
+             patch.object(portal_app, "litellm_spend_pricing_metadata", return_value={}):
+            response = client.get("/api/user-keys?email=u@example.com")
+
+        self.assertEqual(response.status_code, 200)
+        by_key = {item["key"]: item for item in response.get_json()["keys"]}
+        self.assertEqual(by_key["sk-alias"]["total_requests"], 11)
+        self.assertEqual(by_key["sk-alias"]["total_tokens"], 110)
+        self.assertEqual(by_key["sk-alias"]["token_breakdown"]["reasoning_tokens"], 3)
+        self.assertEqual(by_key["sk-alias"]["estimated_cost_usd"], 1.2346)
+        self.assertEqual(by_key["sk-unused"]["total_requests"], 0)
+        self.assertEqual(by_key["sk-unused"]["total_tokens"], 0)
 
 
 if __name__ == "__main__":

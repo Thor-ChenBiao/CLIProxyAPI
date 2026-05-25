@@ -639,7 +639,9 @@ class AuthStatsService:
             return "当前未发现不可用标记。"
 
         auth_index_map = {}
+        auth_index_node_map = {}
         account_map = {}
+        account_node_map = {}
         for f in files:
             key = f.get("auth_index") or f.get("account") or f.get("email") or f.get("id") or f.get("name")
             if not key:
@@ -685,13 +687,25 @@ class AuthStatsService:
             for window_name in window_names:
                 stats[stats_key][window_name] = empty_window()
             if stats[stats_key].get("auth_index"):
-                auth_index_map[stats[stats_key]["auth_index"]] = stats[stats_key]
+                auth_index = stats[stats_key]["auth_index"]
+                auth_index_map[auth_index] = stats[stats_key]
+                auth_index_node_map[(node, auth_index)] = stats[stats_key]
             if account:
                 account_map[account] = stats[stats_key]
+                account_node_map[(node, account)] = stats[stats_key]
 
         def find_stat(detail):
             auth_index = detail.get("auth_index")
             source = detail.get("source")
+            node = detail.get("node")
+            if node and auth_index and (node, auth_index) in auth_index_node_map:
+                return auth_index_node_map[(node, auth_index)]
+            if node and source and (node, source) in account_node_map:
+                return account_node_map[(node, source)]
+            if node and source:
+                for (account_node, account), stat in account_node_map.items():
+                    if account_node == node and source in account:
+                        return stat
             if auth_index and auth_index in auth_index_map:
                 return auth_index_map[auth_index]
             if source and source in account_map:
