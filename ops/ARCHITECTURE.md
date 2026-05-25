@@ -142,20 +142,30 @@ node-f https://172.31.25.74
 - Claude key 的 LiteLLM allowlist 只暴露 `claude-*` 公开模型名，同时在 key 记录上设置 key-specific `aliases`，例如 `claude-opus-4-6` → `bedrock-claude-opus-4-6`；LiteLLM 在转发前按 key 改写到内部 Bedrock 模型名。
 - LiteLLM key 记录存储在共享数据库中，现有 key 的 allowlist / aliases 迁移只需对 LiteLLM 数据库执行一次，各节点都会生效。
 
-回归测试用例必须从正式入口 `https://token.zasdas.com/v1/chat/completions` 发起，模拟用户行为，而不是只打本机端口:
+回归测试必须从正式入口 `https://token.zasdas.com/v1/...` 发起，模拟用户行为，而不是只打本机端口。测试时禁止在用户输出中打印完整 key；只展示 key 类型、模型名、HTTP 状态和必要错误类型。
+
+基础路由矩阵:
 
 | Key 类型 | 用户请求 model | 期望结果 | 目的 |
 |---|---|---|---|
 | common / GPT key | `gpt-5.5` | 200 | common key 正常 GPT 通路 |
 | common / GPT key | `claude-opus-4-6` | 200，返回公开模型名仍为 `claude-opus-4-6` | common key 使用 GPT-backed Claude 兼容路由 |
-| common / GPT key | `bedrock-claude-opus-4-6` | 401 `key_model_access_denied` | common key 不能访问内部 Bedrock 模型名 |
-| common / GPT key | `deepseek-chat` | 401 `key_model_access_denied` | common key 不能访问 DeepSeek |
+| common / GPT key | `bedrock-claude-opus-4-6` | 401 / 403 `key_model_access_denied` | common key 不能访问内部 Bedrock 模型名 |
+| common / GPT key | `deepseek-chat` | 401 / 403 `key_model_access_denied` | common key 不能访问 DeepSeek |
 | Claude key | `claude-opus-4-6` | 200，真实后端为 Bedrock Opus 4.6 | 同一公开模型名按 Claude key 路由到 Bedrock |
 | Claude key | `claude-sonnet-4-6` | 200，真实后端为 Bedrock Sonnet 4.6 | Claude key 使用公开模型名访问真实 Claude |
-| Claude key | `claude-opus-4-7` | 401 / unsupported | 当前 Bedrock 无 Opus 4.7，不应偷偷降级到 4.6 |
+| Claude key | `bedrock-claude-opus-4-6` | 401 / 403 `key_model_access_denied` | Bedrock 内部模型名不能被用户直接访问，只能作为 LiteLLM alias 后的内部路由目标 |
+| Claude key | `claude-opus-4-7` | 401 / 403 / unsupported | 当前 Bedrock 无 Opus 4.7，不应偷偷降级到 4.6 |
 | DeepSeek key | `deepseek-chat` | 200 | DeepSeek key 正常 DeepSeek 通路 |
 
-测试时禁止在用户输出中打印完整 key；只展示 key 类型、模型名、HTTP 状态和必要错误类型。
+Claude key 的 Bedrock 回归必须同时覆盖 OpenAI Chat Completions 和 Anthropic Messages 两类入口，并同时覆盖非流式和流式；`claude-*` 公开模型名经 LiteLLM key-specific alias 改写到 `bedrock-claude-*` 后，应由 LiteLLM/Bedrock 路由直接处理，不应再回打 CLIProxyAPI 的 OpenAI 兼容入口:
+
+| 入口 | stream | model | 期望结果 | 目的 |
+|---|---:|---|---|---|
+| `/v1/chat/completions` | `false` | `claude-opus-4-6` | 200 | 验证 OpenAI Chat Completions 非流式 Bedrock Claude 通路 |
+| `/v1/chat/completions` | `true` | `claude-opus-4-6` | 200 | 验证 OpenAI Chat Completions 流式 Bedrock Claude 通路 |
+| `/v1/messages?beta=true` | `false` | `claude-opus-4-6` | 200 | 验证 Anthropic Messages 非流式 Bedrock Claude 通路 |
+| `/v1/messages?beta=true` | `true` | `claude-opus-4-6` | 200 | 验证 Claude Code 使用的 Anthropic Messages 流式 Bedrock Claude 通路 |
 
 ## 上游认证文件
 
