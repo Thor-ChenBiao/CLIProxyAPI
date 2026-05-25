@@ -120,7 +120,7 @@ def send_feishu_webhook(webhook_url, title, content, template="orange"):
     """Send a status card to a Feishu custom bot webhook."""
     webhook_url = str(webhook_url or "").strip()
     if not webhook_url:
-        print(f"[FeishuWebhook] No webhook configured. {title}: {content}")
+        print(f"[FeishuWebhook] No webhook configured: {title}")
         return False
 
     try:
@@ -144,18 +144,19 @@ def send_feishu_webhook(webhook_url, title, content, template="orange"):
             },
             timeout=10,
         )
-        if 200 <= resp.status_code < 300:
-            try:
-                data = resp.json()
-            except Exception:
-                data = {}
-            if not data or data.get("code") in (0, None):
-                print(f"[FeishuWebhook] Sent: {title}")
-                return True
-            print(f"[FeishuWebhook] Failed: {data}")
+        try:
+            data = resp.json()
+        except Exception as e:
+            print(f"[FeishuWebhook] Non-JSON response title={title} status={resp.status_code} error={e}")
             return False
-        print(f"[FeishuWebhook] HTTP {resp.status_code}: {resp.text[:300]}")
+
+        code = data.get("code")
+        msg = data.get("msg") or data.get("message") or ""
+        if 200 <= resp.status_code < 300 and code == 0:
+            print(f"[FeishuWebhook] Sent title={title} status={resp.status_code} code={code} msg={msg}")
+            return True
+        print(f"[FeishuWebhook] Failed title={title} status={resp.status_code} code={code} msg={msg}")
         return False
     except Exception as e:
-        print(f"[FeishuWebhook] Error sending webhook: {e}")
+        print(f"[FeishuWebhook] Error sending webhook title={title}: {e}")
         return False

@@ -256,12 +256,8 @@ SELECT json_build_object(
 WITH rows AS (
     SELECT
         CASE
-            WHEN lower(coalesce(v.metadata->>'model_group', '')) = 'claude' THEN 'claude'
-            WHEN lower(coalesce(v.metadata->>'model_group', '')) = 'deepseek' THEN 'deepseek'
-            WHEN lower(coalesce(v.metadata->>'model_group', '')) = 'gemini' THEN 'gemini'
-            WHEN lower(coalesce(s.model, '')) LIKE '%claude%' THEN 'claude'
-            WHEN lower(coalesce(s.model, '')) LIKE '%deepseek%' THEN 'deepseek'
-            WHEN lower(coalesce(s.model, '')) LIKE '%gemini%' THEN 'gemini'
+            WHEN lower(coalesce(v.metadata->>'model_group', '')) IN ('common', 'claude', 'deepseek', 'gemini')
+                THEN lower(coalesce(v.metadata->>'model_group', ''))
             ELSE 'common'
         END AS model_group,
         coalesce(nullif(v.metadata->>'email', ''), nullif(v.user_id, ''), nullif(s."user", ''), 'unknown') AS user_email,
@@ -315,31 +311,60 @@ FROM grouped
 LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
 """
         payload = self.litellm_psql_json(sql, timeout=15)
-        return payload or {"today": today, "groups": [], "source": "litellm_spendlogs"}
+        if payload is None:
+            return {"today": today, "groups": [], "source": "litellm_spendlogs", "error": "litellm spend query failed"}
+        return payload
 
     def check_model_group_spend_alerts(self):
         if not getattr(self.config, "MODEL_GROUP_SPEND_ALERT_ENABLED", True):
             return []
-        threshold = float(getattr(self.config, "MODEL_GROUP_SPEND_ALERT_THRESHOLD_USD", 50.0) or 50.0)
-        groups = getattr(self.config, "MODEL_GROUP_SPEND_ALERT_GROUPS", ["claude", "deepseek"])
+        threshold = float(getattr(self.config, "MODEL_GROUP_SPEND_ALERT_THRESHOLD_USD", 100.0) or 100.0)
+        groups = [
+            group for group in getattr(self.config, "MODEL_GROUP_SPEND_ALERT_GROUPS", ["claude", "deepseek"])
+            if group in {"claude", "deepseek"}
+        ]
         snapshot = self.daily_model_group_spend_snapshot(groups)
         today = snapshot.get("today") or self.beijing_today()
         results = []
-        labels = {"claude": "Claude", "deepseek": "DeepSeek", "gemini": "Gemini"}
+        labels = {"claude": "Claude", "deepseek": "DeepSeek"}
+        if snapshot.get("error"):
+            saved = self.portal_state.upsert_status_event(
+                event_type="model_group_spend_monitor",
+                dedupe_key=f"model_group_spend_monitor:{today}",
+                status="open",
+                severity="warning",
+                title="模型组费用监控异常",
+                summary="无法读取 LiteLLM spend 数据，Claude/DeepSeek 超额告警可能失效。",
+                reason=snapshot.get("error"),
+                affected_nodes=[],
+                metadata=snapshot,
+            )
+            if saved.get("created") or saved.get("changed"):
+                self.send_webhook(saved.get("event"), "监控异常", template="red")
+            return [saved]
+
+        self.portal_state.resolve_status_event(
+            f"model_group_spend_monitor:{today}",
+            summary="LiteLLM spend 数据读取恢复，模型组费用监控正常。",
+            reason="ok",
+            metadata=snapshot,
+        )
         for row in snapshot.get("groups") or []:
             group = str(row.get("model_group") or "").lower()
             spend = float(row.get("spend_usd") or 0)
-            if not group or spend < threshold:
+            if not group or group not in {"claude", "deepseek"} or spend < threshold:
                 continue
+            threshold_bucket = int(spend // threshold)
+            threshold_amount = threshold_bucket * threshold
             title = f"{labels.get(group, group)} 今日用量超过阈值"
-            metadata = {**snapshot, "triggered_group": row, "threshold_usd": threshold}
+            metadata = {**snapshot, "triggered_group": row, "threshold_usd": threshold, "threshold_bucket": threshold_bucket, "threshold_amount_usd": threshold_amount}
             saved = self.portal_state.upsert_status_event(
                 event_type="model_group_spend",
-                dedupe_key=f"model_group_spend:{today}:{group}:{threshold:g}",
+                dedupe_key=f"model_group_spend:{today}:{group}:{threshold:g}:{threshold_bucket}",
                 status="notice",
                 severity="warning",
                 title=title,
-                summary=f"{labels.get(group, group)} 今日费用 ${spend:.2f}，已超过阈值 ${threshold:g}。",
+                summary=f"{labels.get(group, group)} 今日费用 ${spend:.2f}，已超过阈值 ${threshold_amount:g}。",
                 reason="daily spend threshold",
                 affected_nodes=[],
                 metadata=metadata,
@@ -356,7 +381,7 @@ LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
                     "**状态**: 阈值触发",
                     f"**模型组**: {labels.get(group, group)}",
                     f"**今日费用**: ${spend:.2f}",
-                    f"**阈值**: ${threshold:g}",
+                    f"**阈值**: ${threshold_amount:g}",
                     f"**请求数**: {self.format_compact_number(row.get('requests'))}",
                     f"**Tokens**: {self.format_compact_number(row.get('tokens'))}",
                     f"**用户数**: {self.format_compact_number(row.get('users'))}",
