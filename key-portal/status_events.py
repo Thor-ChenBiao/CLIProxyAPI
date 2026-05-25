@@ -17,6 +17,7 @@ class StatusEventsService:
         sql_literal,
         litellm_psql_json,
         usage_summary_loader,
+        alert_mute_loader=None,
     ):
         self.config = config
         self.portal_state = portal_state
@@ -28,6 +29,7 @@ class StatusEventsService:
         self.sql_literal = sql_literal
         self.litellm_psql_json = litellm_psql_json
         self.usage_summary_loader = usage_summary_loader
+        self.alert_mute_loader = alert_mute_loader
 
     def status_page_url(self):
         if getattr(self.config, "STATUS_PUBLIC_URL", ""):
@@ -125,8 +127,20 @@ class StatusEventsService:
         lines.append(f"**详情**: {self.status_page_url()}")
         return "\n".join(lines)
 
+    def alerts_muted(self):
+        if not self.alert_mute_loader:
+            return False
+        try:
+            return bool((self.alert_mute_loader() or {}).get("muted"))
+        except Exception as exc:
+            print(f"[StatusEvents] Alert mute state unavailable: {exc}")
+            return False
+
     def send_webhook(self, event, action, template="orange"):
         if not event:
+            return False
+        if self.alerts_muted():
+            print(f"[StatusEvents] Feishu alert muted: {event.get('title') or 'CLIProxyAPI 状态更新'} / {action}")
             return False
         sent = self.feishu.send_feishu_webhook(
             getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
@@ -137,6 +151,22 @@ class StatusEventsService:
         if sent:
             self.portal_state.mark_status_event_notified(event.get("id"))
         return sent
+
+    def node_health_alert_delay_seconds(self):
+        try:
+            return max(0, int(getattr(self.config, "STATUS_NODE_HEALTH_ALERT_DELAY_SECONDS", 300) or 0))
+        except (TypeError, ValueError):
+            return 300
+
+    def node_health_alert_due(self, event):
+        if not event or event.get("notified_at"):
+            return False
+        try:
+            started = datetime.fromisoformat(str(event.get("started_at") or "").replace("Z", "+00:00"))
+        except Exception:
+            return False
+        elapsed = (datetime.now(timezone.utc) - started.astimezone(timezone.utc)).total_seconds()
+        return elapsed >= self.node_health_alert_delay_seconds()
 
     def normalize_monitor_result(self, result):
         result = dict(result or {})
@@ -171,17 +201,20 @@ class StatusEventsService:
                 affected_nodes=[node],
                 metadata={"monitor_result": result},
             )
-            if saved.get("created") or saved.get("changed"):
+            if self.node_health_alert_due(saved.get("event")):
                 self.send_webhook(saved.get("event"), "故障开始", template="red")
             return saved
 
+        existing_events = self.portal_state.list_status_events(500)
+        existing_event = next((item for item in existing_events if item.get("dedupe_key") == dedupe_key), {})
+        was_notified = bool(existing_event.get("notified_at"))
         resolved = self.portal_state.resolve_status_event(
             dedupe_key,
             summary=f"{node} 探活恢复，节点已重新处于健康状态。",
             reason=reason or "ok",
             metadata={"recovery_result": result, "initial": bool((event or {}).get("initial"))},
         )
-        if resolved.get("changed"):
+        if resolved.get("changed") and was_notified:
             self.send_webhook(resolved.get("event"), "故障恢复", template="green")
         return resolved
 
@@ -389,14 +422,17 @@ LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
                     "\n".join(user_lines) if user_lines else "- 无",
                     f"**详情**: {self.status_page_url()}",
                 ])
-                sent = self.feishu.send_feishu_webhook(
-                    getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-                    title,
-                    content,
-                    template="orange",
-                )
-                if sent:
-                    self.portal_state.mark_status_event_notified(event.get("id"))
+                if not self.alerts_muted():
+                    sent = self.feishu.send_feishu_webhook(
+                        getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
+                        title,
+                        content,
+                        template="orange",
+                    )
+                    if sent:
+                        self.portal_state.mark_status_event_notified(event.get("id"))
+                else:
+                    print(f"[StatusEvents] Feishu alert muted: {title}")
             results.append(saved)
         return results
 
@@ -432,12 +468,15 @@ LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
                 f"**突破幅度**: +{self.format_compact_number(diff)}",
                 f"**入口**: {self.portal_home_url()}",
             ])
-            sent = self.feishu.send_feishu_webhook(
-                getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-                "今日用量突破历史新高",
-                content,
-                template="blue",
-            )
-            if sent:
-                self.portal_state.mark_status_event_notified(event.get("id"))
+            if not self.alerts_muted():
+                sent = self.feishu.send_feishu_webhook(
+                    getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
+                    "今日用量突破历史新高",
+                    content,
+                    template="blue",
+                )
+                if sent:
+                    self.portal_state.mark_status_event_notified(event.get("id"))
+            else:
+                print("[StatusEvents] Feishu alert muted: 今日用量突破历史新高")
         return saved

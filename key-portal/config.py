@@ -93,6 +93,7 @@ NLB_MONITOR_INTERVAL_SECONDS = _env_int("NLB_MONITOR_INTERVAL_SECONDS", 60)
 # Status announcements and incident notifications.
 STATUS_FEISHU_WEBHOOK_URL = os.environ.get("STATUS_FEISHU_WEBHOOK_URL", "").strip()
 STATUS_PUBLIC_URL = os.environ.get("STATUS_PUBLIC_URL", "").strip()
+STATUS_NODE_HEALTH_ALERT_DELAY_SECONDS = _env_int("STATUS_NODE_HEALTH_ALERT_DELAY_SECONDS", 300)
 STATUS_USAGE_RECORD_ENABLED = os.environ.get("STATUS_USAGE_RECORD_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 STATUS_USAGE_RECORD_LOOKBACK_DAYS = _env_int("STATUS_USAGE_RECORD_LOOKBACK_DAYS", 365)
 MODEL_GROUP_SPEND_ALERT_ENABLED = os.environ.get("MODEL_GROUP_SPEND_ALERT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}

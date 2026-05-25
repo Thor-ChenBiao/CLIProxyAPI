@@ -57,6 +57,9 @@
         .btn.secondary { color: #20304d; background: rgba(255,255,255,0.86); border-color: var(--line); }
         .btn.green { color: var(--green); background: var(--green-soft); border-color: #bfe8d1; }
         .btn.orange { color: var(--orange); background: var(--orange-soft); border-color: #ffd88b; }
+        .btn.red { color: var(--red); background: var(--red-soft); border-color: #ffc1c1; }
+        .alert-mute-note { flex-basis: 100%; color: var(--muted); font-size: 12px; text-align: right; line-height: 1.4; }
+        .alert-mute-note.muted { color: var(--orange); font-weight: 850; }
         .meta {
             display: inline-flex;
             align-items: center;
@@ -313,9 +316,11 @@
                 <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度。</p>
             </div>
             <div class="actions" id="authStatsActions">
+                <button class="btn orange" id="alertMuteToggle" type="button">屏蔽告警</button>
                 <a class="btn secondary" href="/">返回首页</a>
                 <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
                 <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
+                <div class="alert-mute-note" id="alertMuteNote">飞书告警正常发送</div>
             </div>
         </div>
         <div id="authStatsMeta" class="meta">加载中...</div>
@@ -359,6 +364,7 @@
         let lastAuthStatsNodeEntries = [];
         let lastAuthStatsNodeSignals = new Map();
         let lastAuthStatsGroupedRows = new Map();
+        let alertMuteState = { muted: false, updated_at: '', updated_by: '', reason: '' };
 
         function formatNumberFull(num) {
             return Number(num || 0).toLocaleString('zh-CN');
@@ -824,12 +830,22 @@
             </div>`;
         }
 
+        function alertMuteNoteText() {
+            if (!alertMuteState.muted) return '飞书告警正常发送';
+            const updated = alertMuteState.updated_at ? ` · ${formatDateTime(alertMuteState.updated_at)} 屏蔽` : '';
+            const operator = alertMuteState.updated_by ? ` · ${alertMuteState.updated_by}` : '';
+            return `飞书告警已屏蔽，不影响健康检查、事件记录和恢复处理${updated}${operator}`;
+        }
+
         function renderNodeManagementActions() {
             const actionsEl = document.getElementById('authStatsActions');
             actionsEl.innerHTML = `
+                <button class="btn ${alertMuteState.muted ? 'green' : 'orange'}" id="alertMuteToggle" type="button">${alertMuteState.muted ? '恢复告警' : '屏蔽告警'}</button>
                 <a class="btn secondary" href="/">返回首页</a>
                 <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
-                <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>`;
+                <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
+                <div class="alert-mute-note ${alertMuteState.muted ? 'muted' : ''}" id="alertMuteNote">${escapeHtml(alertMuteNoteText())}</div>`;
+            bindAlertMuteToggle();
         }
 
         function nodeSummaryState(n, signals) {
@@ -1223,6 +1239,43 @@
             });
         }
 
+        async function loadAlertMuteState() {
+            const resp = await fetch(`/api/auth-stats/alert-mute?_=${Date.now()}`, {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json' },
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+            alertMuteState = data;
+            renderNodeManagementActions();
+        }
+
+        async function setAlertMuteState(muted, button) {
+            const action = muted ? '屏蔽飞书告警' : '恢复飞书告警';
+            if (!confirm(`确认${action}吗？健康检查、事件记录和恢复处理会继续执行。`)) return;
+            if (button) button.disabled = true;
+            try {
+                const resp = await fetch('/api/auth-stats/alert-mute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ muted }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                alertMuteState = data;
+                renderNodeManagementActions();
+            } catch (e) {
+                alert(`${action}失败：${e.message}`);
+                if (button) button.disabled = false;
+            }
+        }
+
+        function bindAlertMuteToggle() {
+            const button = document.getElementById('alertMuteToggle');
+            if (!button) return;
+            button.addEventListener('click', () => setAlertMuteState(!alertMuteState.muted, button));
+        }
+
         async function loadAuthStats(force = false) {
             if (authStatsLoading) return;
             if (force && authStatsRetryTimer) {
@@ -1293,6 +1346,7 @@
         }
 
         bindViewTabs();
+        loadAlertMuteState().catch((e) => console.warn('load alert mute state failed', e));
         loadAuthStats();
         setInterval(() => {
             if (document.visibilityState === 'visible') loadAuthStats();

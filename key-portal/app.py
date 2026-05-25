@@ -127,6 +127,8 @@ _usage_history_response_cache = {
 }
 _usage_history_response_cache_lock = threading.Lock()
 USAGE_HISTORY_RESPONSE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "usage_history_cache.json")
+ALERT_MUTE_FILE = os.environ.get("KEY_PORTAL_ALERT_MUTE_FILE", os.path.join(os.path.dirname(__file__), "data", "alert_mute.json"))
+_alert_mute_lock = threading.Lock()
 
 # User keys cache and file path
 USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
@@ -2757,6 +2759,43 @@ def beijing_today():
     return beijing_now().strftime("%Y-%m-%d")
 
 
+def load_alert_mute_state():
+    default = {"muted": False, "updated_at": "", "updated_by": "", "reason": ""}
+    with _alert_mute_lock:
+        try:
+            with open(ALERT_MUTE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return default
+        except Exception as exc:
+            print(f"[KeyPortal] Alert mute state unavailable: {exc}")
+            return default
+    return {
+        "muted": bool(data.get("muted")),
+        "updated_at": str(data.get("updated_at") or ""),
+        "updated_by": str(data.get("updated_by") or ""),
+        "reason": str(data.get("reason") or ""),
+    }
+
+
+def save_alert_mute_state(muted, updated_by="", reason=""):
+    state = {
+        "muted": bool(muted),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": str(updated_by or ""),
+        "reason": str(reason or ""),
+    }
+    directory = os.path.dirname(ALERT_MUTE_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp_path = f"{ALERT_MUTE_FILE}.tmp"
+    with _alert_mute_lock:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, ALERT_MUTE_FILE)
+    return state
+
+
 status_service = status_events.StatusEventsService(
     config=config,
     portal_state=portal_state,
@@ -2768,6 +2807,7 @@ status_service = status_events.StatusEventsService(
     sql_literal=_sql_literal,
     litellm_psql_json=litellm_psql_json,
     usage_summary_loader=lambda: get_usage_summary_cached(),
+    alert_mute_loader=load_alert_mute_state,
 )
 
 auth_stats = auth_stats_service.AuthStatsService(
@@ -3744,6 +3784,24 @@ def get_auth_stats():
     return jsonify(get_auth_stats_cached())
 
 
+@app.route("/api/auth-stats/alert-mute", methods=["GET", "POST"])
+def auth_stats_alert_mute():
+    if not is_current_admin():
+        return jsonify({"error": "需要管理员权限"}), 403
+    if request.method == "GET":
+        return jsonify(load_alert_mute_state())
+    body = request.get_json(silent=True) or {}
+    muted = body.get("muted")
+    if not isinstance(muted, bool):
+        return jsonify({"error": "muted must be boolean"}), 400
+    state = save_alert_mute_state(
+        muted,
+        updated_by=current_user_email() or current_user_name(),
+        reason=body.get("reason") or "auth-stats manual toggle",
+    )
+    return jsonify(state)
+
+
 @app.route("/api/auth-stats/toggle-auth", methods=["POST"])
 def toggle_auth_file_status():
     body = request.get_json(silent=True) or {}
@@ -4069,6 +4127,7 @@ ADMIN_API_PATHS = {
     "/api/accounts",
     "/api/all-users-stats",
     "/api/auth-stats",
+    "/api/auth-stats/alert-mute",
     "/api/auth-stats/toggle-auth",
     "/api/check-expiry",
     "/api/keys",
