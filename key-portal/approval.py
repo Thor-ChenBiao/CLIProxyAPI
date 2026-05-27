@@ -253,12 +253,11 @@ def _submit_feishu_approval(request_id, email, name, model_group, reason, daily_
     applicant_open_id = _lookup_feishu_user_id(email, token)
     if not applicant_open_id:
         return None, f"无法在飞书通讯录中找到申请人：{email}"
-    payload["user_id"] = applicant_open_id
+    payload["open_id"] = applicant_open_id
 
     try:
         resp = requests.post(
             "https://open.feishu.cn/open-apis/approval/v4/instances",
-            params={"user_id_type": "open_id"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
