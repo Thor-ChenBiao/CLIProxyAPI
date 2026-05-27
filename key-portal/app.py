@@ -1518,9 +1518,9 @@ WITH rows AS (
         coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
         coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
         coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
-        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
-        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
-        coalesce(sum(s.spend), 0)::float8 AS spend_usd
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        0::bigint AS cached_tokens,
+        0::bigint AS reasoning_tokens
     FROM "LiteLLM_SpendLogs" s
     WHERE s."endTime" >= (current_date - interval '{int(days)} days')
     GROUP BY 1
@@ -1560,7 +1560,34 @@ SELECT json_build_object(
     data = litellm_psql_json(sql, timeout=30)
     if not data:
         return None
+
+    _backfill_jsonb_token_details(data)
     return data
+
+
+def _backfill_jsonb_token_details(data):
+    """Backfill cached_tokens and reasoning_tokens from today's realtime summary."""
+    try:
+        sql = f"""
+SELECT
+    ((s."endTime" + interval '8 hours')::date)::text AS date,
+    coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+    coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens
+FROM "LiteLLM_SpendLogs" s
+WHERE s."endTime" >= (current_date - interval '1 day')
+GROUP BY 1;
+"""
+        detail = litellm_psql_json(f"SELECT coalesce(json_agg(row_to_json(t)), '[]'::json) FROM ({sql}) t", timeout=30)
+        if not detail:
+            return
+        detail_map = {row["date"]: row for row in detail}
+        for row in data.get("history") or []:
+            d = row.get("date", "")
+            if d in detail_map:
+                row["cached_tokens"] = detail_map[d].get("cached_tokens", 0)
+                row["reasoning_tokens"] = detail_map[d].get("reasoning_tokens", 0)
+    except Exception as e:
+        print(f"[UsageHistory] JSONB backfill failed (non-fatal): {e}")
 
 
 def litellm_usage_by_model_group(days=7):
@@ -1617,7 +1644,7 @@ WITH bounds AS (
         coalesce(sum(s.total_tokens), 0)::bigint AS tokens,
         coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
         coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
-        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
+        0::bigint AS cached_tokens,
         coalesce(sum(s.spend), 0)::float8 AS spend_usd,
         coalesce(avg(extract(epoch FROM (s."endTime" - s."startTime")) * 1000), 0)::float8 AS avg_latency_ms
     FROM "LiteLLM_SpendLogs" s, report_window
@@ -1646,7 +1673,7 @@ WITH bounds AS (
 )
 SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json) FROM rows;
 """
-    return litellm_psql_json(sql, timeout=15) or []
+    return litellm_psql_json(sql, timeout=30) or []
 
 
 def litellm_user_stats(period="month"):
@@ -2694,8 +2721,6 @@ WITH bounds AS (
         coalesce(sum(total_tokens), 0)::bigint AS total_tokens,
         coalesce(sum(prompt_tokens), 0)::bigint AS input_tokens,
         coalesce(sum(completion_tokens), 0)::bigint AS output_tokens,
-        coalesce(sum({cached_sql}), 0)::bigint AS cached_tokens,
-        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
         coalesce(sum(spend), 0)::float8 AS spend_usd,
         max("endTime") AS last_end_time
     FROM "LiteLLM_SpendLogs" s
@@ -2733,8 +2758,8 @@ SELECT json_build_object(
     'total_tokens', totals.total_tokens,
     'input_tokens', totals.input_tokens,
     'output_tokens', totals.output_tokens,
-    'cached_tokens', totals.cached_tokens,
-    'reasoning_tokens', totals.reasoning_tokens,
+    'cached_tokens', 0,
+    'reasoning_tokens', 0,
     'spend_usd', totals.spend_usd,
     'last_end_time', totals.last_end_time
 )
@@ -3527,14 +3552,38 @@ def sync_usage_from_api():
 
 
 def get_usage_history_aggregated():
-    """Get usage history with daily, monthly, and yearly aggregations."""
-    data = litellm_usage_history_aggregated()
-    if data:
-        data["source"] = "litellm_spendlogs"
-        return data
-    data = db.get_usage_aggregated()
-    data["source"] = "key_portal_sqlite_fallback"
-    return data
+    """Get usage history with daily, monthly, and yearly aggregations.
+
+    Merges PG (recent) with sqlite (historical) so older data is not lost.
+    """
+    pg_data = litellm_usage_history_aggregated()
+    sqlite_data = db.get_usage_aggregated()
+
+    if not pg_data:
+        sqlite_data["source"] = "key_portal_sqlite_fallback"
+        return sqlite_data
+
+    pg_dates = {row["date"] for row in pg_data.get("history") or []}
+    merged_history = list(pg_data.get("history") or [])
+    for row in sqlite_data.get("history") or []:
+        if row.get("date") not in pg_dates:
+            merged_history.append(row)
+    merged_history.sort(key=lambda r: r.get("date", ""))
+
+    by_month = {}
+    by_year = {}
+    for row in merged_history:
+        d = row.get("date", "")
+        mk = d[:7]
+        yk = d[:4]
+        for bucket, key in ((by_month, mk), (by_year, yk)):
+            if key not in bucket:
+                bucket[key] = {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0, "spend_usd": 0}
+            for field in ("total_tokens", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens", "total_requests", "success_count", "failure_count"):
+                bucket[key][field] += int(row.get(field) or 0)
+            bucket[key]["spend_usd"] += float(row.get("spend_usd") or 0)
+
+    return {"history": merged_history, "by_month": by_month, "by_year": by_year, "source": "litellm_spendlogs+sqlite"}
 
 
 def enrich_usage_breakdowns(data):
@@ -5883,7 +5932,8 @@ if __name__ == "__main__":
     scheduler.start()
     portal_scheduler.print_schedule(config)
 
-    # Initial usage sync is manual-only because the full usage payload is large.
+    # Pre-warm usage history cache in background so first page load is fast
+    start_usage_history_response_refresh()
 
     # Run Flask app with SocketIO
     print(f"Starting Key Portal on {config.HOST}:{config.PORT} (WebSocket enabled)")
