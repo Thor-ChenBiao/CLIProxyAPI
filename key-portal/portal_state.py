@@ -764,6 +764,7 @@ class PortalState:
                                 metadata = %s,
                                 started_at = CASE WHEN %s THEN %s ELSE started_at END,
                                 resolved_at = CASE WHEN %s = 'open' THEN NULL ELSE resolved_at END,
+                                notified_at = CASE WHEN %s THEN NULL ELSE notified_at END,
                                 last_seen_at = %s,
                                 updated_at = now()
                             WHERE dedupe_key = %s
@@ -781,6 +782,7 @@ class PortalState:
                                 reopening,
                                 started_at,
                                 status,
+                                reopening,
                                 now,
                                 dedupe_key,
                             ),
@@ -830,6 +832,7 @@ class PortalState:
                     "metadata": metadata,
                     "started_at": started_at if reopening else existing.get("started_at"),
                     "resolved_at": None if status == "open" else existing.get("resolved_at"),
+                    "notified_at": None if reopening else existing.get("notified_at"),
                     "last_seen_at": now,
                     "updated_at": now,
                 })

@@ -250,14 +250,15 @@ def _submit_feishu_approval(request_id, email, name, model_group, reason, daily_
         "form": json.dumps(form_data),
     }
 
-    # Use open_id to identify the applicant if we can look it up
-    user_id = _lookup_feishu_user_id(email, token)
-    if user_id:
-        payload["open_id"] = user_id
+    applicant_open_id = _lookup_feishu_user_id(email, token)
+    if not applicant_open_id:
+        return None, f"无法在飞书通讯录中找到申请人：{email}"
+    payload["user_id"] = applicant_open_id
 
     try:
         resp = requests.post(
             "https://open.feishu.cn/open-apis/approval/v4/instances",
+            params={"user_id_type": "open_id"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -293,10 +294,13 @@ def _lookup_feishu_user_id(email, token):
             timeout=10,
         )
         data = resp.json()
-        if data.get("code") == 0:
-            user_list = data.get("data", {}).get("user_list", [])
-            if user_list and user_list[0].get("user_id"):
-                return user_list[0]["user_id"]
+        if data.get("code") != 0:
+            print(f"[Approval] User lookup failed for {email}: {data}")
+            return None
+        user_list = data.get("data", {}).get("user_list", [])
+        if user_list and user_list[0].get("user_id"):
+            return user_list[0]["user_id"]
+        print(f"[Approval] User lookup returned no user for {email}: {data}")
     except Exception as e:
         print(f"[Approval] User lookup failed for {email}: {e}")
     return None
@@ -603,34 +607,25 @@ def _notify_user_approved(email, model_group, api_key, max_budget=None):
 
 
 def _send_card(email, card):
-    chat_id = getattr(config, "FEISHU_APPROVAL_CHAT_ID", "")
-    if chat_id:
-        if feishu.send_feishu_card_to_chat(chat_id, card):
-            print(f"[Approval] Sent card for {email} to chat {chat_id}")
-        else:
-            print(f"[Approval] Failed to send card for {email} to chat {chat_id}")
-        return
-
-    print(f"[Approval] No approval chat_id configured, falling back to email for {email}")
-    fallback_token = feishu.get_feishu_access_token()
-    if not fallback_token:
-        print(f"[Approval] No fallback token for {email}")
+    token = feishu.get_feishu_access_token()
+    if not token:
+        print(f"[Approval] No token available for {email}")
         return
     try:
         resp = requests.post(
             "https://open.feishu.cn/open-apis/im/v1/messages",
             params={"receive_id_type": "email"},
-            headers={"Authorization": f"Bearer {fallback_token}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={"receive_id": email, "msg_type": "interactive", "content": json.dumps(card, ensure_ascii=False)},
             timeout=10,
         )
         data = resp.json()
         if data.get("code") == 0:
-            print(f"[Approval] Sent card to {email} (fallback)")
+            print(f"[Approval] Sent card to {email}")
         else:
-            print(f"[Approval] Fallback send failed for {email}: {data}")
+            print(f"[Approval] Send failed for {email}: {data}")
     except Exception as e:
-        print(f"[Approval] Fallback send error for {email}: {e}")
+        print(f"[Approval] Send error for {email}: {e}")
 
 
 def _notify_user_topup_approved(email, model_group, api_key, current_budget, additional_budget, new_budget):

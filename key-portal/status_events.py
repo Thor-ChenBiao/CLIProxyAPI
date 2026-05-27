@@ -136,18 +136,31 @@ class StatusEventsService:
             print(f"[StatusEvents] Alert mute state unavailable: {exc}")
             return False
 
+    def _build_card(self, title, content, template="orange"):
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": template or "orange",
+                "title": {"tag": "plain_text", "content": title},
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": content},
+                }
+            ],
+        }
+
     def send_webhook(self, event, action, template="orange"):
         if not event:
             return False
         if self.alerts_muted():
             print(f"[StatusEvents] Feishu alert muted: {event.get('title') or 'CLIProxyAPI 状态更新'} / {action}")
             return False
-        sent = self.feishu.send_feishu_webhook(
-            getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-            f"{event.get('title') or 'CLIProxyAPI 状态更新'}",
-            self.webhook_content(event, action),
-            template=template,
-        )
+        chat_id = getattr(self.config, "FEISHU_APPROVAL_CHAT_ID", "")
+        title = f"{event.get('title') or 'CLIProxyAPI 状态更新'}"
+        card = self._build_card(title, self.webhook_content(event, action), template)
+        sent = self.feishu.send_feishu_card_to_chat(chat_id, card)
         if sent:
             self.portal_state.mark_status_event_notified(event.get("id"))
         return sent
@@ -423,12 +436,9 @@ LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
                     f"**详情**: {self.status_page_url()}",
                 ])
                 if not self.alerts_muted():
-                    sent = self.feishu.send_feishu_webhook(
-                        getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-                        title,
-                        content,
-                        template="orange",
-                    )
+                    chat_id = getattr(self.config, "FEISHU_APPROVAL_CHAT_ID", "")
+                    card = self._build_card(title, content, "orange")
+                    sent = self.feishu.send_feishu_card_to_chat(chat_id, card)
                     if sent:
                         self.portal_state.mark_status_event_notified(event.get("id"))
                 else:
@@ -469,12 +479,9 @@ LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
                 f"**入口**: {self.portal_home_url()}",
             ])
             if not self.alerts_muted():
-                sent = self.feishu.send_feishu_webhook(
-                    getattr(self.config, "STATUS_FEISHU_WEBHOOK_URL", ""),
-                    "今日用量突破历史新高",
-                    content,
-                    template="blue",
-                )
+                chat_id = getattr(self.config, "FEISHU_APPROVAL_CHAT_ID", "")
+                card = self._build_card("今日用量突破历史新高", content, "blue")
+                sent = self.feishu.send_feishu_card_to_chat(chat_id, card)
                 if sent:
                     self.portal_state.mark_status_event_notified(event.get("id"))
             else:
