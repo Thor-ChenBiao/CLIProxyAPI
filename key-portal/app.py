@@ -1703,40 +1703,24 @@ def litellm_user_stats(period="month", recent_days=None):
         days = max(1, min(int(recent_days), 365))
         where_sql = f"WHERE s.\"endTime\" >= now() - interval '{days} days'"
     sql = f"""
-WITH rows AS (
+WITH user_rows AS (
     SELECT
         {period_expr} AS period,
         {identity} AS user_email,
-        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label,
+        count(distinct coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)))::bigint AS num_keys,
+        array_agg(distinct coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) ORDER BY coalesce(nullif(v.key_alias, ''), left(s.api_key, 16))) AS api_keys,
         count(*)::bigint AS total_requests,
         count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS success_count,
         count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS failure_count,
         coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens,
         coalesce(sum(s.prompt_tokens), 0)::bigint AS input_tokens,
         coalesce(sum(s.completion_tokens), 0)::bigint AS output_tokens,
-        coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
-        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
-        coalesce(sum(s.spend), 0)::float8 AS spend_usd
+        coalesce(sum(s.spend), 0)::float8 AS spend_usd,
+        0::bigint AS cached_tokens,
+        0::bigint AS reasoning_tokens
     FROM "LiteLLM_SpendLogs" s
     LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
     {where_sql}
-    GROUP BY 1, 2, 3
-), user_rows AS (
-    SELECT
-        period,
-        user_email,
-        count(distinct key_label)::bigint AS num_keys,
-        array_agg(distinct key_label ORDER BY key_label) AS api_keys,
-        sum(total_requests)::bigint AS total_requests,
-        sum(success_count)::bigint AS success_count,
-        sum(failure_count)::bigint AS failure_count,
-        sum(total_tokens)::bigint AS total_tokens,
-        sum(input_tokens)::bigint AS input_tokens,
-        sum(output_tokens)::bigint AS output_tokens,
-        sum(cached_tokens)::bigint AS cached_tokens,
-        sum(reasoning_tokens)::bigint AS reasoning_tokens,
-        sum(spend_usd)::float8 AS spend_usd
-    FROM rows
     GROUP BY 1, 2
 )
 SELECT coalesce(json_agg(row_to_json(user_rows) ORDER BY {order_sql}), '[]'::json) FROM user_rows;
