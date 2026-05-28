@@ -790,24 +790,33 @@ def _format_litellm_user_stat(row, user_keys_data, include_period=True, include_
     return stat
 
 
-def get_all_users_total_stats_from_db():
+def get_all_users_total_stats_from_db(include_metadata=False):
     user_keys_data = load_user_keys()
     rows = litellm_user_stats("total")
-    if not rows:
-        rows = db.get_all_users_total_usage()
-    return [_format_litellm_user_stat(row, user_keys_data, include_period=False, include_keys=True) for row in rows]
+    if rows is None:
+        raise RuntimeError("LiteLLM PG unavailable for all-users total stats")
+    stats = [_format_litellm_user_stat(row, user_keys_data, include_period=False, include_keys=True) for row in rows]
+    if include_metadata:
+        return stats, {"source": "litellm_spendlogs"}
+    return stats
 
 
-def get_all_users_stats_by_period(period="month", live_today=False):
+def get_all_users_stats_by_period(period="month", live_today=False, include_metadata=False):
     """
     Get statistics for all users aggregated by period (month or year).
     Returns a list with each user's stats broken down by the selected period.
     """
     user_keys_data = load_user_keys()
-    rows = litellm_user_stats(period)
-    if not rows:
-        rows = db.get_user_usage_by_period(period)
-    return [_format_litellm_user_stat(row, user_keys_data, include_period=True, include_keys=False) for row in rows]
+    rows = litellm_user_stats(period, recent_days=45 if period == "day" else None)
+    if rows is None:
+        raise RuntimeError(f"LiteLLM PG unavailable for all-users {period} stats")
+    stats = [_format_litellm_user_stat(row, user_keys_data, include_period=True, include_keys=False) for row in rows]
+    metadata = {"source": "litellm_spendlogs"}
+    if period == "day":
+        metadata["recent_days"] = 45
+    if include_metadata:
+        return stats, metadata
+    return stats
 
 
 # Cache for Feishu access token
@@ -1676,7 +1685,9 @@ SELECT coalesce(json_agg(row_to_json(rows)), '[]'::json) FROM rows;
     return litellm_psql_json(sql, timeout=30) or []
 
 
-def litellm_user_stats(period="month"):
+def litellm_user_stats(period="month", recent_days=None):
+    if not litellm_database_url():
+        return None
     if period not in ("day", "month", "year", "total"):
         period = "month"
     period_expr = {
@@ -1687,6 +1698,10 @@ def litellm_user_stats(period="month"):
     }[period]
     order_sql = "total_tokens DESC" if period == "total" else "period DESC, total_tokens DESC"
     identity = litellm_spend_identity_sql()
+    where_sql = ""
+    if recent_days:
+        days = max(1, min(int(recent_days), 365))
+        where_sql = f"WHERE s.\"endTime\" >= now() - interval '{days} days'"
     sql = f"""
 WITH rows AS (
     SELECT
@@ -1704,6 +1719,7 @@ WITH rows AS (
         coalesce(sum(s.spend), 0)::float8 AS spend_usd
     FROM "LiteLLM_SpendLogs" s
     LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    {where_sql}
     GROUP BY 1, 2, 3
 ), user_rows AS (
     SELECT
@@ -1725,7 +1741,7 @@ WITH rows AS (
 )
 SELECT coalesce(json_agg(row_to_json(user_rows) ORDER BY {order_sql}), '[]'::json) FROM user_rows;
 """
-    return litellm_psql_json(sql, timeout=30) or []
+    return litellm_psql_json(sql, timeout=30)
 
 
 def litellm_key_match_sql(api_key, alias_expr="v.key_alias", api_key_expr="s.api_key"):
@@ -5034,15 +5050,16 @@ def api_get_user_stats(email):
 
 
 def build_all_users_stats_response(aggregation, live_today=False):
+    metadata = {}
     if aggregation == "day":
-        stats = get_all_users_stats_by_period("day", live_today=live_today)
+        stats, metadata = get_all_users_stats_by_period("day", live_today=live_today, include_metadata=True)
     elif aggregation == "month":
-        stats = get_all_users_stats_by_period("month")
+        stats, metadata = get_all_users_stats_by_period("month", include_metadata=True)
     elif aggregation == "year":
-        stats = get_all_users_stats_by_period("year")
+        stats, metadata = get_all_users_stats_by_period("year", include_metadata=True)
     else:
         aggregation = "total"
-        stats = get_all_users_total_stats_from_db()
+        stats, metadata = get_all_users_total_stats_from_db(include_metadata=True)
 
     total_users = len(set(s.get("email", "") for s in stats))
     total_requests = sum(s.get("total_requests", 0) for s in stats)
@@ -5088,6 +5105,8 @@ def build_all_users_stats_response(aggregation, live_today=False):
             "total_keys": total_keys,
         },
         "aggregation": aggregation,
+        "source": metadata.get("source", "litellm_spendlogs"),
+        "recent_days": metadata.get("recent_days"),
         "token_pricing": litellm_spend_pricing_metadata(),
     }
 
@@ -5099,7 +5118,10 @@ def api_get_all_users_stats():
     live_today = request.args.get("live_today", "").strip() == "1"
     if aggregation not in ("total", "day", "month", "year"):
         aggregation = "total"
-    return jsonify(build_all_users_stats_response(aggregation, live_today=live_today))
+    try:
+        return jsonify(build_all_users_stats_response(aggregation, live_today=live_today))
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "source": "litellm_spendlogs", "aggregation": aggregation}), 503
 
 
 @app.route("/api/key-pool-status")
