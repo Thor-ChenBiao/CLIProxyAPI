@@ -1,0 +1,214 @@
+"""
+Usage data synchronization module.
+Handles syncing aggregated usage data to the Key Portal database.
+"""
+
+from collections import defaultdict
+from datetime import datetime, timezone, timedelta
+import database as db
+
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def usage_date_from_timestamp(timestamp):
+    text = str(timestamp or "").strip()
+    if not text:
+        return ""
+    try:
+        iso_text = text.replace("Z", "+00:00") if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(iso_text)
+        if parsed.tzinfo is None:
+            return parsed.strftime("%Y-%m-%d")
+        return parsed.astimezone(BEIJING_TZ).strftime("%Y-%m-%d")
+    except Exception:
+        return text.split("T")[0] if "T" in text else text[:10]
+
+
+def sync_usage_to_database(api_data, key_to_user_mapping):
+    """
+    Sync usage data from API response to database.
+
+    Args:
+        api_data: Dict in Key Portal's legacy aggregate usage shape
+        key_to_user_mapping: Dict mapping api_key -> user_email
+
+    Returns:
+        Tuple (success: bool, stats: dict)
+    """
+    try:
+        usage = api_data.get("usage", {})
+        tokens_by_day = usage.get("tokens_by_day", {})
+        requests_by_day = usage.get("requests_by_day", {})
+        apis = usage.get("apis", {})
+
+        # 1. Aggregate request details by date and by date + user + api_key.
+        daily_detail_map = defaultdict(lambda: {
+            'total_requests': 0,
+            'success_count': 0,
+            'failure_count': 0,
+            'total_tokens': 0,
+            'input_tokens': 0,
+            'output_tokens': 0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+        })
+        usage_map = defaultdict(lambda: {
+            'total_requests': 0,
+            'success_count': 0,
+            'failure_count': 0,
+            'total_tokens': 0,
+            'input_tokens': 0,
+            'output_tokens': 0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+        })
+
+        # Track unknown keys for logging
+        unknown_keys_info = {}
+
+        for api_key, api_info in apis.items():
+            user_email = key_to_user_mapping.get(api_key, 'unknown')
+
+            # Log if key is not mapped
+            if user_email == 'unknown':
+                if api_key not in unknown_keys_info:
+                    unknown_keys_info[api_key] = {
+                        'total_tokens': api_info.get('total_tokens', 0),
+                        'total_requests': api_info.get('total_requests', 0)
+                    }
+
+            models = api_info.get('models', {})
+
+            for model_name, model_data in models.items():
+                details = model_data.get('details', [])
+
+                for detail in details:
+                    timestamp = detail.get('timestamp', '')
+                    if not timestamp:
+                        continue
+
+                    # Extract Beijing-local date (YYYY-MM-DD)
+                    date = usage_date_from_timestamp(timestamp)
+                    if not date:
+                        continue
+
+                    failed = detail.get('failed', False)
+                    tokens_info = detail.get('tokens', {})
+                    total_tokens = tokens_info.get('total_tokens', 0)
+                    input_tokens = tokens_info.get('input_tokens', 0)
+                    output_tokens = tokens_info.get('output_tokens', 0)
+                    cached_tokens = tokens_info.get('cached_tokens', 0)
+                    reasoning_tokens = tokens_info.get('reasoning_tokens', 0)
+
+                    daily_detail_map[date]['total_requests'] += 1
+                    if failed:
+                        daily_detail_map[date]['failure_count'] += 1
+                    else:
+                        daily_detail_map[date]['success_count'] += 1
+                    daily_detail_map[date]['total_tokens'] += total_tokens
+                    daily_detail_map[date]['input_tokens'] += input_tokens
+                    daily_detail_map[date]['output_tokens'] += output_tokens
+                    daily_detail_map[date]['cached_tokens'] += cached_tokens
+                    daily_detail_map[date]['reasoning_tokens'] += reasoning_tokens
+
+                    key = (date, user_email, api_key)
+
+                    usage_map[key]['total_requests'] += 1
+                    if failed:
+                        usage_map[key]['failure_count'] += 1
+                    else:
+                        usage_map[key]['success_count'] += 1
+
+                    usage_map[key]['total_tokens'] += total_tokens
+                    usage_map[key]['input_tokens'] += input_tokens
+                    usage_map[key]['output_tokens'] += output_tokens
+                    usage_map[key]['cached_tokens'] += cached_tokens
+                    usage_map[key]['reasoning_tokens'] += reasoning_tokens
+
+        # 2. Sync daily totals to database.
+        for date in set(list(tokens_by_day.keys()) + list(requests_by_day.keys()) + list(daily_detail_map.keys())):
+            detail_stats = daily_detail_map.get(date, {})
+            if detail_stats.get('total_requests', 0):
+                success_count = detail_stats['success_count']
+                failure_count = detail_stats['failure_count']
+                input_tokens = detail_stats['input_tokens']
+                output_tokens = detail_stats['output_tokens']
+                cached_tokens = detail_stats['cached_tokens']
+                reasoning_tokens = detail_stats['reasoning_tokens']
+            else:
+                success_count = requests_by_day.get(date, 0)
+                failure_count = 0
+                input_tokens = 0
+                output_tokens = 0
+                cached_tokens = 0
+                reasoning_tokens = 0
+
+            db.upsert_daily_usage(
+                date=date,
+                total_requests=max(requests_by_day.get(date, 0), detail_stats.get('total_requests', 0)),
+                success_count=success_count,
+                failure_count=failure_count,
+                total_tokens=max(tokens_by_day.get(date, 0), detail_stats.get('total_tokens', 0)),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                reasoning_tokens=reasoning_tokens
+            )
+
+        # 3. Insert user usage into database.
+        for (date, user_email, api_key), stats in usage_map.items():
+            db.upsert_user_usage(
+                date=date,
+                user_email=user_email,
+                api_key=api_key,
+                total_requests=stats['total_requests'],
+                success_count=stats['success_count'],
+                failure_count=stats['failure_count'],
+                total_tokens=stats['total_tokens'],
+                input_tokens=stats['input_tokens'],
+                output_tokens=stats['output_tokens'],
+                cached_tokens=stats['cached_tokens'],
+                reasoning_tokens=stats['reasoning_tokens']
+            )
+
+        # 4. Log unknown keys
+        if unknown_keys_info:
+            print(f"[UsageSync] WARNING: Found {len(unknown_keys_info)} unknown API keys not in user_keys.json:")
+            for key, info in unknown_keys_info.items():
+                print(f"  - Key: {key}")
+                print(f"    Tokens: {info['total_tokens']:,} | Requests: {info['total_requests']}")
+            print(f"[UsageSync] These keys will be tracked as 'unknown' user. Consider adding them to user_keys.json")
+
+        return True, {
+            'user_records': len(usage_map),
+            'daily_records': len(tokens_by_day),
+            'total_tokens': sum(tokens_by_day.values()),
+            'total_requests': sum(requests_by_day.values()),
+            'unknown_keys': len(unknown_keys_info),
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return False, {'error': str(e)}
+
+
+def build_key_to_user_mapping(user_keys_data):
+    """
+    Build reverse mapping from API key to user email.
+
+    Args:
+        user_keys_data: Dict from user_keys.json
+
+    Returns:
+        Dict mapping api_key -> user_email
+    """
+    key_to_user = {}
+    keys_info = user_keys_data.get('keys', {})
+
+    for api_key, key_data in keys_info.items():
+        email = key_data.get('email', '')
+        if email:
+            key_to_user[api_key] = email
+
+    return key_to_user

@@ -51,3 +51,12 @@ _bmad-output/*
 .DS_Store
 ._*
 .gocache/
+# Key Portal runtime data (local only)
+key-portal/data/*.json
+key-portal/data/*.db
+key-portal/data/*.bak*
+key-portal/data/backups/
+key-portal/data/cliproxy_snapshots/
+key-portal/data/litellm_token_backups/
+!key-portal/data/usage_history.csv
+

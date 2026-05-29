@@ -1,0 +1,165 @@
+{
+    "users": [
+        {
+            "claude_email": "wei.liu-claude@zilliz.com",
+            "feishu_email": "wei.liu@zilliz.com",
+            "name": "Wei Liu"
+        },
+        {
+            "claude_email": "chenjie.tang-claude@zilliz.com",
+            "feishu_email": "chenjie.tang@zilliz.com",
+            "name": "Chenjie Tang"
+        },
+        {
+            "claude_email": "santiago.wu-claude@zilliz.com",
+            "feishu_email": "santiago.wu@zilliz.com",
+            "name": "Santiago Wu"
+        },
+        {
+            "claude_email": "wenxing.zhu-claude@zilliz.com",
+            "feishu_email": "wenxing.zhu@zilliz.com",
+            "name": "Wenxing Zhu"
+        },
+        {
+            "claude_email": "biao.chen-claude@zilliz.com",
+            "feishu_email": "biao.chen@zilliz.com",
+            "name": "Biao Chen"
+        },
+        {
+            "claude_email": "xinyu.luo-claude@zilliz.com",
+            "feishu_email": "xinyu.luo@zilliz.com",
+            "name": "Xinyu Luo"
+        },
+        {
+            "claude_email": "chao.gao-claude@zilliz.com",
+            "feishu_email": "chao.gao@zilliz.com",
+            "name": "Chao Gao"
+        },
+        {
+            "claude_email": "sammy.huang-claude@zilliz.com",
+            "feishu_email": "sammy.huang@zilliz.com",
+            "name": "Sammy Huang"
+        },
+        {
+            "claude_email": "xianliang.li-claude@zilliz.com",
+            "feishu_email": "xianliang.li@zilliz.com",
+            "name": "Xianliang Li"
+        },
+        {
+            "claude_email": "chengkang.lin-claude@zilliz.com",
+            "feishu_email": "chengkang.lin@zilliz.com",
+            "name": "Chengkang Lin"
+        },
+        {
+            "claude_email": "simon.shan-claude@zilliz.com",
+            "feishu_email": "simon.shan@zilliz.com",
+            "name": "Simon Shan"
+        },
+        {
+            "claude_email": "lin.wang-claude@zilliz.com",
+            "feishu_email": "lin.wang@zilliz.com",
+            "name": "Lin Wang"
+        },
+        {
+            "claude_email": "lu.zhang-claude@zilliz.com",
+            "feishu_email": "lu.zhang@zilliz.com",
+            "name": "Lu Zhang"
+        },
+        {
+            "claude_email": "congqi.xia-claude@zilliz.com",
+            "feishu_email": "congqi.xia@zilliz.com",
+            "name": "Congqi Xia"
+        },
+        {
+            "claude_email": "bingyi.sun-claude@zilliz.com",
+            "feishu_email": "bingyi.sun@zilliz.com",
+            "name": "Bingyi Sun"
+        },
+        {
+            "claude_email": "shaoting.huang-claude@zilliz.com",
+            "feishu_email": "shaoting.huang@zilliz.com",
+            "name": "Shaoting Huang"
+        },
+        {
+            "claude_email": "marcelo.chen-claude@zilliz.com",
+            "feishu_email": "marcelo.chen@zilliz.com",
+            "name": "Marcelo Chen"
+        },
+        {
+            "claude_email": "shawn.wang-claude@zilliz.com",
+            "feishu_email": "shawn.wang@zilliz.com",
+            "name": "Shawn Wang"
+        },
+        {
+            "claude_email": "bill-claude@zilliz.com",
+            "feishu_email": "biao.chen@zilliz.com",
+            "name": "Bill (Biao Chen)"
+        },
+        {
+            "claude_email": "yongpeng.li-claude@zilliz.com",
+            "feishu_email": "yongpeng.li@zilliz.com",
+            "name": "Yongpeng Li"
+        },
+        {
+            "claude_email": "xue.tang-claude@zilliz.com",
+            "feishu_email": "xue.tang@zilliz.com",
+            "name": "Xue Tang"
+        },
+        {
+            "claude_email": "chun.han-claude@zilliz.com",
+            "feishu_email": "chun.han@zilliz.com",
+            "name": "Chun Han"
+        },
+        {
+            "claude_email": "xiaofan.luan-claude@zilliz.com",
+            "feishu_email": "xiaofan.luan@zilliz.com",
+            "name": "Xiaofan Luan"
+        },
+        {
+            "claude_email": "jie.zeng-claude@zilliz.com",
+            "feishu_email": "jie.zeng@zilliz.com",
+            "name": "Jie Zeng"
+        },
+        {
+            "claude_email": "chuanfeng.liu-claude@zilliz.com",
+            "feishu_email": "chuanfeng.liu@zilliz.com",
+            "name": "Chuanfeng Liu"
+        },
+        {
+            "claude_email": "yanliang.qiao-claude@zilliz.com",
+            "feishu_email": "yanliang.qiao@zilliz.com",
+            "name": "Yanliang Qiao"
+        },
+        {
+            "claude_email": "ted.xu-claude@zilliz.com",
+            "feishu_email": "ted.xu@zilliz.com",
+            "name": "Ted Xu"
+        },
+        {
+            "claude_email": "ting.wang-claude@zilliz.com",
+            "feishu_email": "ting.wang@zilliz.com",
+            "name": "Ting Wang"
+        },
+        {
+            "claude_email": "shaoyue.chen-claude@zilliz.com",
+            "feishu_email": "shaoyue.chen@zilliz.com",
+            "name": "Shaoyue Chen"
+        },
+        {
+            "claude_email": "zhikun.yao-claude@zilliz.com",
+            "feishu_email": "zhikun.yao@zilliz.com",
+            "name": "Zhikun Yao"
+        },
+        {
+            "claude_email": "junjie.jiang-claude@zilliz.com",
+            "feishu_email": "junjie.jiang@zilliz.com",
+            "name": "Junjie Jiang"
+        },
+        {
+            "claude_email": "jiaqi.zhou-claude@zilliz.com",
+            "feishu_email": "jiaqi.zhou@zilliz.com",
+            "name": "Jiaqi Zhou"
+        }
+    ],
+    "note": "claude_email: Claude OAuth account email (used to identify keys). feishu_email: Feishu account for notifications."
+}

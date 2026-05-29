@@ -1,0 +1,4 @@
+# API keys allowed to access model-service routes from the public internet.
+# Keep both forms so Authorization: Bearer <key> and X-API-Key: <key> work.
+"Bearer usr_pool_xxxx" 1;
+"usr_pool_xxxx" 1;

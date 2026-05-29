@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>认证文件统计 - Key Portal</title>
+    {% include "_portal_shell.html" %}
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --ink: #142033;
+            --muted: #6b7589;
+            --line: #dfe6f0;
+            --blue: #2454d6;
+            --blue-soft: #e8efff;
+            --green: #138a52;
+            --green-soft: #e8f7ef;
+            --orange: #b96c00;
+            --orange-soft: #fff4db;
+            --red: #c93535;
+            --red-soft: #fff0f0;
+            --shadow: 0 18px 45px rgba(34, 49, 76, 0.10);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: linear-gradient(180deg, #f7f9fc 0%, var(--bg) 100%);
+            color: var(--ink);
+            min-height: 100vh;
+            padding: 26px;
+        }
+        .container { max-width: 1440px; margin: 0 auto; }
+        .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 18px; }
+        .eyebrow { color: var(--blue); font-weight: 800; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 8px; }
+        h1 { font-size: clamp(28px, 3vw, 44px); line-height: 1; letter-spacing: -0.05em; color: #10192b; margin: 0; }
+        .subtitle { color: var(--muted); margin: 12px 0 0; max-width: 880px; line-height: 1.65; }
+        .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 330px; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 40px;
+            padding: 10px 16px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 800;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+            white-space: nowrap;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn.primary { color: white; background: #102044; box-shadow: 0 10px 22px rgba(16, 32, 68, 0.24); }
+        .btn.secondary { color: #20304d; background: rgba(255,255,255,0.86); border-color: var(--line); }
+        .btn.green { color: var(--green); background: var(--green-soft); border-color: #bfe8d1; }
+        .btn.orange { color: var(--orange); background: var(--orange-soft); border-color: #ffd88b; }
+        .btn.red { color: var(--red); background: var(--red-soft); border-color: #ffc1c1; }
+        .alert-mute-note { flex-basis: 100%; color: var(--muted); font-size: 12px; text-align: right; line-height: 1.4; }
+        .alert-mute-note.muted { color: var(--orange); font-weight: 850; }
+        .meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: var(--muted);
+            background: rgba(255,255,255,0.76);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 9px 13px;
+            margin: 0 0 18px;
+        }
+        .meta::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #19a463;
+            box-shadow: 0 0 0 5px rgba(25, 164, 99, 0.12);
+        }
+        .warning-banner {
+            display: none;
+            margin: 0 0 18px;
+            padding: 13px 15px;
+            border: 1px solid #ffd29a;
+            border-radius: 16px;
+            color: #804900;
+            background: rgba(255, 247, 230, 0.92);
+            line-height: 1.55;
+            box-shadow: 0 8px 22px rgba(128, 73, 0, 0.08);
+        }
+        .summary { display: grid; gap: 14px; margin-bottom: 18px; }
+        .node-card {
+            background: rgba(255,255,255,0.94);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            padding: 16px;
+            box-shadow: 0 10px 26px rgba(34, 49, 76, 0.08);
+        }
+        .node-card h3 { margin: 0; color: #1f3154; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 17px; }
+        .node-pill, .node-state { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; color: var(--blue); background: var(--blue-soft); padding: 5px 10px; border-radius: 999px; white-space: nowrap; font-weight: 900; }
+        .node-state.good { color: var(--green); background: var(--green-soft); }
+        .node-state.warn { color: var(--orange); background: var(--orange-soft); }
+        .node-state.danger { color: var(--red); background: var(--red-soft); }
+        .node-summary-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,0.94); box-shadow: 0 10px 26px rgba(34, 49, 76, 0.08); }
+        .node-summary-table { width: 100%; border-collapse: collapse; min-width: 1080px; }
+        .node-summary-table th, .node-summary-table td { padding: 12px 14px; border-bottom: 1px solid rgba(223,230,240,0.82); text-align: left; vertical-align: middle; white-space: nowrap; }
+        .node-summary-table th { color: var(--muted); background: #f8fbff; font-size: 12px; font-weight: 950; }
+        .node-summary-table tbody tr:last-child td { border-bottom: 0; }
+        .node-summary-table tbody tr.node-summary-row { cursor: pointer; }
+        .node-summary-table tbody tr.node-summary-row:hover { background: #fbfcff; }
+        .node-summary-table tbody tr.node-summary-row.is-expanded { background: #f3f7ff; }
+        .node-detail-row td { padding: 0; background: #fbfcff; }
+        .node-inline-detail { display: grid; gap: 12px; padding: 14px; border-top: 1px solid rgba(207,216,234,0.9); }
+        .node-expand-mark { display: inline-flex; width: 20px; height: 20px; margin-right: 7px; align-items: center; justify-content: center; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-weight: 950; transition: transform 0.18s ease; }
+        .node-summary-row.is-expanded .node-expand-mark { transform: rotate(90deg); }
+        .node-name { color: #172846; font-size: 15px; font-weight: 950; }
+        .node-number { color: var(--ink); font-size: 18px; font-weight: 950; font-variant-numeric: tabular-nums; }
+        .node-number.good { color: var(--green); }
+        .node-number.warn { color: var(--orange); }
+        .node-number.danger { color: var(--red); }
+        .node-subtext { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+        .node-risk-line { display: flex; flex-wrap: wrap; gap: 6px; }
+        .node-risk-chip { display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid rgba(223,230,240,0.9); border-radius: 999px; background: #fff; padding: 5px 9px; color: var(--muted); font-size: 12px; font-weight: 850; }
+        .node-risk-chip strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+        .node-risk-chip.warn strong { color: var(--orange); }
+        .node-risk-chip.danger strong { color: var(--red); }
+        .node-action-link { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 6px 11px; border-radius: 999px; border: 1px solid #cdd8ea; background: #fff; color: var(--blue); font-size: 12px; font-weight: 900; text-decoration: none; }
+        .node-action-link:hover { background: var(--blue-soft); }
+        .node-overview { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 10px; margin-top: 12px; }
+        .node-health, .node-risk { border: 1px solid rgba(223,230,240,0.9); border-radius: 15px; background: #f8fbff; padding: 12px; min-width: 0; }
+        .node-health span, .node-risk span { display: block; color: var(--muted); font-size: 12px; font-weight: 900; margin-bottom: 7px; }
+        .node-health strong { display: block; color: var(--ink); font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
+        .node-health small, .node-risk small { display: block; color: var(--muted); margin-top: 7px; font-size: 12px; overflow-wrap: anywhere; }
+        .table-card { background: rgba(255,255,255,0.94); padding: 22px; border-radius: 24px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+        .table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+        .table-title h2 { color: #10192b; margin: 0; font-size: 24px; letter-spacing: -0.03em; }
+        .table-title p { color: var(--muted); margin-top: 6px; font-size: 13px; }
+        .view-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+        .view-tabs { display: inline-flex; padding: 4px; border: 1px solid var(--line); border-radius: 999px; background: #f8fbff; }
+        .view-tab { border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 900; padding: 8px 13px; white-space: nowrap; }
+        .view-tab.active { background: #102044; color: #fff; box-shadow: 0 8px 18px rgba(16, 32, 68, 0.18); }
+        .traffic-board { display: grid; gap: 14px; }
+        .traffic-rank { border: 1px solid var(--line); border-radius: 18px; background: #fff; overflow: hidden; }
+        .traffic-rank-head, .traffic-rank-row { display: grid; grid-template-columns: minmax(250px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr); gap: 12px; align-items: center; padding: 13px 15px; }
+        .traffic-rank.with-actions .traffic-rank-head, .traffic-rank.with-actions .traffic-rank-row { grid-template-columns: minmax(250px, 1.2fr) repeat(4, minmax(135px, 1fr)) minmax(110px, 0.55fr) minmax(130px, 0.6fr); }
+        .traffic-rank-head { color: var(--muted); background: #f8fbff; font-size: 12px; font-weight: 950; }
+        .traffic-sort-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 2px 5px; border-radius: 8px; background: rgba(42, 117, 255, 0.08); color: var(--blue); cursor: pointer; font: inherit; text-align: left; }
+        .traffic-sort-btn:hover { background: rgba(42, 117, 255, 0.16); color: #0f4ec7; }
+        .traffic-sort-btn.is-active { background: rgba(42, 117, 255, 0.18); }
+        .traffic-sort-mark { min-width: 12px; color: var(--blue); font-size: 10px; text-align: center; opacity: 0.78; }
+        .traffic-rank-row { border-top: 1px solid rgba(223,230,240,0.82); cursor: pointer; }
+        .traffic-rank-row:hover { background: #fbfcff; }
+        .traffic-rank-row.is-expanded { background: #f3f7ff; }
+        .traffic-identity { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 9px; align-items: center; }
+        .traffic-expand { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-weight: 950; transition: transform 0.18s ease; }
+        .traffic-rank-row.is-expanded .traffic-expand { transform: rotate(90deg); }
+        .traffic-history-row { display: none; border-top: 1px solid rgba(223,230,240,0.82); background: #fbfcff; padding: 16px; }
+        .traffic-history-row.is-expanded { display: block; }
+        .traffic-history-title { display: flex; justify-content: space-between; gap: 12px; color: #172846; font-size: 13px; font-weight: 900; margin-bottom: 12px; }
+        .history-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+        .history-range-tabs { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: #fff; }
+        .history-range-tab { border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 900; padding: 6px 10px; }
+        .history-range-tab.active { color: #fff; background: #102044; }
+        .history-chart { display: grid; grid-template-columns: repeat(var(--points), minmax(10px, 1fr)); gap: 5px; align-items: end; min-height: 160px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+        .history-hour { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; min-width: 0; height: 132px; }
+        .history-bar { width: 100%; border-radius: 5px 5px 2px 2px; min-height: 2px; }
+        .history-bar.success { background: var(--green); }
+        .history-bar.failure { background: var(--red); }
+        .history-label { margin-top: 5px; color: var(--muted); font-size: 10px; text-align: center; white-space: nowrap; transform: rotate(-45deg); transform-origin: top center; }
+        .history-legend { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 12px; font-weight: 800; }
+        .history-legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 999px; vertical-align: -1px; }
+        .history-legend .success::before { background: var(--green); }
+        .history-legend .failure::before { background: var(--red); }
+        .traffic-name strong { display: block; color: var(--ink); font-size: 15px; overflow-wrap: anywhere; }
+        .traffic-name span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+        .traffic-window strong { display: block; color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; }
+        .traffic-window span { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+        .traffic-bar { height: 8px; margin-top: 8px; border-radius: 999px; background: #edf2f8; overflow: hidden; }
+        .traffic-bar-fill { display: block; height: 100%; width: var(--fill); border-radius: inherit; background: #8fb0ff; }
+        .traffic-bar-fill.warn { background: #f3b95f; }
+        .traffic-bar-fill.danger { background: #ee8585; }
+        .traffic-ratio { color: var(--muted); font-size: 11px; font-weight: 850; margin-left: 4px; white-space: nowrap; }
+        .traffic-avg { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+        .traffic-status { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 900; white-space: nowrap; }
+        .traffic-status.good { color: var(--green); background: var(--green-soft); }
+        .traffic-status.warn { color: var(--orange); background: var(--orange-soft); }
+        .traffic-status.danger { color: var(--red); background: var(--red-soft); }
+        .loading, .empty-state { text-align: center; padding: 42px 18px; color: var(--muted); border: 1px dashed var(--line); border-radius: 18px; background: var(--panel-soft); }
+        .auth-list { display: grid; gap: 14px; }
+        .auth-card {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            background: var(--panel);
+            box-shadow: 0 10px 28px rgba(34, 49, 76, 0.07);
+        }
+        .auth-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 5px;
+            background: var(--blue);
+        }
+        .auth-card.status-active::before { background: var(--green); }
+        .auth-card.status-warning::before { background: #e19a14; }
+        .auth-card.status-error::before { background: var(--red); }
+	        .auth-main { display: grid; grid-template-columns: minmax(250px, 0.85fr) minmax(340px, 1.2fr) minmax(260px, 0.9fr) minmax(250px, 0.8fr); gap: 14px; padding: 18px 18px 15px 22px; align-items: stretch; }
+        .identity { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+        .identity-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .account { font-weight: 900; color: #10192b; font-size: 17px; overflow-wrap: anywhere; }
+        .sub { color: var(--muted); font-size: 12px; line-height: 1.45; }
+        .auth-status { display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 900; white-space: nowrap; }
+        .auth-status.active { background: var(--green-soft); color: var(--green); }
+        .auth-status.warning { background: var(--orange-soft); color: var(--orange); }
+        .auth-status.error { background: var(--red-soft); color: var(--red); }
+        .auth-status.other { background: #edf1f5; color: #526070; }
+        .auth-toggle-btn { align-self: flex-start; border: 1px solid rgba(223,230,240,0.95); border-radius: 999px; background: #fff; color: var(--red); padding: 7px 12px; font-size: 12px; font-weight: 900; cursor: pointer; }
+        .auth-toggle-btn.enable { color: var(--green); }
+        .auth-toggle-btn:disabled { opacity: 0.55; cursor: wait; }
+	        .auth-msg { max-width: 100%; color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+	        .signal-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #172846; font-size: 13px; font-weight: 900; margin-bottom: 11px; }
+	        .signal-title span:last-child { color: var(--muted); font-size: 11px; font-weight: 800; }
+	        .quota-panel, .health-panel, .traffic-panel { border: 1px solid var(--line); border-radius: 18px; background: var(--panel-soft); padding: 15px; }
+	        .quota-panel { display: flex; flex-direction: column; background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); border-color: #cfdcff; }
+	        .quota-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; flex: 1; align-items: stretch; }
+	        .quota-window { min-width: 0; min-height: 178px; display: flex; flex-direction: column; padding: 12px 10px; border-radius: 14px; background: rgba(255,255,255,0.78); border: 1px solid rgba(223,230,240,0.88); }
+	        .quota-window.ok { border-color: #bfe8d1; background: #f2fbf6; color: var(--green); }
+	        .quota-window.warn { border-color: #ffd88b; background: #fff8e8; color: var(--orange); }
+	        .quota-window.danger { border-color: #ffc1c1; background: #fff4f4; color: var(--red); }
+	        .quota-window.unknown { color: var(--muted); }
+	        .quota-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+	        .quota-top span { color: var(--muted); font-size: 12px; font-weight: 800; }
+	        .quota-top strong { color: currentColor; font-size: 23px; line-height: 1; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+	        .quota-usage, .quota-countdown { padding: 9px; border-radius: 12px; background: rgba(255,255,255,0.62); border: 1px solid rgba(223,230,240,0.76); }
+	        .quota-usage { margin-top: 6px; }
+	        .quota-row-label { display: flex; justify-content: space-between; gap: 8px; color: #526070; font-size: 11px; font-weight: 850; margin-bottom: 7px; }
+	        .quota-bar { position: relative; height: 8px; border-radius: 999px; background: #edf2f8; overflow: hidden; }
+	        .quota-bar-fill { position: absolute; top: 0; right: 0; bottom: 0; width: var(--fill); border-radius: inherit; background: #73c59a; transition: width 0.25s ease; }
+	        .quota-window.warn .quota-bar-fill { background: #e5ad55; }
+	        .quota-window.danger .quota-bar-fill { background: #e57979; }
+	        .quota-countdown { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; margin-top: 10px; }
+	        .quota-countdown-track { display: grid; grid-template-columns: repeat(var(--segments), minmax(0, 1fr)); gap: 5px; height: 34px; }
+	        .quota-countdown-segment { position: relative; border-radius: 999px; overflow: hidden; background: rgba(82,96,112,0.14); }
+	        .quota-countdown-fill { position: absolute; left: 0; right: 0; bottom: 0; height: var(--fill); border-radius: inherit; background: #526070; opacity: 0.55; transition: height 0.25s ease; }
+	        .quota-reset-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; color: #526070; font-weight: 850; }
+	        .quota-clock { position: relative; flex: 0 0 auto; width: 13px; height: 13px; border: 2px solid currentColor; border-radius: 50%; opacity: 0.82; }
+	        .quota-clock::before, .quota-clock::after { content: ""; position: absolute; left: 50%; top: 50%; width: 2px; border-radius: 2px; background: currentColor; transform-origin: 50% 0; }
+	        .quota-clock::before { height: 4px; transform: translate(-50%, -1px) rotate(0deg); }
+	        .quota-clock::after { height: 5px; transform: translate(-50%, -1px) rotate(120deg); }
+	        .quota-reset { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	        .quota-message { color: var(--muted); font-size: 12px; line-height: 1.45; }
+	        .health-panel { display: flex; flex-direction: column; gap: 10px; }
+	        .failure-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+	        .failure-card { border: 1px solid rgba(223,230,240,0.88); border-radius: 14px; background: #fff; padding: 10px; }
+	        .failure-card.warn { border-color: #ffd88b; background: #fff8e8; }
+	        .failure-card.danger { border-color: #ffc1c1; background: #fff4f4; }
+	        .failure-card span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; margin-bottom: 6px; }
+	        .failure-card strong { color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; }
+	        .failure-card.warn strong { color: var(--orange); }
+	        .failure-card.danger strong { color: var(--red); }
+	        .failure-card small { display: block; color: var(--muted); margin-top: 4px; font-size: 11px; }
+	        .recent-lines { display: grid; gap: 7px; }
+	        .traffic-panel { background: #fff; }
+	        .traffic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+	        .traffic-item { padding: 9px 10px; border-radius: 12px; background: var(--panel-soft); border: 1px solid rgba(223,230,240,0.82); }
+	        .traffic-item span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+	        .traffic-item strong { display: block; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+	        .metric-block { border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); padding: 15px; }
+        .metric-block.primary { border-color: #cfdcff; background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%); }
+        .metric-block h4 { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; color: #172846; font-size: 14px; margin: 0 0 12px; }
+        .range { color: var(--muted); font-size: 12px; font-weight: 700; }
+        .used { font-size: clamp(21px, 2vw, 30px); font-weight: 950; letter-spacing: -0.045em; color: #10192b; font-variant-numeric: tabular-nums; }
+        .unit { color: var(--muted); font-size: 12px; margin: 2px 0 12px; }
+        .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .mini { padding: 9px 10px; border-radius: 12px; background: rgba(255,255,255,0.72); border: 1px solid rgba(223,230,240,0.78); }
+        .mini span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+        .mini strong { display: block; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+        .quota-placeholder { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cfd7e5; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; color: var(--muted); font-size: 12px; }
+        .quota-placeholder b { color: #526070; }
+	        .health-line { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+        .health-line strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+        .error-note { color: var(--red); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+        .secondary-metrics { border-top: 1px solid var(--line); background: #fbfcff; padding: 0 18px 0 22px; }
+        .secondary-metrics summary { cursor: pointer; color: var(--blue); font-weight: 850; font-size: 13px; padding: 13px 0; user-select: none; }
+        .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 0 0 16px; }
+        .detail-box { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
+        .detail-box h5 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+        .detail-box .detail-value { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+        .detail-box .detail-value strong { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+        .time-grid { grid-column: span 2; }
+	        @media (max-width: 1180px) {
+	            .auth-main { grid-template-columns: 1fr 1fr; }
+	            .traffic-panel { grid-column: span 2; }
+	            .node-overview { grid-template-columns: 1fr; }
+	            .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	        }
+	        @media (max-width: 760px) {
+            body { padding: 16px; }
+            .topbar, .table-head { align-items: stretch; flex-direction: column; }
+            .actions { justify-content: flex-start; min-width: 0; }
+            .auth-main { grid-template-columns: 1fr; }
+	            .traffic-panel { grid-column: auto; }
+	            .detail-grid { grid-template-columns: 1fr; }
+	            .time-grid { grid-column: auto; }
+	            .quota-placeholder { grid-template-columns: 1fr; }
+	            .quota-grid, .failure-grid, .traffic-grid, .node-window-grid, .node-mini-grid { grid-template-columns: 1fr; }
+	        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topbar">
+            <div>
+                <div class="eyebrow">Key Portal Operations</div>
+                <h1>认证文件整体统计</h1>
+                <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度。</p>
+            </div>
+            <div class="actions" id="authStatsActions">
+                <button class="btn orange" id="alertMuteToggle" type="button">屏蔽告警</button>
+                <a class="btn secondary" href="/">返回首页</a>
+                <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
+                <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
+                <div class="alert-mute-note" id="alertMuteNote">飞书告警正常发送</div>
+            </div>
+        </div>
+        <div id="authStatsMeta" class="meta">加载中...</div>
+        <div id="authStatsWarnings" class="warning-banner"></div>
+
+        <div class="summary" id="authStatsSummary">
+            <div class="loading">正在加载...</div>
+        </div>
+
+        <div class="table-card">
+            <div class="table-head">
+                <div class="table-title">
+                    <h2 id="authStatsViewTitle">节点健康视图</h2>
+                    <p id="authStatsViewDescription">按节点查看整体健康；切换到认证文件视图可跨节点定位需要处理的账号。</p>
+                </div>
+                <div class="view-controls">
+                    <div class="view-tabs" role="tablist" aria-label="认证统计视图">
+                        <button class="view-tab active" data-view="node" type="button">按节点</button>
+                        <button class="view-tab" data-view="auth" type="button">按认证文件</button>
+                    </div>
+                    <button class="btn primary" onclick="loadAuthStats(true)">刷新认证统计</button>
+                </div>
+            </div>
+            <div class="loading" id="loading">正在加载...</div>
+            <div id="nodeStatsView"></div>
+            <div class="auth-list" id="authStatsCards" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let authStatsLoading = false;
+        let authStatsRetryTimer = null;
+        let authStatsView = 'node';
+        let historyRange = '24h';
+        const AUTH_STATS_REFRESH_MS = 60000;
+        const authRowOrder = new Map();
+        const authRowsByKey = new Map();
+        const expandedTrafficRows = new Set();
+        const trafficSortState = { node: { key: 'last_5h', dir: 'desc' }, auth: { key: '', dir: 'desc' } };
+        let lastAuthStatsRows = [];
+        let lastAuthStatsNodeEntries = [];
+        let lastAuthStatsNodeSignals = new Map();
+        let lastAuthStatsGroupedRows = new Map();
+        let alertMuteState = { muted: false, updated_at: '', updated_by: '', reason: '' };
+
+        function formatNumberFull(num) {
+            return Number(num || 0).toLocaleString('zh-CN');
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '-';
+            const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+            if (!match) return String(value).replace('T', ' ').replace('Z', '').split('.')[0];
+            const utcMs = Date.UTC(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3]),
+                Number(match[4]),
+                Number(match[5]),
+                Number(match[6])
+            );
+            const bj = new Date(utcMs + 8 * 60 * 60 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${bj.getUTCFullYear()}-${pad(bj.getUTCMonth() + 1)}-${pad(bj.getUTCDate())} ${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function formatQuotaResetTime(value) {
+            const formatted = formatDateTime(value);
+            if (formatted === '-') return '未知';
+            const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+            if (formatted.startsWith(today)) return formatted.slice(11, 16);
+            return formatted.slice(5, 16);
+        }
+
+        function formatPercent(value) {
+            const num = Number(value || 0);
+            return num ? num.toFixed(num >= 10 ? 1 : 2) + '%' : '0%';
+        }
+
+        function formatQuotaPercent(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '--';
+            return Number.isInteger(num) ? `${num}%` : `${num.toFixed(num >= 10 ? 1 : 2)}%`;
+        }
+
+        function quotaStatusText(quota) {
+            if (!quota) return '未获取';
+            if (quota.status === 'not_polled') return quota.message || 'Key Portal 不主动查询 provider 原生额度';
+            if (quota.status === 'error') return quota.error ? `获取失败：${quota.error}` : '获取失败';
+            if (quota.status === 'unsupported') return '暂未接入';
+            return '暂无窗口';
+        }
+
+        function quotaLimitText(quota, windowName) {
+            if (!quota || quota.status !== 'success') return quotaStatusText(quota);
+            const bucket = quota.windows?.[windowName];
+            return bucket?.limit_label || '原生窗口';
+        }
+
+        function quotaRemainingText(quota, windowName) {
+            if (!quota || quota.status !== 'success') return quotaStatusText(quota);
+            const bucket = quota.windows?.[windowName];
+            if (!bucket) return '暂无窗口';
+            const reset = bucket.reset_at ? ` · ${formatDateTime(bucket.reset_at)}` : '';
+            return `${formatQuotaPercent(bucket.remaining_percent)}${reset}`;
+        }
+
+        function clampPercent(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return 0;
+            return Math.max(0, Math.min(100, num));
+        }
+
+        function formatCompactNumber(value) {
+            const num = Number(value || 0);
+            if (num >= 100000000) return `${(num / 100000000).toFixed(num >= 1000000000 ? 1 : 2).replace(/\.?0+$/, '')}亿`;
+            if (num >= 10000) return `${(num / 10000).toFixed(num >= 100000 ? 1 : 2).replace(/\.?0+$/, '')}万`;
+            return formatNumberFull(num);
+        }
+
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(bucket) {
+            const breakdown = bucket?.token_breakdown || bucket || {};
+            const parts = [
+                `Input ${formatCompactNumber(breakdown.input_tokens || 0)}`,
+                `Output ${formatCompactNumber(breakdown.output_tokens || 0)}`,
+                `Cache ${formatCompactNumber(breakdown.cached_tokens || 0)}`
+            ];
+            if (Number(breakdown.reasoning_tokens || 0) > 0) parts.push(`Reasoning ${formatCompactNumber(breakdown.reasoning_tokens)}`);
+            if (Number(breakdown.unknown_tokens || 0) > 0) parts.push(`未分类 ${formatCompactNumber(breakdown.unknown_tokens)}`);
+            return parts.join(' · ');
+        }
+
+        function tokenCostText(bucket) {
+            const breakdown = bucket?.token_breakdown || bucket || {};
+            return `估算 ${formatCost(bucket?.estimated_cost_usd ?? breakdown.cost_usd, 'usd')}`;
+        }
+
+        function quotaBucket(row, windowName) {
+            const quota = row?.quota;
+            if (!quota || quota.status !== 'success') return null;
+            return quota.windows?.[windowName] || null;
+        }
+
+        function quotaLevel(percent) {
+            const num = Number(percent);
+            if (!Number.isFinite(num)) return 'unknown';
+            if (num <= 10) return 'danger';
+            if (num <= 30) return 'warn';
+            return 'ok';
+        }
+
+        function failureLevel(rate) {
+            const num = Number(rate || 0);
+            if (num >= 20) return 'danger';
+            if (num >= 5) return 'warn';
+            return 'ok';
+        }
+
+        function minQuotaRemaining(row) {
+            const values = ['last_5h', 'last_7d']
+                .map(name => Number(quotaBucket(row, name)?.remaining_percent))
+                .filter(Number.isFinite);
+            return values.length ? Math.min(...values) : null;
+        }
+
+        function needsAttention(row) {
+            const quota = row?.quota || {};
+            const remaining = minQuotaRemaining(row);
+            return Boolean(
+                row?.disabled ||
+                row?.unavailable ||
+                row?.status === 'error' ||
+                quota.status === 'error' ||
+                (remaining !== null && remaining <= 30) ||
+                Number(row?.last_5h?.failure_rate || 0) >= 5 ||
+                Number(row?.last_7d?.failure_rate || 0) >= 10
+            );
+        }
+
+        function concernScore(row) {
+            let score = 0;
+            if (row?.disabled || row?.unavailable) score += 1000;
+            if (row?.status === 'error') score += 500;
+            if (row?.quota?.status === 'error') score += 250;
+            const remaining = minQuotaRemaining(row);
+            if (remaining !== null) score += Math.max(0, 50 - remaining) * 8;
+            score += Number(row?.last_5h?.failure_rate || 0) * 10;
+            score += Number(row?.last_7d?.failure_rate || 0) * 4;
+            score += Math.min(Number(row?.last_5h?.failure || 0), 500) * 0.3;
+            return score;
+        }
+
+        function authRowKey(row) {
+            return [row.node || '', row.path || '', row.account || '', row.auth_index || ''].join('|');
+        }
+
+        function compareConcern(a, b) {
+            const diff = concernScore(b) - concernScore(a);
+            if (diff !== 0) return diff;
+            return `${a.node || ''}${a.account || ''}${a.auth_index || ''}`.localeCompare(`${b.node || ''}${b.account || ''}${b.auth_index || ''}`);
+        }
+
+        function sortAuthRows(rows) {
+            const prioritized = [...rows].sort(compareConcern);
+            prioritized.forEach(row => {
+                const key = authRowKey(row);
+                if (!authRowOrder.has(key)) authRowOrder.set(key, authRowOrder.size);
+            });
+            return prioritized.sort((a, b) => (authRowOrder.get(authRowKey(a)) ?? 0) - (authRowOrder.get(authRowKey(b)) ?? 0));
+        }
+
+        function computeNodeSignals(rows) {
+            return rows.reduce((acc, row) => {
+                const node = row.node || 'unknown';
+                const item = acc[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
+                if (needsAttention(row)) item.watch += 1;
+                const remaining = minQuotaRemaining(row);
+                if (remaining !== null && remaining <= 30) item.lowQuota += 1;
+                if (row?.quota?.status === 'error') item.quotaError += 1;
+                acc[node] = item;
+                return acc;
+            }, {});
+        }
+
+        const expandedAuthNodes = new Set();
+        let authNodeExpansionInitialized = false;
+
+        function groupAuthRowsByNode(rows) {
+            return rows.reduce((groups, row) => {
+                const node = row.node || 'unknown';
+                if (!groups.has(node)) groups.set(node, []);
+                groups.get(node).push(row);
+                return groups;
+            }, new Map());
+        }
+
+        function ensureAuthNodeExpansion(nodeEntries, nodeSignals) {
+            if (authNodeExpansionInitialized || !nodeEntries.length) return;
+            const attentionNodes = nodeEntries
+                .filter(([node]) => Number(nodeSignals[node]?.watch || 0) > 0)
+                .map(([node]) => node);
+            (attentionNodes.length ? attentionNodes : [nodeEntries[0][0]]).forEach(node => expandedAuthNodes.add(node));
+            authNodeExpansionInitialized = true;
+        }
+
+        function windowStat(row, windowName) {
+            return row?.[windowName] || {};
+        }
+
+        function statusInfo(row) {
+            const hardUnavailable = row.disabled || row.unavailable;
+            if (hardUnavailable) {
+                return { cls: 'error', cardCls: 'status-error', text: row.disabled ? '禁用' : '不可用' };
+            }
+            if (row.status === 'error') {
+                return { cls: 'warning', cardCls: 'status-warning', text: '最近异常' };
+            }
+            if (row.status === 'active') {
+                return { cls: 'active', cardCls: 'status-active', text: '可用' };
+            }
+            return { cls: 'other', cardCls: 'status-other', text: row.status || '-' };
+        }
+
+        function quotaUsedPercent(bucket) {
+            const used = Number(bucket?.used_percent);
+            if (Number.isFinite(used)) return clampPercent(used);
+            return clampPercent(100 - Number(bucket?.remaining_percent || 0));
+        }
+
+        function secondsUntilReset(resetAt) {
+            const resetMs = Date.parse(resetAt || '');
+            if (!Number.isFinite(resetMs)) return null;
+            return Math.max(0, Math.round((resetMs - Date.now()) / 1000));
+        }
+
+        function formatCountdown(seconds) {
+            if (seconds === null) return '未知';
+            if (seconds <= 0) return '即将重置';
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            if (days > 0) return `${days}天${hours}小时`;
+            if (hours > 0) return `${hours}小时${minutes}分`;
+            return `${Math.max(1, minutes)}分`;
+        }
+
+        function countdownPercent(bucket) {
+            const seconds = secondsUntilReset(bucket?.reset_at);
+            const windowSeconds = Number(bucket?.limit_window_seconds || 0);
+            if (seconds === null || !windowSeconds) return 0;
+            return clampPercent(seconds / windowSeconds * 100);
+        }
+
+        function segmentFillPercent(value, index, count) {
+            const segmentSize = 100 / count;
+            return Math.max(0, Math.min(100, ((value - index * segmentSize) / segmentSize) * 100));
+        }
+
+        function renderCountdownSegments(value, count) {
+            const segments = Array.from({ length: count }, (_, index) => {
+                const fill = segmentFillPercent(value, index, count);
+                return `<span class="quota-countdown-segment"><span class="quota-countdown-fill" style="--fill:${fill}%"></span></span>`;
+            }).join('');
+            return `<div class="quota-countdown-track" style="--segments:${count}" aria-hidden="true">${segments}</div>`;
+        }
+
+        function renderMetricBlock(title, rangeLabel, bucket, quota, windowName, primary = false) {
+            return `<div class="metric-block ${primary ? 'primary' : ''}">
+                <h4><span>${title}</span><span class="range">${rangeLabel}</span></h4>
+                <div class="used">${formatNumberFull(bucket?.tokens || 0)}</div>
+                <div class="unit">Tokens 已用 · ${escapeHtml(tokenBreakdownText(bucket))}</div>
+                <div class="unit">${escapeHtml(tokenCostText(bucket))}</div>
+                <div class="metric-grid">
+                    <div class="mini"><span>请求</span><strong>${formatNumberFull(bucket?.requests || 0)}</strong></div>
+                    <div class="mini"><span>成功 / 失败</span><strong>${formatNumberFull(bucket?.success || 0)} / ${formatNumberFull(bucket?.failure || 0)}</strong></div>
+                    <div class="mini"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
+                    <div class="mini"><span>均值 Tokens/请求</span><strong>${formatNumberFull(bucket?.avg_tokens_per_request || 0)}</strong></div>
+                </div>
+                <div class="quota-placeholder">
+                    <span><b>限额</b>：${escapeHtml(quotaLimitText(quota, windowName))}</span>
+                    <span><b>剩余</b>：${escapeHtml(quotaRemainingText(quota, windowName))}</span>
+                </div>
+            </div>`;
+        }
+
+        function renderQuotaWindow(label, row, windowName) {
+            const quota = row?.quota;
+            const bucket = quotaBucket(row, windowName);
+            if (!quota || quota.status !== 'success' || !bucket) {
+                return `<div class="quota-window unknown">
+                    <div class="quota-top"><span>${label}</span><strong>--</strong></div>
+                    <div class="quota-message">${escapeHtml(bucket ? '暂无窗口' : quotaStatusText(quota))}</div>
+                </div>`;
+            }
+            const remaining = clampPercent(bucket.remaining_percent);
+            const level = quotaLevel(remaining);
+            const resetFull = bucket.reset_at ? formatDateTime(bucket.reset_at) : '重置时间未知';
+            const resetTitle = bucket.reset_at ? `重置 ${resetFull}` : resetFull;
+            const segmentCount = windowName === 'last_5h' ? 5 : 7;
+            const countdownValue = countdownPercent(bucket);
+            const countdownText = formatCountdown(secondsUntilReset(bucket.reset_at));
+            const quotaTitle = `${bucket.limit_label || '原生窗口'}：剩余 ${formatQuotaPercent(remaining)}，已用 ${formatQuotaPercent(quotaUsedPercent(bucket))}；${resetTitle}`;
+            const countdownTitle = `重置倒计时：${countdownText}；进度条表示距离窗口重置还剩 ${formatQuotaPercent(countdownValue)} 的时间；${bucket.limit_label || '原生窗口'} · ${resetTitle}`;
+            return `<div class="quota-window ${level}">
+                <div class="quota-top"><span>${label.replace(' 剩余', '')}</span><strong>${formatQuotaPercent(remaining)}</strong></div>
+                <div class="quota-usage" title="${escapeHtml(quotaTitle)}">
+                    <div class="quota-bar"><span class="quota-bar-fill" style="--fill:${remaining}%"></span></div>
+                </div>
+                <div class="quota-countdown" title="${escapeHtml(countdownTitle)}">
+                    <div class="quota-row-label"><span class="quota-reset-pill"><span class="quota-clock" aria-hidden="true"></span><span>重置倒计时</span></span><strong>${escapeHtml(countdownText)}</strong></div>
+                    ${renderCountdownSegments(countdownValue, segmentCount)}
+                </div>
+            </div>`;
+        }
+
+        function renderQuotaPanel(row) {
+            const quota = row?.quota || {};
+            const label = quota.status === 'success'
+                ? (quota.plan_type ? `${quota.provider || row.provider || 'provider'} · ${quota.plan_type}` : (quota.provider || row.provider || 'provider'))
+                : quotaStatusText(quota);
+            return `<section class="quota-panel">
+                <div class="signal-title"><strong>额度剩余</strong><span>${escapeHtml(label)}</span></div>
+                <div class="quota-grid">
+                    ${renderQuotaWindow('5h 剩余', row, 'last_5h')}
+                    ${renderQuotaWindow('7d 剩余', row, 'last_7d')}
+                </div>
+            </section>`;
+        }
+
+        function renderFailureCard(label, bucket) {
+            const level = failureLevel(bucket?.failure_rate);
+            return `<div class="failure-card ${level}">
+                <span>${label} 失败率</span>
+                <strong>${formatPercent(bucket?.failure_rate)}</strong>
+                <small>失败 ${formatNumberFull(bucket?.failure || 0)} / 请求 ${formatNumberFull(bucket?.requests || 0)}</small>
+            </div>`;
+        }
+
+        function renderHealthPanel(row, lastError, statusMsg, errorMsg) {
+            return `<section class="health-panel">
+                <div class="signal-title"><strong>健康状态</strong><span>${escapeHtml(statusInfo(row).text)}</span></div>
+                <div class="failure-grid">
+                    ${renderFailureCard('5h', windowStat(row, 'last_5h'))}
+                    ${renderFailureCard('7d', windowStat(row, 'last_7d'))}
+                </div>
+                <div class="recent-lines">
+                    <div class="health-line"><span>最近请求</span><strong>${formatDateTime(row.last_request_at)}</strong></div>
+                    <div class="health-line"><span>最近失败</span><strong>${lastError}</strong></div>
+                </div>
+                ${statusMsg ? `<div class="auth-msg" title="${escapeHtml(statusMsg)}">${escapeHtml(statusMsg)}</div>` : ''}
+                ${errorMsg}
+            </section>`;
+        }
+
+        function renderTrafficItem(label, value, title) {
+            return `<div class="traffic-item">
+                <span>${label}</span>
+                <strong title="${escapeHtml(title || value)}">${value}</strong>
+            </div>`;
+        }
+
+        function renderTrafficPanel(row) {
+            const five = windowStat(row, 'last_5h');
+            const seven = windowStat(row, 'last_7d');
+            return `<section class="traffic-panel">
+                <div class="signal-title"><strong>请求负载</strong><span>次级指标</span></div>
+                <div class="traffic-grid">
+                    ${renderTrafficItem('5h 请求', formatNumberFull(five.requests || 0))}
+                    ${renderTrafficItem('5h Tokens', formatCompactNumber(five.tokens || 0), `${formatNumberFull(five.tokens || 0)} · ${tokenBreakdownText(five)} · ${tokenCostText(five)}`)}
+                    ${renderTrafficItem('7d 请求', formatNumberFull(seven.requests || 0))}
+                    ${renderTrafficItem('7d Tokens', formatCompactNumber(seven.tokens || 0), `${formatNumberFull(seven.tokens || 0)} · ${tokenBreakdownText(seven)} · ${tokenCostText(seven)}`)}
+                    ${renderTrafficItem('5h 均值 Tokens/请求', formatNumberFull(five.avg_tokens_per_request || 0))}
+                    ${renderTrafficItem('7d 均值 Tokens/请求', formatNumberFull(seven.avg_tokens_per_request || 0))}
+                </div>
+            </section>`;
+        }
+
+        function renderWindowDetail(title, bucket) {
+            return `<div class="detail-box">
+                <h5>${title}</h5>
+                <div class="detail-value"><span>请求</span><strong>${formatNumberFull(bucket?.requests || 0)}</strong></div>
+                <div class="detail-value"><span>Tokens</span><strong>${formatNumberFull(bucket?.tokens || 0)}</strong></div>
+                <div class="detail-value"><span>分类</span><strong>${escapeHtml(tokenBreakdownText(bucket))}</strong></div>
+                <div class="detail-value"><span>费用</span><strong>${escapeHtml(tokenCostText(bucket))}</strong></div>
+                <div class="detail-value"><span>成功 / 失败</span><strong>${formatNumberFull(bucket?.success || 0)} / ${formatNumberFull(bucket?.failure || 0)}</strong></div>
+                <div class="detail-value"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
+            </div>`;
+        }
+
+        function nodeFailureClass(rate) {
+            const num = Number(rate || 0);
+            if (num >= 10) return 'danger';
+            if (num >= 5) return 'warn';
+            return '';
+        }
+
+        function renderNodeWindow(title, bucket) {
+            const failClass = nodeFailureClass(bucket?.failure_rate);
+            return `<div class="node-window">
+                <h4>${title}<b>${formatNumberFull(bucket?.requests || 0)} 请求</b></h4>
+                <div class="node-window-main">
+                    <div><span>Tokens · ${escapeHtml(tokenCostText(bucket))}</span><strong title="${escapeHtml(tokenBreakdownText(bucket))}">${formatCompactNumber(bucket?.tokens || 0)}</strong></div>
+                    <div><span>均值/请求</span><strong>${formatNumberFull(bucket?.avg_tokens_per_request || 0)}</strong></div>
+                </div>
+                <div class="node-failure ${failClass}"><span>失败率</span><strong>${formatPercent(bucket?.failure_rate)}</strong></div>
+            </div>`;
+        }
+
+        function renderTodayQuotaCard(q) {
+            const configured = Boolean(q?.configured);
+            const used = Number(q?.today_used_tokens || 0);
+            const total = Number(q?.total_daily_token_limit || 0);
+            const percent = Number(q?.usage_percent || 0);
+            const accountCount = Number(q?.account_count || 0);
+            const dailyLimit = Number(q?.single_account_daily_token_limit || 0);
+            const inferredCount = Number(q?.inferred_account_count || 0);
+            const minLimit = Number(q?.inferred_daily_token_limit_min || 0);
+            const maxLimit = Number(q?.inferred_daily_token_limit_max || 0);
+            const sourceWindows = Array.isArray(q?.inferred_source_windows) ? q.inferred_source_windows : [];
+            const sourceWindowText = sourceWindows.length
+                ? ` · 窗口 ${sourceWindows.map(name => name === 'last_7d' ? '7天' : (name === 'last_5h' ? '5小时' : name)).join('/')}`
+                : '';
+            const quotaSnapshotCount = Number(q?.quota_snapshot_count || 0);
+            const quotaWindowUsageCount = Number(q?.quota_window_usage_count || 0);
+            const percentClass = configured && percent >= 90 ? 'danger' : (configured && percent >= 70 ? 'warn' : '');
+            const sourceText = configured
+                ? `${formatNumberFull(accountCount)} 个认证文件 · 单号日额度 ${formatCompactNumber(dailyLimit)}`
+                : `${formatNumberFull(accountCount)} 个认证文件 · 额度快照 ${formatNumberFull(quotaSnapshotCount)} 个`;
+            const statusText = q?.inference_status === 'missing_quota_window_usage'
+                ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但本地窗口用量不足`
+                : (q?.inference_status === 'insufficient_quota_window_percent'
+                    ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但缺少有效占用百分比`
+                    : `proxy 认证文件列表未返回额度快照，当前快照样本 ${formatNumberFull(quotaSnapshotCount)} 个`);
+            const inferredText = configured
+                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${sourceWindowText}${minLimit && maxLimit ? ` · 单号范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
+                : `${statusText}；不由 Key Portal 主动查询 provider 原生额度`;
+            const totalDisplay = configured ? formatPercent(percent) : `${formatNumberFull(quotaSnapshotCount)} 快照`;
+            const totalHint = configured ? `${formatCompactNumber(used)} / ${formatCompactNumber(total)}` : statusText;
+            return `<div class="node-card">
+                <h3>今日预估额度消耗 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
+                <div class="node-overview">
+                    <div class="node-health">
+                        <span>今日已用 Tokens</span>
+                        <strong>${formatCompactNumber(used)}</strong>
+                        <small title="${formatNumberFull(used)}">${escapeHtml(sourceText)}</small>
+                    </div>
+                    <div class="node-risk">
+                        <span>总额度占用</span>
+                        <div class="node-failure ${percentClass}"><strong>${totalDisplay}</strong></div>
+                        <small title="${escapeHtml(totalHint)}">${escapeHtml(totalHint)}</small>
+                    </div>
+                </div>
+                <div class="node-mini-grid">
+                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)} / 快照 ${formatNumberFull(quotaSnapshotCount)}</strong></div>
+                    <div class="node-mini"><span>窗口用量</span><strong>${formatNumberFull(quotaWindowUsageCount)}</strong></div>
+                    <div class="node-mini"><span>推算说明</span><strong title="${escapeHtml(inferredText)}">${escapeHtml(inferredText)}</strong></div>
+                </div>
+            </div>`;
+        }
+
+        function alertMuteNoteText() {
+            if (!alertMuteState.muted) return '飞书告警正常发送';
+            const updated = alertMuteState.updated_at ? ` · ${formatDateTime(alertMuteState.updated_at)} 屏蔽` : '';
+            const operator = alertMuteState.updated_by ? ` · ${alertMuteState.updated_by}` : '';
+            return `飞书告警已屏蔽，不影响健康检查、事件记录和恢复处理${updated}${operator}`;
+        }
+
+        function renderNodeManagementActions() {
+            const actionsEl = document.getElementById('authStatsActions');
+            actionsEl.innerHTML = `
+                <button class="btn ${alertMuteState.muted ? 'green' : 'orange'}" id="alertMuteToggle" type="button">${alertMuteState.muted ? '恢复告警' : '屏蔽告警'}</button>
+                <a class="btn secondary" href="/">返回首页</a>
+                <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
+                <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
+                <div class="alert-mute-note ${alertMuteState.muted ? 'muted' : ''}" id="alertMuteNote">${escapeHtml(alertMuteNoteText())}</div>`;
+            bindAlertMuteToggle();
+        }
+
+        function nodeSummaryState(n, signals) {
+            const total = Number(n.auth_files || 0);
+            const warning = Number(n.warning || 0);
+            const unavailable = Number(n.unavailable || 0);
+            if (!total) return { cls: 'danger', text: '无认证文件' };
+            if (unavailable > 0) return { cls: 'danger', text: '有不可用' };
+            if (warning > 0 || signals.watch > 0) return { cls: 'warn', text: '需关注' };
+            return { cls: 'good', text: '健康' };
+        }
+
+        function renderNodeSummaryRow(node, n, signals, nodeRows) {
+            const managementPath = n.management_path || '#';
+            const total = Number(n.auth_files || 0);
+            const active = Number(n.active || 0);
+            const warning = Number(n.warning || 0);
+            const unavailable = Number(n.unavailable || 0);
+            const five = n.last_5h || {};
+            const day = n.last_24h || {};
+            const seven = n.last_7d || {};
+            const state = nodeSummaryState(n, signals);
+            const fiveFailClass = nodeFailureClass(five.failure_rate);
+            const sevenFailClass = nodeFailureClass(seven.failure_rate);
+            const expanded = expandedAuthNodes.has(node);
+            const detailRows = nodeRows || [];
+            const detailHtml = detailRows.length ? detailRows.map(renderAuthCard).join('') : '<div class="empty-state">该节点暂无认证文件明细</div>';
+            return `<tr class="node-summary-row ${expanded ? 'is-expanded' : ''}" data-node="${escapeHtml(node)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                <td><span class="node-expand-mark" aria-hidden="true">›</span><span class="node-name">${escapeHtml(node)}</span><span class="node-state ${state.cls}">${state.text}</span><span class="node-subtext">点击展开 / 收起认证文件明细</span></td>
+                <td><span class="node-number">${formatNumberFull(total)}</span></td>
+                <td><span class="node-number good">${formatNumberFull(active)}</span></td>
+                <td><span class="node-number warn">${formatNumberFull(warning)}</span></td>
+                <td><span class="node-number danger">${formatNumberFull(unavailable)}</span></td>
+                <td><span class="node-number">${formatNumberFull(five.requests || 0)}</span><span class="node-subtext">失败 ${formatNumberFull(five.failure || 0)}</span></td>
+                <td><span class="node-number ${fiveFailClass}">${formatPercent(five.failure_rate)}</span></td>
+                <td><span class="node-number">${formatNumberFull(day.requests || 0)}</span></td>
+                <td><span class="node-number ${sevenFailClass}">${formatPercent(seven.failure_rate)}</span></td>
+                <td><span class="node-number" title="${escapeHtml(tokenBreakdownText(seven))}">${formatCompactNumber(seven.tokens || 0)}</span></td>
+                <td><a class="node-action-link" href="${escapeHtml(managementPath)}" target="_blank">管理后台</a></td>
+            </tr>
+            <tr class="node-detail-row" data-node="${escapeHtml(node)}" style="display:${expanded ? 'table-row' : 'none'}">
+                <td colspan="11"><div class="node-inline-detail">${detailHtml}</div></td>
+            </tr>`;
+        }
+
+        function renderNodeSummaryTable(nodeEntries, nodeSignals, groupedRows) {
+            if (!nodeEntries.length) return '<div class="empty-state">暂无节点数据</div>';
+            const rows = nodeEntries.map(([node, n]) => {
+                const signals = nodeSignals[node] || { watch: 0, lowQuota: 0, quotaError: 0 };
+                return renderNodeSummaryRow(node, n, signals, groupedRows.get(node) || []);
+            }).join('');
+            return `<div class="node-summary-table-wrap">
+                <table class="node-summary-table">
+                    <thead><tr>
+                        <th>节点</th>
+                        <th>认证文件</th>
+                        <th>可用</th>
+                        <th>异常</th>
+                        <th>不可用</th>
+                        <th>5h 请求</th>
+                        <th>5h 失败率</th>
+                        <th>24h 请求</th>
+                        <th>7d 失败率</th>
+                        <th>7d Tokens</th>
+                        <th>操作</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+        }
+
+        function bindNodeSummaryRows() {
+            document.querySelectorAll('.node-summary-row').forEach(row => {
+                row.addEventListener('click', (event) => {
+                    if (event.target.closest('a, button, details, summary')) return;
+                    const node = row.dataset.node || '';
+                    const expanded = !row.classList.contains('is-expanded');
+                    const detailRow = row.nextElementSibling;
+                    row.classList.toggle('is-expanded', expanded);
+                    row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                    if (detailRow?.classList.contains('node-detail-row')) {
+                        detailRow.style.display = expanded ? 'table-row' : 'none';
+                    }
+                    if (expanded) expandedAuthNodes.add(node);
+                    else expandedAuthNodes.delete(node);
+                });
+            });
+        }
+
+        function trafficStatusFor(item) {
+            const unavailable = Number(item.unavailable || 0);
+            const warning = Number(item.warning || 0);
+            const fiveFailure = Number(item.last_5h?.failure_rate || 0);
+            const sevenFailure = Number(item.last_7d?.failure_rate || 0);
+            if (unavailable > 0 || fiveFailure >= 20 || sevenFailure >= 10 || item.disabled || item.unavailable || item.status === 'error') {
+                return { cls: 'danger', text: '需处理' };
+            }
+            if (warning > 0 || fiveFailure >= 5 || sevenFailure >= 5 || needsAttention(item)) {
+                return { cls: 'warn', text: '需关注' };
+            }
+            return { cls: 'good', text: '正常' };
+        }
+
+        function trafficWindowCell(item, bucket, windowTotalRequests, mode) {
+            const requests = Number(bucket?.requests || 0);
+            const success = Number(bucket?.success || 0);
+            const failure = Number(bucket?.failure || 0);
+            const tokens = Number(bucket?.tokens || 0);
+            const fill = windowTotalRequests > 0 ? clampPercent(requests / windowTotalRequests * 100) : 0;
+            const failLevel = nodeFailureClass(bucket?.failure_rate);
+            const authCount = mode === 'node' ? Number(item?.auth_files || item?.active || 0) : 0;
+            const avgText = authCount > 0 ? `每认证平均 ${formatNumberFull(Math.round(requests / authCount))} 请求` : '';
+            const fillText = mode === 'node' ? `占集群 ${formatQuotaPercent(fill)}` : `占列表 ${formatQuotaPercent(fill)}`;
+            const totalLabel = mode === 'node' ? '节点合计' : '认证文件';
+            const detailTitle = `数据口径：${totalLabel}请求数为加和值，不是最大值；进度条表示该行请求数占当前窗口列表总请求数的比例 ${formatQuotaPercent(fill)}。请求 ${formatNumberFull(requests)} / 总请求 ${formatNumberFull(windowTotalRequests)} · Tokens ${formatNumberFull(tokens)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}${avgText ? ' · ' + avgText : ''} · ${tokenBreakdownText(bucket)}`;
+            return `<div class="traffic-window" title="${escapeHtml(detailTitle)}">
+                <strong title="${escapeHtml(formatNumberFull(requests))} 请求">${formatNumberFull(requests)}<span class="traffic-ratio">${fillText}</span></strong>
+                <span>${formatCompactNumber(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
+                ${avgText ? `<span class="traffic-avg">${escapeHtml(avgText)}</span>` : ''}
+                <div class="traffic-bar"><span class="traffic-bar-fill ${failLevel}" style="--fill:${fill}%"></span></div>
+            </div>`;
+        }
+
+        function historyLabel(value) {
+            const formatted = formatDateTime(value);
+            if (formatted === '-') return '-';
+            return historyRange === '24h' ? formatted.slice(11, 16) : formatted.slice(5, 10);
+        }
+
+        function historyRangeText() {
+            if (historyRange === '7d') return '最近 7 天';
+            if (historyRange === '30d') return '最近 30 天';
+            return '最近 24 小时';
+        }
+
+        function renderHistoryChart(item) {
+            const historyData = item.history || {};
+            const history = Array.isArray(historyData[historyRange]) ? historyData[historyRange] : [];
+            const maxCount = Math.max(1, ...history.map(bucket => Number(bucket.requests || 0)));
+            const bars = history.map(bucket => {
+                const success = Number(bucket.success || 0);
+                const failure = Number(bucket.failure || 0);
+                const successHeight = Math.max(2, success / maxCount * 120);
+                const failureHeight = Math.max(failure ? 2 : 0, failure / maxCount * 120);
+                const title = `${formatDateTime(bucket.time)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 总请求 ${formatNumberFull(bucket.requests || 0)}`;
+                return `<div class="history-hour" title="${escapeHtml(title)}">
+                    <span class="history-bar failure" style="height:${failureHeight}px"></span>
+                    <span class="history-bar success" style="height:${successHeight}px"></span>
+                    <span class="history-label">${escapeHtml(historyLabel(bucket.time))}</span>
+                </div>`;
+            }).join('');
+            return `<div class="traffic-history-title">
+                <span>${historyRangeText()}成功 / 失败请求曲线</span>
+                <div class="history-controls">
+                    <div class="history-range-tabs" role="tablist" aria-label="历史范围">
+                        ${['24h', '7d', '30d'].map(range => `<button class="history-range-tab ${historyRange === range ? 'active' : ''}" data-history-range="${range}" type="button">${range === '24h' ? '24小时' : range === '7d' ? '7天' : '30天'}</button>`).join('')}
+                    </div>
+                    <div class="history-legend"><span class="success">成功</span><span class="failure">失败</span></div>
+                </div>
+            </div>
+            <div class="history-chart" style="--points:${Math.max(1, history.length)}">${bars || '<div class="empty-state">暂无历史数据</div>'}</div>`;
+        }
+
+        function trafficRowKey(item, mode) {
+            if (mode === 'node') return `node:${item.name || ''}`;
+            return `auth:${authRowKey(item)}`;
+        }
+
+        function trafficSortValue(item, mode, key) {
+            if (key === 'name') return mode === 'node' ? String(item.name || '') : String(item.account || '');
+            if (key === 'status') return trafficStatusFor(item).text;
+            if (['last_1h', 'last_5h', 'last_24h', 'last_7d'].includes(key)) return Number(item[key]?.requests || 0);
+            return 0;
+        }
+
+        function sortTrafficItems(items, mode) {
+            const state = trafficSortState[mode] || {};
+            if (!state.key) return items;
+            const dir = state.dir === 'asc' ? 1 : -1;
+            return [...items].sort((a, b) => {
+                const av = trafficSortValue(a, mode, state.key);
+                const bv = trafficSortValue(b, mode, state.key);
+                if (typeof av === 'string' || typeof bv === 'string') {
+                    return String(av).localeCompare(String(bv), 'zh-CN') * dir;
+                }
+                return (Number(av || 0) - Number(bv || 0)) * dir;
+            });
+        }
+
+        function trafficSortHead(mode, key, label) {
+            const state = trafficSortState[mode] || {};
+            const active = state.key === key;
+            const mark = active ? (state.dir === 'asc' ? '▲' : '▼') : '⇅';
+            const activeClass = active ? ' is-active' : '';
+            return `<button class="traffic-sort-btn${activeClass}" type="button" data-traffic-sort="${escapeHtml(key)}" title="点击按${escapeHtml(label)}排序"><span>${escapeHtml(label)}</span><span class="traffic-sort-mark">${mark}</span></button>`;
+        }
+
+        function renderTrafficRank(items, mode) {
+            if (!items.length) return '<div class="empty-state">暂无流量数据</div>';
+            items = sortTrafficItems(items, mode);
+            const windowTotalRequests = ['last_1h', 'last_5h', 'last_24h', 'last_7d'].reduce((acc, name) => {
+                acc[name] = items.reduce((sum, item) => sum + Number(item[name]?.requests || 0), 0);
+                return acc;
+            }, {});
+            const rows = items.map(item => {
+                const status = trafficStatusFor(item);
+                const key = trafficRowKey(item, mode);
+                const expanded = expandedTrafficRows.has(key);
+                const name = mode === 'node' ? item.name : (item.account || '-');
+                const sub = mode === 'node'
+                    ? `${formatNumberFull(item.auth_files || 0)} 个认证文件 · 可用 ${formatNumberFull(item.active || 0)} · 不可用 ${formatNumberFull(item.unavailable || 0)}`
+                    : `${item.node || '-'} · ${item.provider || 'provider'}${item.auth_index ? ' · ' + item.auth_index : ''}`;
+                const managementPath = mode === 'node' ? (item.management_path || '#') : '#';
+                const managementLink = mode === 'node' && managementPath !== '#'
+                    ? `<a class="node-action-link" href="${escapeHtml(managementPath)}" target="_blank">管理后台</a>`
+                    : '<span class="node-subtext">-</span>';
+                return `<div class="traffic-rank-row ${expanded ? 'is-expanded' : ''}" data-traffic-key="${escapeHtml(key)}" aria-expanded="${expanded ? 'true' : 'false'}">
+                    <div class="traffic-identity"><span class="traffic-expand" aria-hidden="true">›</span><div class="traffic-name"><strong>${escapeHtml(name)}</strong><span>${escapeHtml(sub)}</span></div></div>
+                    ${trafficWindowCell(item, item.last_1h || {}, windowTotalRequests.last_1h, mode)}
+                    ${trafficWindowCell(item, item.last_5h || {}, windowTotalRequests.last_5h, mode)}
+                    ${trafficWindowCell(item, item.last_24h || {}, windowTotalRequests.last_24h, mode)}
+                    ${trafficWindowCell(item, item.last_7d || {}, windowTotalRequests.last_7d, mode)}
+                    <div><span class="traffic-status ${status.cls}">${status.text}</span></div>
+                    ${mode === 'node' ? `<div>${managementLink}</div>` : ''}
+                </div>
+                <div class="traffic-history-row ${expanded ? 'is-expanded' : ''}" data-traffic-history="${escapeHtml(key)}">${renderHistoryChart(item)}</div>`;
+            }).join('');
+            return `<div class="traffic-board">
+                <div class="traffic-rank ${mode === 'node' ? 'with-actions' : ''}">
+                    <div class="traffic-rank-head">
+                        <div>${trafficSortHead(mode, 'name', mode === 'node' ? '节点' : '认证文件')}</div>
+                        <div>${trafficSortHead(mode, 'last_1h', '近 1 小时')}</div>
+                        <div>${trafficSortHead(mode, 'last_5h', '近 5 小时')}</div>
+                        <div>${trafficSortHead(mode, 'last_24h', '近 24 小时')}</div>
+                        <div>${trafficSortHead(mode, 'last_7d', '近 7 天')}</div>
+                        <div>${trafficSortHead(mode, 'status', '状态')}</div>
+                        ${mode === 'node' ? '<div>管理</div>' : ''}
+                    </div>
+                    ${rows}
+                </div>
+            </div>`;
+        }
+
+        function nodeTrafficItems(nodeEntries) {
+            return nodeEntries.map(([node, data]) => ({ name: node, ...data }))
+                .sort((a, b) => Number(b.last_5h?.requests || 0) - Number(a.last_5h?.requests || 0));
+        }
+
+        function authTrafficItems(rows) {
+            return [...rows].sort((a, b) => concernScore(b) - concernScore(a) || Number(b.last_5h?.requests || 0) - Number(a.last_5h?.requests || 0));
+        }
+
+        function bindTrafficRows() {
+            document.querySelectorAll('[data-traffic-sort]').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    const key = button.dataset.trafficSort || '';
+                    const state = trafficSortState[authStatsView];
+                    if (state.key === key) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+                    else {
+                        state.key = key;
+                        state.dir = key === 'name' || key === 'status' ? 'asc' : 'desc';
+                    }
+                    renderView(lastAuthStatsRows, lastAuthStatsNodeEntries, lastAuthStatsNodeSignals, lastAuthStatsGroupedRows);
+                });
+            });
+            document.querySelectorAll('.traffic-rank-row').forEach(row => {
+                row.addEventListener('click', (event) => {
+                    if (event.target.closest('a, button')) return;
+                    const key = row.dataset.trafficKey || '';
+                    const expanded = !row.classList.contains('is-expanded');
+                    row.classList.toggle('is-expanded', expanded);
+                    row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                    const detail = document.querySelector(`[data-traffic-history="${CSS.escape(key)}"]`);
+                    if (detail) detail.classList.toggle('is-expanded', expanded);
+                    if (expanded) expandedTrafficRows.add(key);
+                    else expandedTrafficRows.delete(key);
+                });
+            });
+            document.querySelectorAll('.history-range-tab').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    historyRange = button.dataset.historyRange || '24h';
+                    loadAuthStats(true);
+                });
+            });
+        }
+
+        function renderView(rows, nodeEntries, nodeSignals, groupedRows) {
+            const titleEl = document.getElementById('authStatsViewTitle');
+            const descEl = document.getElementById('authStatsViewDescription');
+            const nodeViewEl = document.getElementById('nodeStatsView');
+            const cardsEl = document.getElementById('authStatsCards');
+            document.querySelectorAll('.view-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.view === authStatsView);
+            });
+            if (authStatsView === 'auth') {
+                titleEl.textContent = '按认证文件看流量';
+                descEl.textContent = '跨节点对比每个认证文件在 1h / 5h / 24h / 7d 的流量、失败率和处理优先级。';
+                nodeViewEl.innerHTML = renderTrafficRank(authTrafficItems(rows), 'auth');
+            } else {
+                titleEl.textContent = '按节点看流量';
+                descEl.textContent = '对比每个节点在 1h / 5h / 24h / 7d 的流量、失败率和整体健康。';
+                nodeViewEl.innerHTML = renderTrafficRank(nodeTrafficItems(nodeEntries), 'node');
+            }
+            nodeViewEl.style.display = 'block';
+            cardsEl.innerHTML = '';
+            cardsEl.style.display = 'none';
+            bindTrafficRows();
+        }
+
+        function bindViewTabs() {
+            document.querySelectorAll('.view-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    authStatsView = tab.dataset.view || 'node';
+                    loadAuthStats(true);
+                });
+            });
+        }
+
+        function renderAuthCard(row) {
+            const info = statusInfo(row);
+            const statusMsg = row.status_explanation || row.status_message || '';
+            const lastError = row.last_error_at ? `${formatDateTime(row.last_error_at)}${row.last_error_status ? ' / ' + escapeHtml(row.last_error_status) : ''}` : '-';
+            const errorMsg = row.last_error_message ? `<div class="error-note" title="${escapeHtml(row.last_error_message)}">${escapeHtml(row.last_error_message)}</div>` : '';
+            const plan = row.plan_type || row.provider || '未标记计划';
+            const rowKey = authRowKey(row);
+            const toggleDisabled = !row.disabled;
+            const toggleText = row.disabled ? '启用认证' : '停用认证';
+            const toggleClass = row.disabled ? ' enable' : '';
+            return `<article class="auth-card ${info.cardCls}">
+                <div class="auth-main">
+                    <section class="identity">
+                        <div class="identity-top">
+                            <span class="node-pill">${escapeHtml(row.node || '-')}</span>
+                            <span class="auth-status ${info.cls}">${escapeHtml(info.text)}</span>
+                        </div>
+                        <div>
+	                            <div class="account">${escapeHtml(row.account || '-')}</div>
+	                            <div class="sub">${escapeHtml(plan)}${row.auth_index ? ' · ' + escapeHtml(row.auth_index) : ''}</div>
+	                        </div>
+                            <button class="auth-toggle-btn${toggleClass}" data-auth-key="${escapeHtml(rowKey)}" data-disabled="${toggleDisabled ? '1' : '0'}">${toggleText}</button>
+	                    </section>
+	                    ${renderQuotaPanel(row)}
+	                    ${renderHealthPanel(row, lastError, statusMsg, errorMsg)}
+	                    ${renderTrafficPanel(row)}
+	                </div>
+            </article>`;
+        }
+
+        function renderWarnings(errors) {
+            const warningEl = document.getElementById('authStatsWarnings');
+            if (!errors || !errors.length) {
+                warningEl.style.display = 'none';
+                warningEl.innerHTML = '';
+                return;
+            }
+            warningEl.innerHTML = `<strong>部分节点统计异常：</strong>${errors.map(err => `<div>${escapeHtml(typeof err === 'string' ? err : JSON.stringify(err))}</div>`).join('')}`;
+            warningEl.style.display = 'block';
+        }
+
+        async function toggleAuthStatus(row, disabled, button) {
+            const label = row.account || row.auth_name || row.auth_id || row.auth_index || '该认证文件';
+            const action = disabled ? '停用' : '启用';
+            if (!confirm(`确认${action} ${label} 吗？${disabled ? '停用后新流量不会再调度到这个认证文件。' : '启用后该认证文件会重新参与调度。'}`)) return;
+            if (button) button.disabled = true;
+            try {
+                const resp = await fetch('/api/auth-stats/toggle-auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        node: row.node,
+                        auth_id: row.auth_id,
+                        auth_name: row.auth_name,
+                        auth_index: row.auth_index,
+                        disabled,
+                    }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                authStatsLoading = false;
+                await loadAuthStats(true);
+            } catch (e) {
+                alert(`${action}失败：${e.message}`);
+                if (button) button.disabled = false;
+            }
+        }
+
+        function bindAuthToggleButtons() {
+            document.querySelectorAll('.auth-toggle-btn').forEach(button => {
+                button.addEventListener('click', () => {
+                    const row = authRowsByKey.get(button.dataset.authKey);
+                    if (!row) {
+                        alert('找不到认证文件数据，请刷新页面后重试');
+                        return;
+                    }
+                    toggleAuthStatus(row, button.dataset.disabled === '1', button);
+                });
+            });
+        }
+
+        async function loadAlertMuteState() {
+            const resp = await fetch(`/api/auth-stats/alert-mute?_=${Date.now()}`, {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json' },
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+            alertMuteState = data;
+            renderNodeManagementActions();
+        }
+
+        async function setAlertMuteState(muted, button) {
+            const action = muted ? '屏蔽飞书告警' : '恢复飞书告警';
+            if (!confirm(`确认${action}吗？健康检查、事件记录和恢复处理会继续执行。`)) return;
+            if (button) button.disabled = true;
+            try {
+                const resp = await fetch('/api/auth-stats/alert-mute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ muted }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                alertMuteState = data;
+                renderNodeManagementActions();
+            } catch (e) {
+                alert(`${action}失败：${e.message}`);
+                if (button) button.disabled = false;
+            }
+        }
+
+        function bindAlertMuteToggle() {
+            const button = document.getElementById('alertMuteToggle');
+            if (!button) return;
+            button.addEventListener('click', () => setAlertMuteState(!alertMuteState.muted, button));
+        }
+
+        async function loadAuthStats(force = false) {
+            if (authStatsLoading) return;
+            if (force && authStatsRetryTimer) {
+                clearTimeout(authStatsRetryTimer);
+                authStatsRetryTimer = null;
+            }
+            authStatsLoading = true;
+            const loading = document.getElementById('loading');
+            const cardsEl = document.getElementById('authStatsCards');
+            try {
+                const resp = await fetch(`/api/auth-stats?_=${Date.now()}`, {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' },
+                });
+                const contentType = resp.headers.get('content-type') || '';
+                if (!resp.ok || !contentType.includes('application/json')) {
+                    const text = await resp.text();
+                    throw new Error(`API 返回异常：HTTP ${resp.status} ${contentType} ${text.slice(0, 120).replace(/\s+/g, ' ')}`);
+                }
+                const data = await resp.json();
+                const summaryEl = document.getElementById('authStatsSummary');
+                const metaEl = document.getElementById('authStatsMeta');
+                const generated = formatDateTime(data.generated_at);
+                metaEl.textContent = `生成时间：${generated} 北京时间；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度；页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 刷新`;
+                renderWarnings(data.errors || []);
+
+                const rows = sortAuthRows(data.auth_files || []);
+                authRowsByKey.clear();
+                rows.forEach(row => authRowsByKey.set(authRowKey(row), row));
+                const nodeSignals = computeNodeSignals(rows);
+                const nodes = data.nodes || {};
+                const configuredNodes = Array.isArray(data.configured_nodes) ? data.configured_nodes : [];
+                const orderedNodeNames = configuredNodes.map(item => item.name).filter(Boolean);
+                Object.keys(nodes).sort().forEach(node => {
+                    if (!orderedNodeNames.includes(node)) orderedNodeNames.push(node);
+                });
+                const nodeEntries = orderedNodeNames.map(node => {
+                    const configured = configuredNodes.find(item => item.name === node) || {};
+                    return [node, { ...(nodes[node] || {}), ...configured }];
+                });
+                renderNodeManagementActions();
+                const groupedRows = groupAuthRowsByNode(rows);
+                lastAuthStatsRows = rows;
+                lastAuthStatsNodeEntries = nodeEntries;
+                lastAuthStatsNodeSignals = nodeSignals;
+                lastAuthStatsGroupedRows = groupedRows;
+                ensureAuthNodeExpansion(Array.from(groupedRows.entries()), nodeSignals);
+                const quotaCard = renderTodayQuotaCard(data.today_quota_usage || {});
+                summaryEl.innerHTML = quotaCard;
+                renderView(rows, nodeEntries, nodeSignals, groupedRows);
+                loading.style.display = 'none';
+            } catch (e) {
+                const transient = /HTTP 502|HTTP 503|HTTP 504|Bad Gateway|Gateway Timeout/i.test(e.message || '');
+                loading.textContent = transient
+                    ? '网关临时不可用，可能是 key-portal 正在重启，3 秒后自动重试...'
+                    : '加载失败：' + e.message;
+                loading.style.display = 'block';
+                cardsEl.style.display = 'none';
+                if (transient && !authStatsRetryTimer) {
+                    authStatsRetryTimer = setTimeout(() => {
+                        authStatsRetryTimer = null;
+                        loadAuthStats(true);
+                    }, 3000);
+                }
+            } finally {
+                authStatsLoading = false;
+            }
+        }
+
+        bindViewTabs();
+        loadAlertMuteState().catch((e) => console.warn('load alert mute state failed', e));
+        loadAuthStats();
+        setInterval(() => {
+            if (document.visibilityState === 'visible') loadAuthStats();
+        }, AUTH_STATS_REFRESH_MS);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') loadAuthStats(true);
+        });
+    </script>
+</body>
+</html>
