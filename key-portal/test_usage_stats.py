@@ -112,6 +112,31 @@ class UsageMergeTests(unittest.TestCase):
         self.assertEqual(results[0], ("old", {"ok": True}, None))
         self.assertEqual(results[1], ("node-b", None, "timeout"))
 
+    def test_usage_queue_history_deduplicates_and_merges_records(self):
+        portal_app.portal_state.cache_delete("usage_queue_history:test-node")
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        first = [{
+            "request_id": "req-1",
+            "timestamp": now,
+            "api_key": "k1",
+            "model": "gpt-5.5",
+            "tokens": {"total_tokens": 10},
+        }]
+        second = first + [{
+            "request_id": "req-2",
+            "timestamp": now,
+            "api_key": "k1",
+            "model": "gpt-5.5",
+            "tokens": {"total_tokens": 20},
+        }]
+
+        merged_first = portal_app.merge_usage_queue_results([("test-node", first, None)])
+        merged_second = portal_app.merge_usage_queue_results([("test-node", second, None)])
+
+        self.assertEqual(merged_first["usage"]["total_requests"], 1)
+        self.assertEqual(merged_second["usage"]["total_requests"], 2)
+        self.assertEqual(merged_second["usage"]["total_tokens"], 30)
+
     def test_usage_queue_records_convert_to_legacy_usage_payload(self):
         records = [
             {
@@ -202,6 +227,61 @@ class AuthStatsTests(unittest.TestCase):
         self.assertEqual(by_node["node-a"]["total"]["tokens"], 100)
         self.assertEqual(by_node["node-c"]["total"]["requests"], 1)
         self.assertEqual(by_node["node-c"]["total"]["tokens"], 200)
+
+    def auth_stats_service(self):
+        return portal_app.auth_stats_service.AuthStatsService(
+            portal_state=object(),
+            nodes=[],
+            call_management_api_node=lambda *args, **kwargs: ({}, None),
+            get_cluster_usage=lambda: {},
+            get_cluster_auth_files=lambda: ([], []),
+            usage_summary_loader=lambda: ({}, None),
+            parse_detail_time=portal_app.parse_detail_time,
+            parse_detail_time_utc=portal_app.parse_detail_time_utc,
+            build_token_breakdown=portal_app.build_token_breakdown,
+        )
+
+    def test_today_quota_usage_does_not_extrapolate_from_one_sample(self):
+        service = self.auth_stats_service()
+        stats = {}
+        for index in range(20):
+            stats[str(index)] = {
+                "today": {"tokens": 0},
+                "quota_window": {"tokens": 49500 if index == 0 else 0, "source_window": "last_7d"},
+                "quota": {"windows": {"last_7d": {"used_percent": 100, "limit_window_seconds": 7 * 24 * 3600}}},
+            }
+
+        result = service.build_today_quota_usage(stats, "2026-05-29", 8_320_000_000)
+
+        self.assertEqual(result["inference_status"], "insufficient_history_coverage")
+        self.assertFalse(result["configured"])
+        self.assertEqual(result["total_daily_token_limit"], 0)
+        self.assertEqual(result["usage_percent"], 0)
+        self.assertEqual(result["min_inferred_samples"], 4)
+        self.assertEqual(result["single_account_daily_token_limit"], 0)
+
+    def test_today_quota_usage_requires_full_window_history(self):
+        service = self.auth_stats_service()
+        stats = {}
+        for index in range(20):
+            stats[str(index)] = {
+                "today": {"tokens": 0},
+                "quota_window": {
+                    "tokens": 49_500,
+                    "source_window": "last_7d",
+                    "start_at": "2026-05-29T00:00:00Z",
+                    "reset_at": "2026-05-29T01:00:00Z",
+                },
+                "quota": {"windows": {"last_7d": {"used_percent": 100, "limit_window_seconds": 7 * 24 * 3600}}},
+            }
+
+        result = service.build_today_quota_usage(stats, "2026-05-29", 8_320_000_000)
+
+        self.assertEqual(result["inference_status"], "insufficient_history_coverage")
+        self.assertFalse(result["configured"])
+        self.assertEqual(result["total_daily_token_limit"], 0)
+        self.assertEqual(result["usage_percent"], 0)
+        self.assertEqual(result["partial_history_count"], 20)
 
 
 class DatabaseTests(TempUsageDb):

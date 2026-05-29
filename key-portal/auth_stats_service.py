@@ -372,11 +372,17 @@ class AuthStatsService:
                 end = max((when for when, _ in details), default=datetime.utcnow())
             start = end - timedelta(seconds=window_seconds)
             window_details = [(when, tokens) for when, tokens in details if start <= when <= end]
+            observed_start = min((when for when, _ in window_details), default=None)
+            observed_end = max((when for when, _ in window_details), default=None)
+            observed_seconds = (observed_end - observed_start).total_seconds() if observed_start and observed_end else 0
             stat["quota_window"] = {
                 "tokens": sum(tokens for _, tokens in window_details),
                 "requests": len(window_details),
                 "start_at": start.isoformat() + "Z",
                 "reset_at": end.isoformat() + "Z",
+                "observed_start_at": observed_start.isoformat() + "Z" if observed_start else "",
+                "observed_end_at": observed_end.isoformat() + "Z" if observed_end else "",
+                "observed_seconds": observed_seconds,
                 "source_window": "last_7d" if windows.get("last_7d") else "last_5h",
             }
 
@@ -392,6 +398,7 @@ class AuthStatsService:
         candidate_window_limits = []
         quota_snapshot_count = 0
         quota_window_usage_count = 0
+        partial_history_count = 0
         for stat in stats.values():
             quota_window = stat.get("quota_window") or {}
             quota_window_tokens = int(quota_window.get("tokens", 0) or 0)
@@ -403,7 +410,14 @@ class AuthStatsService:
                 quota_window_usage_count += 1
             used_percent = self._number_or_none(bucket.get("used_percent"))
             window_seconds = self._number_or_none(bucket.get("limit_window_seconds")) or 0
-            if quota_window_tokens <= 0 or used_percent is None or used_percent < 1 or window_seconds <= 0:
+            observed_seconds = self._number_or_none(quota_window.get("observed_seconds")) or 0
+            coverage_ratio = observed_seconds / window_seconds if window_seconds else 0
+            # Provider quota percentages describe the whole native window (often 7d),
+            # but v7.1.29 local queue history starts only when Key Portal consumes it.
+            # Do not infer full-account limits from a partial local history window.
+            if quota_window_tokens > 0 and window_seconds > 0 and coverage_ratio < 0.8:
+                partial_history_count += 1
+            if quota_window_tokens <= 0 or used_percent is None or used_percent < 1 or window_seconds <= 0 or coverage_ratio < 0.8:
                 continue
             window_limit = quota_window_tokens / (used_percent / 100)
             daily_limit = window_limit * 86400 / window_seconds
@@ -415,12 +429,18 @@ class AuthStatsService:
                 source_windows.add(quota_window.get("source_window") or ("last_7d" if windows.get("last_7d") else "last_5h"))
         single_account_window_limit = int(round(self._median(candidate_window_limits))) if candidate_window_limits else 0
         single_account_daily_limit = int(round(self._median(candidate_daily_limits))) if candidate_daily_limits else 0
-        total_daily_limit = account_count * single_account_window_limit if single_account_window_limit else 0
+        min_inferred_samples = min(account_count, max(3, math.ceil(account_count * 0.2))) if account_count else 0
+        has_enough_samples = len(candidates) >= min_inferred_samples if min_inferred_samples else False
+        total_daily_limit = account_count * single_account_daily_limit if has_enough_samples and single_account_daily_limit else 0
         usage_ratio = round(today_used_tokens / total_daily_limit, 6) if total_daily_limit else 0
         source = "unavailable"
         inference_status = "success" if candidates else "missing_quota_snapshot"
         if candidates:
             source = "inferred_from_provider_7d_window" if source_windows == {"last_7d"} else "inferred_from_provider_quota_window"
+            if not has_enough_samples:
+                inference_status = "insufficient_sample_size"
+        elif partial_history_count:
+            inference_status = "insufficient_history_coverage"
         elif quota_snapshot_count and not quota_window_usage_count:
             inference_status = "missing_quota_window_usage"
         elif quota_snapshot_count:
@@ -430,20 +450,22 @@ class AuthStatsService:
             "today_used_tokens": today_used_tokens,
             "account_count": account_count,
             "account_count_source": "auth_files",
-            "single_account_daily_token_limit": single_account_window_limit,
+            "single_account_daily_token_limit": single_account_daily_limit,
             "single_account_daily_token_limit_source": source,
             "single_account_window_token_limit": single_account_window_limit,
             "single_account_calendar_daily_token_limit": single_account_daily_limit,
             "total_daily_token_limit": total_daily_limit,
+            "min_inferred_samples": min_inferred_samples,
             "usage_ratio": usage_ratio,
             "usage_percent": round(usage_ratio * 100, 2) if total_daily_limit else 0,
             "inferred_account_count": len(candidates),
-            "inferred_daily_token_limit_min": int(round(min(candidates))) if candidates else 0,
-            "inferred_daily_token_limit_max": int(round(max(candidates))) if candidates else 0,
+            "inferred_daily_token_limit_min": int(round(min(candidate_daily_limits))) if candidate_daily_limits else 0,
+            "inferred_daily_token_limit_max": int(round(max(candidate_daily_limits))) if candidate_daily_limits else 0,
             "configured": bool(total_daily_limit),
             "inferred_source_windows": sorted(source_windows),
             "quota_snapshot_count": quota_snapshot_count,
             "quota_window_usage_count": quota_window_usage_count,
+            "partial_history_count": partial_history_count,
             "inference_status": inference_status,
         }
 
@@ -506,11 +528,26 @@ class AuthStatsService:
         return True
 
     def get_cached(self):
+        now = time.time()
+        with self.stats_cache_lock:
+            cached = self.stats_cache["data"]
+            last_update = self.stats_cache["last_update"]
+            ttl = self.stats_cache["ttl"]
+            refreshing = self.stats_cache["refreshing"]
+            if cached and now - last_update < ttl:
+                return self._with_cache_metadata(cached, now, refreshing)
+        redis_cached = self.portal_state.cache_get_json("auth_stats")
+        if redis_cached:
+            with self.stats_cache_lock:
+                self.stats_cache["data"] = redis_cached
+                self.stats_cache["last_update"] = now
+            return self._with_cache_metadata(redis_cached, now, False)
         data = self.build()
         with self.stats_cache_lock:
             self.stats_cache["data"] = data
             self.stats_cache["last_update"] = time.time()
             self.stats_cache["refreshing"] = False
+        self.portal_state.cache_set_json("auth_stats", data, self.stats_cache["ttl"] * 4)
         return self._with_cache_metadata(data, self.stats_cache["last_update"], False)
 
     def build(self):

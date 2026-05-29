@@ -1255,6 +1255,63 @@ def usage_payload_from_queue_records(records):
     return {"usage": usage, "failed_requests": usage["failure_count"]}
 
 
+def usage_queue_history_cache_key(node_name):
+    return f"usage_queue_history:{node_name}"
+
+
+def usage_queue_record_identity(record):
+    if not isinstance(record, dict):
+        try:
+            record = json.loads(record) if isinstance(record, str) else {}
+        except Exception:
+            record = {}
+    request_id = str(record.get("request_id") or record.get("requestId") or "").strip()
+    if request_id:
+        return f"request:{request_id}"
+    tokens = record.get("tokens") or {}
+    return "|".join([
+        str(record.get("timestamp") or ""),
+        str(record.get("api_key") or ""),
+        str(record.get("auth_index") or ""),
+        str(record.get("model") or record.get("alias") or ""),
+        str(tokens.get("total_tokens") or ""),
+        str(record.get("failed") or ""),
+    ])
+
+
+def prune_usage_queue_history(records, now=None):
+    now = now or datetime.utcnow()
+    hours = max(1, int(getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS", 168) or 168))
+    max_records = max(100, int(getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_MAX_RECORDS", 50000) or 50000))
+    cutoff = now - timedelta(hours=hours)
+    pruned = []
+    for record in records or []:
+        detail = normalize_usage_queue_record(record)
+        if not detail:
+            continue
+        when = parse_detail_time_utc(detail.get("timestamp"))
+        if when and when < cutoff:
+            continue
+        pruned.append(record)
+    return pruned[-max_records:]
+
+
+def update_usage_queue_history(node_name, records):
+    key = usage_queue_history_cache_key(node_name)
+    cached = portal_state.cache_get_json(key) or []
+    by_id = {}
+    ordered = []
+    for record in list(cached if isinstance(cached, list) else []) + list(records or []):
+        identity = usage_queue_record_identity(record)
+        if not identity or identity in by_id:
+            continue
+        by_id[identity] = record
+        ordered.append(record)
+    history = prune_usage_queue_history(ordered)
+    portal_state.cache_set_json(key, history, max(3600, int(getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS", 168) or 168) * 3600))
+    return history
+
+
 def call_usage_queue_node(node, count=None, timeout=10):
     count = max(1, int(count or getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_COUNT", 1000)))
     return call_management_api_node(node, "GET", f"/v0/management/usage-queue?count={count}", timeout=timeout)
@@ -1289,10 +1346,11 @@ def merge_usage_queue_results(results):
             converted.append((node_name, None, err))
             continue
         records = payload if isinstance(payload, list) else []
-        node_payload = usage_payload_from_queue_records(records)
+        history = update_usage_queue_history(node_name, records)
+        node_payload = usage_payload_from_queue_records(history)
         converted.append((node_name, node_payload, None))
     merged = merge_usage_payloads(converted)
-    merged["source"] = "cliproxy_usage_queue"
+    merged["source"] = "cliproxy_usage_queue_history"
     return merged
 
 

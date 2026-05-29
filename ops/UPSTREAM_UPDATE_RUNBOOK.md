@@ -110,6 +110,95 @@ curl -sS -H 'Authorization: Bearer smoke-api-key' "http://127.0.0.1:$PORT/v1/mod
 curl -sS -H 'X-Management-Key: smoke-management-key' "http://127.0.0.1:$PORT/v0/management/usage-queue?count=1"
 ```
 
+## Post-upgrade regression test suite
+
+Run this suite after every upstream rebase/merge and before declaring the runtime upgrade complete. Keep all tests low-volume; never print full API keys in logs or chat.
+
+### 1. Core and overlay invariants
+
+| Test | Command | Expected |
+|---|---|---|
+| Upstream core is clean | `git diff --name-only origin/main -- . ':(exclude)key-portal/**' ':(exclude)ops/**'` | no output |
+| Key Portal imports | `python3 -m py_compile key-portal/app.py key-portal/config.py key-portal/auth_stats_service.py key-portal/snapshot.py key-portal/usage_sync.py key-portal/status_events.py` | exit 0 |
+| Key Portal unit tests | `PYTHONPATH=key-portal python3 -m unittest key-portal/test_usage_stats.py` | all pass |
+| Go tests/build | `go test ./... && go build -o /tmp/cliproxyapi-next-check ./cmd/server` | exit 0 |
+
+### 2. Runtime health checks
+
+Run on each active node after rollout. As of 2026-05-29 the active set is node-a, node-b, node-c.
+
+| Test | node-a command | node-b/node-c command pattern | Expected |
+|---|---|---|---|
+| Service active | `systemctl is-active cliproxyapi.service` | `ssh -i ~/.ssh/cluster-key ec2-user@HOST 'systemctl is-active cliproxyapi.service'` | `active` |
+| Health endpoint | `curl -fsS http://127.0.0.1:8317/healthz` | `ssh -i ~/.ssh/cluster-key ec2-user@HOST 'curl -fsS http://127.0.0.1:8317/healthz'` | HTTP 200 / healthy body |
+| Usage queue present | `curl -sS -H 'X-Management-Key: admin123' 'http://127.0.0.1:8317/v0/management/usage-queue?count=1'` | same via SSH | HTTP 200 JSON array |
+| Auth-file API reachable | `curl -sS -H 'X-Management-Key: admin123' 'http://127.0.0.1:8317/v0/management/auth-files'` | same via SSH | HTTP 200 JSON with `files` |
+
+Do not inspect or modify auth files on disk; only use management APIs.
+
+### 3. Key Portal regression checks
+
+| Test | Command / page | Expected |
+|---|---|---|
+| Portal process active | `systemctl is-active key-portal.service` | `active` |
+| Admin auth-stats page loads | `https://token.zasdas.com/admin/auth-stats` | page renders without node 404 errors |
+| Auth-stats API stable | Call `/api/auth-stats` twice within 15 seconds while authenticated | second call should use cache/keep stable counters, not consume a fresh destructive queue sample |
+| Node traffic windows | Auth-stats “按节点看流量” | 1h/5h/24h/7d should be monotonic by window size after enough queue history accumulates; do not accept identical tiny counts caused only by one queue read |
+| Quota estimate guard | Auth-stats “今日预估额度消耗” | must not show huge percentages from partial queue history; show sample/history-insufficient state until local history covers enough provider window |
+| Usage summary | `/api/usage-summary` while authenticated | `summary_sources` should prefer `litellm_spendlogs` when LiteLLM PG is available |
+
+### 4. Public model-routing matrix
+
+Run from the formal public entrypoint, not from a private localhost port:
+
+```text
+https://token.zasdas.com/v1/...
+```
+
+Use low-token prompts, mask keys in logs, and record only key type, endpoint, model, HTTP status, and error type.
+
+| Key type | Endpoint | Model | stream | Expected |
+|---|---|---|---:|---|
+| common / GPT | `/v1/chat/completions` | `gpt-5.5` | false | 200 |
+| common / GPT | `/v1/chat/completions` | `claude-opus-4-6` | false | 200; GPT-backed Claude-compatible route |
+| common / GPT | `/v1/chat/completions` | `bedrock-claude-opus-4-6` | false | 401/403 `key_model_access_denied` |
+| common / GPT | `/v1/chat/completions` | `deepseek-chat` | false | 401/403 `key_model_access_denied` |
+| Claude | `/v1/chat/completions` | `claude-opus-4-6` | false | 200; real Claude/Bedrock route |
+| Claude | `/v1/chat/completions` | `claude-sonnet-4-6` | false | 200; real Claude/Bedrock route |
+| Claude | `/v1/chat/completions` | `bedrock-claude-opus-4-6` | false | 401/403 `key_model_access_denied`; internal model name must not be user-facing |
+| Claude | `/v1/chat/completions` | `claude-opus-4-7` | false | 401/403/unsupported until Bedrock actually supports it; must not silently downgrade to 4.6 |
+| DeepSeek | `/v1/chat/completions` | `deepseek-chat` | false | 200 |
+
+### 5. Bedrock regression matrix
+
+Claude-key Bedrock regression must cover OpenAI Chat Completions and Anthropic Messages, both streaming and non-streaming.
+
+| Endpoint | Model | stream | Expected |
+|---|---|---:|---|
+| `/v1/chat/completions` | `claude-opus-4-6` | false | 200 |
+| `/v1/chat/completions` | `claude-opus-4-6` | true | 200, valid SSE stream |
+| `/v1/messages?beta=true` | `claude-opus-4-6` | false | 200 |
+| `/v1/messages?beta=true` | `claude-opus-4-6` | true | 200, valid Anthropic Messages SSE stream |
+
+Recommended minimal payloads:
+
+```json
+{"model":"claude-opus-4-6","messages":[{"role":"user","content":"Return exactly: ok"}],"max_tokens":8,"stream":false}
+```
+
+For `/v1/messages?beta=true`, use the same message structure and toggle `stream` for the streaming case.
+
+### 6. Known follow-up from 2026-05-29 regression run
+
+The 2026-05-29 Bedrock run passed the main Bedrock path but exposed two policy regressions:
+
+| Case | Expected | Observed on 2026-05-29 |
+|---|---|---|
+| Claude key requesting `bedrock-claude-opus-4-6` directly | 401/403 | 200 |
+| Claude key requesting `claude-opus-4-7` | 401/403/unsupported | 200 |
+
+Treat these as failures in future upgrade validation until the model allowlist/alias policy is tightened or the architecture document is intentionally updated.
+
 ## Next upstream update procedure
 
 1. Fetch upstream:

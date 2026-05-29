@@ -792,6 +792,7 @@
             const accountCount = Number(q?.account_count || 0);
             const dailyLimit = Number(q?.single_account_daily_token_limit || 0);
             const inferredCount = Number(q?.inferred_account_count || 0);
+            const minSamples = Number(q?.min_inferred_samples || 0);
             const minLimit = Number(q?.inferred_daily_token_limit_min || 0);
             const maxLimit = Number(q?.inferred_daily_token_limit_max || 0);
             const sourceWindows = Array.isArray(q?.inferred_source_windows) ? q.inferred_source_windows : [];
@@ -800,19 +801,27 @@
                 : '';
             const quotaSnapshotCount = Number(q?.quota_snapshot_count || 0);
             const quotaWindowUsageCount = Number(q?.quota_window_usage_count || 0);
+            const partialHistoryCount = Number(q?.partial_history_count || 0);
+            const inferenceStatus = q?.inference_status || '';
+            const insufficientSamples = inferenceStatus === 'insufficient_sample_size';
+            const insufficientHistory = inferenceStatus === 'insufficient_history_coverage';
             const percentClass = configured && percent >= 90 ? 'danger' : (configured && percent >= 70 ? 'warn' : '');
             const sourceText = configured
                 ? `${formatNumberFull(accountCount)} 个认证文件 · 单号日额度 ${formatCompactNumber(dailyLimit)}`
-                : `${formatNumberFull(accountCount)} 个认证文件 · 额度快照 ${formatNumberFull(quotaSnapshotCount)} 个`;
-            const statusText = q?.inference_status === 'missing_quota_window_usage'
-                ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但本地窗口用量不足`
-                : (q?.inference_status === 'insufficient_quota_window_percent'
-                    ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但缺少有效占用百分比`
-                    : `proxy 认证文件列表未返回额度快照，当前快照样本 ${formatNumberFull(quotaSnapshotCount)} 个`);
+                : `${formatNumberFull(accountCount)} 个认证文件 · 暂不推算单号日额度`;
+            const statusText = insufficientSamples
+                ? `有效推算样本 ${formatNumberFull(inferredCount)} 个，低于最低 ${formatNumberFull(minSamples)} 个；暂不推算总额度占用`
+                : (insufficientHistory
+                    ? `本地用量历史只覆盖了 ${formatNumberFull(partialHistoryCount)} 个账号的部分窗口；需要先积累接近完整额度窗口后再推算总额度占用`
+                    : (inferenceStatus === 'missing_quota_window_usage'
+                        ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但本地窗口用量不足`
+                        : (inferenceStatus === 'insufficient_quota_window_percent'
+                            ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但缺少有效占用百分比`
+                            : `proxy 认证文件列表未返回可推算额度快照，当前快照样本 ${formatNumberFull(quotaSnapshotCount)} 个`)));
             const inferredText = configured
-                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${sourceWindowText}${minLimit && maxLimit ? ` · 单号范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
+                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${sourceWindowText}${minLimit && maxLimit ? ` · 单号日额度范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
                 : `${statusText}；不由 Key Portal 主动查询 provider 原生额度`;
-            const totalDisplay = configured ? formatPercent(percent) : `${formatNumberFull(quotaSnapshotCount)} 快照`;
+            const totalDisplay = configured ? formatPercent(percent) : '样本不足';
             const totalHint = configured ? `${formatCompactNumber(used)} / ${formatCompactNumber(total)}` : statusText;
             return `<div class="node-card">
                 <h3>今日预估额度消耗 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
@@ -829,8 +838,8 @@
                     </div>
                 </div>
                 <div class="node-mini-grid">
-                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)} / 快照 ${formatNumberFull(quotaSnapshotCount)}</strong></div>
-                    <div class="node-mini"><span>窗口用量</span><strong>${formatNumberFull(quotaWindowUsageCount)}</strong></div>
+                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)} / 最低 ${formatNumberFull(minSamples)}</strong></div>
+                    <div class="node-mini"><span>额度快照 / 窗口用量</span><strong>${formatNumberFull(quotaSnapshotCount)} / ${formatNumberFull(quotaWindowUsageCount)}</strong></div>
                     <div class="node-mini"><span>推算说明</span><strong title="${escapeHtml(inferredText)}">${escapeHtml(inferredText)}</strong></div>
                 </div>
             </div>`;
@@ -963,7 +972,9 @@
             const fill = windowTotalRequests > 0 ? clampPercent(requests / windowTotalRequests * 100) : 0;
             const failLevel = nodeFailureClass(bucket?.failure_rate);
             const authCount = mode === 'node' ? Number(item?.auth_files || item?.active || 0) : 0;
-            const avgText = authCount > 0 ? `每认证平均 ${formatNumberFull(Math.round(requests / authCount))} 请求` : '';
+            const avgPerAuth = authCount > 0 ? requests / authCount : 0;
+            const avgDisplay = avgPerAuth > 0 && avgPerAuth < 1 ? '<1' : formatNumberFull(Math.round(avgPerAuth));
+            const avgText = authCount > 0 ? `每认证平均 ${avgDisplay} 请求` : '';
             const fillText = mode === 'node' ? `占集群 ${formatQuotaPercent(fill)}` : `占列表 ${formatQuotaPercent(fill)}`;
             const totalLabel = mode === 'node' ? '节点合计' : '认证文件';
             const detailTitle = `数据口径：${totalLabel}请求数为加和值，不是最大值；进度条表示该行请求数占当前窗口列表总请求数的比例 ${formatQuotaPercent(fill)}。请求 ${formatNumberFull(requests)} / 总请求 ${formatNumberFull(windowTotalRequests)} · Tokens ${formatNumberFull(tokens)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}${avgText ? ' · ' + avgText : ''} · ${tokenBreakdownText(bucket)}`;
