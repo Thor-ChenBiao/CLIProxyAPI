@@ -512,8 +512,7 @@
             document.querySelector('.tab[onclick="showTab(\'' + name + '\')"]').classList.add('active');
             document.getElementById(name).classList.add('active');
             if (name === 'report') {
-                loadPersonalUsageSummary();
-                if (!usageSocketConnected) startPersonalUsageSummaryPolling();
+                startPersonalUsageSummaryPolling();
                 loadUsage().then(() => {
                     setTimeout(() => {
                         renderChart();
@@ -673,25 +672,11 @@
 
         // Smooth flowing counter effect
         const counterState = {};
-        const COUNTER_RATE_PROJECTION_MS = 2500;
-        const COUNTER_MAX_LEAD_RATIO = 0.001;
-        const COUNTER_MIN_LEAD = 10000;
         let counterAnimationFrame = null;
-        let counterRateSnapshot = null;
-
-        function currentCounterDisplay(elementId) {
-            const state = counterState[elementId];
-            return state ? state.display : null;
-        }
 
         function counterFormatter(elementId) {
             const isFullCounter = ['todayTokenCounter', 'todayRequestCounter', 'myTodayTokenCounter', 'myTodayRequestCounter'].includes(elementId);
             return isFullCounter ? formatNumberFull : formatNumber;
-        }
-
-        function counterLeadCap(anchorValue) {
-            const anchor = Math.max(0, Number(anchorValue || 0));
-            return Math.max(COUNTER_MIN_LEAD, anchor * COUNTER_MAX_LEAD_RATIO);
         }
 
         function updateCountersFrame() {
@@ -702,10 +687,6 @@
                 if (!el) return;
                 const deltaSeconds = Math.min((now - state.lastUpdate) / 1000, 0.08);
                 state.lastUpdate = now;
-                if (state.ratePerSecond > 0 && now < state.rateExpiresAt) {
-                    const projected = state.target + state.ratePerSecond * deltaSeconds;
-                    state.target = Math.min(projected, state.anchor + counterLeadCap(state.anchor));
-                }
                 const diff = state.target - state.display;
                 const absDiff = Math.abs(diff);
                 if (absDiff <= 0.75) {
@@ -720,34 +701,22 @@
             counterAnimationFrame = active ? requestAnimationFrame(updateCountersFrame) : null;
         }
 
-        function animateCounter(elementId, targetValue, ratePerSecond = 0) {
+        function animateCounter(elementId, targetValue) {
             const el = document.getElementById(elementId);
             if (!el) return;
             const target = Number(targetValue || 0);
-            const rate = Math.max(0, Number(ratePerSecond || 0));
-            const now = performance.now();
-            const projectedTarget = Math.min(target + rate * (COUNTER_RATE_PROJECTION_MS / 1000), target + counterLeadCap(target));
             const existing = counterState[elementId];
             if (!existing) {
                 counterState[elementId] = {
                     display: target,
-                    target: projectedTarget,
-                    anchor: target,
-                    ratePerSecond: rate,
-                    rateExpiresAt: now + COUNTER_RATE_PROJECTION_MS,
-                    lastUpdate: now
+                    target,
+                    lastUpdate: performance.now()
                 };
                 el.textContent = counterFormatter(elementId)(Math.round(target));
                 return;
             }
-            existing.anchor = target;
-            existing.target = projectedTarget;
-            if (existing.display > target + counterLeadCap(target)) {
-                existing.display = target;
-            }
-            existing.ratePerSecond = rate;
-            existing.rateExpiresAt = now + COUNTER_RATE_PROJECTION_MS;
-            existing.lastUpdate = now;
+            existing.target = target;
+            existing.lastUpdate = performance.now();
             if (!counterAnimationFrame) {
                 counterAnimationFrame = requestAnimationFrame(updateCountersFrame);
             }
@@ -763,7 +732,6 @@
         let lastUsageSummary = { today: '', today_tokens: 0, today_requests: 0, total_tokens: 0, total_requests: 0, success_count: 0, failure_count: 0 };
         let personalUsagePollTimer = null;
         let personalUsageLoading = false;
-        let personalRateSnapshot = null;
         let speedLeaderboardPollTimer = null;
         let speedLeaderboardLoading = false;
         let speedLeaderboardData = null;
@@ -812,20 +780,16 @@
             socket.on('connect', () => {
                 console.log('[WebSocket] Connected');
                 usageSocketConnected = true;
-                stopUsageSummaryPolling();
+                startUsageSummaryPolling();
                 if (document.getElementById('report')?.classList.contains('active')) {
-                    stopPersonalUsageSummaryPolling();
-                    loadPersonalUsageSummary();
+                    startPersonalUsageSummaryPolling();
                 }
                 loadSpeedLeaderboard();
             });
 
             socket.on('usage_update', (data) => {
                 console.log('[WebSocket] Usage update:', data);
-                applyUsageSummary(data);
-                if (document.getElementById('report')?.classList.contains('active')) {
-                    loadPersonalUsageSummary();
-                }
+                loadUsageSummary();
             });
 
             socket.on('disconnect', () => {
@@ -838,7 +802,7 @@
             });
 
             setTimeout(() => {
-                if (!usageSocketConnected) startUsageSummaryPolling();
+                startUsageSummaryPolling();
             }, 5000);
         } else {
             startUsageSummaryPolling();
@@ -861,26 +825,6 @@
             const todayTokens = Number(data.today_tokens || 0);
             const todayRequests = Number(data.today_requests || 0);
             const tokenBreakdown = data.token_breakdown || lastUsageSummary.token_breakdown || {};
-            const nowMs = performance.now();
-            const previousSnapshot = counterRateSnapshot;
-            const elapsedSeconds = previousSnapshot ? Math.max((nowMs - previousSnapshot.at) / 1000, 0.001) : 0;
-            const rateFor = (key, value) => {
-                if (!previousSnapshot || elapsedSeconds <= 0) return 0;
-                return Math.max(0, (Number(value || 0) - Number(previousSnapshot[key] || 0)) / elapsedSeconds);
-            };
-            const rates = {
-                today_tokens: rateFor('today_tokens', todayTokens),
-                total_tokens: rateFor('total_tokens', totalTokens),
-                today_requests: rateFor('today_requests', todayRequests),
-                total_requests: rateFor('total_requests', totalRequests)
-            };
-            counterRateSnapshot = {
-                at: nowMs,
-                today_tokens: todayTokens,
-                total_tokens: totalTokens,
-                today_requests: todayRequests,
-                total_requests: totalRequests
-            };
             lastUsageSummary = {
                 today,
                 today_tokens: todayTokens,
@@ -891,10 +835,10 @@
                 failure_count: failureCount,
                 token_breakdown: tokenBreakdown
             };
-            animateCounter('todayTokenCounter', todayTokens, rates.today_tokens);
-            animateCounter('totalTokenCounter', totalTokens, rates.total_tokens);
-            animateCounter('todayRequestCounter', todayRequests, rates.today_requests);
-            animateCounter('totalRequestCounter', totalRequests, rates.total_requests);
+            animateCounter('todayTokenCounter', todayTokens);
+            animateCounter('totalTokenCounter', totalTokens);
+            animateCounter('todayRequestCounter', todayRequests);
+            animateCounter('totalRequestCounter', totalRequests);
             setElementText('todayTokenBreakdown', tokenBreakdownText(tokenBreakdown.today));
             setElementText('totalTokenBreakdown', tokenBreakdownText(tokenBreakdown.total));
             setElementText('todayTokenCost', tokenCostText(tokenBreakdown.today));
@@ -907,30 +851,10 @@
             const todayTokens = Number(data.today_tokens || 0);
             const todayRequests = Number(data.today_requests || 0);
             const tokenBreakdown = data.token_breakdown || {};
-            const nowMs = performance.now();
-            const previousSnapshot = personalRateSnapshot;
-            const elapsedSeconds = previousSnapshot ? Math.max((nowMs - previousSnapshot.at) / 1000, 0.001) : 0;
-            const rateFor = (key, value) => {
-                if (!previousSnapshot || elapsedSeconds <= 0) return 0;
-                return Math.max(0, (Number(value || 0) - Number(previousSnapshot[key] || 0)) / elapsedSeconds);
-            };
-            const rates = {
-                today_tokens: rateFor('today_tokens', todayTokens),
-                total_tokens: rateFor('total_tokens', totalTokens),
-                today_requests: rateFor('today_requests', todayRequests),
-                total_requests: rateFor('total_requests', totalRequests)
-            };
-            personalRateSnapshot = {
-                at: nowMs,
-                today_tokens: todayTokens,
-                total_tokens: totalTokens,
-                today_requests: todayRequests,
-                total_requests: totalRequests
-            };
-            animateCounter('myTodayTokenCounter', todayTokens, rates.today_tokens);
-            animateCounter('myTotalTokenCounter', totalTokens, rates.total_tokens);
-            animateCounter('myTodayRequestCounter', todayRequests, rates.today_requests);
-            animateCounter('myTotalRequestCounter', totalRequests, rates.total_requests);
+            animateCounter('myTodayTokenCounter', todayTokens);
+            animateCounter('myTotalTokenCounter', totalTokens);
+            animateCounter('myTodayRequestCounter', todayRequests);
+            animateCounter('myTotalRequestCounter', totalRequests);
             setElementText('myTodayTokenBreakdown', tokenBreakdownText(tokenBreakdown.today));
             setElementText('myTotalTokenBreakdown', tokenBreakdownText(tokenBreakdown.total));
             setElementText('myTodayTokenCost', tokenCostText(tokenBreakdown.today));
@@ -955,7 +879,7 @@
         function startPersonalUsageSummaryPolling() {
             if (personalUsagePollTimer) return;
             loadPersonalUsageSummary();
-            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 30000);
+            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 1000);
         }
 
         function stopPersonalUsageSummaryPolling() {
@@ -1762,7 +1686,7 @@
         function startUsageSummaryPolling() {
             if (usageSummaryPollTimer) return;
             loadUsageSummary();
-            usageSummaryPollTimer = setInterval(loadUsageSummary, 30000);
+            usageSummaryPollTimer = setInterval(loadUsageSummary, 1000);
         }
 
         function stopUsageSummaryPolling() {

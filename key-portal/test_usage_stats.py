@@ -1,5 +1,7 @@
 import os
+import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -236,6 +238,51 @@ class AuthStatsTests(unittest.TestCase):
 
 
 
+class LiteLLMKeyTotalsTests(unittest.TestCase):
+    def test_key_totals_filter_spend_rows_before_portal_key_creation(self):
+        captured = {}
+
+        class FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql):
+                if '"LiteLLM_SpendLogs"' in sql:
+                    captured["sql"] = sql
+
+            def fetchone(self):
+                return [{}]
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def cursor(self):
+                return FakeCursor()
+
+        fake_psycopg = types.SimpleNamespace(connect=lambda *args, **kwargs: FakeConnection())
+        entry = {
+            "key": "sk-test",
+            "label": "test-label",
+            "model_group": "common",
+            "created_at": "2026-05-24T06:25:09Z",
+        }
+
+        with patch.dict(sys.modules, {"psycopg": fake_psycopg}), \
+             patch.object(portal_app, "litellm_psycopg_database_url", return_value="postgresql://example/db"):
+            portal_app._litellm_key_totals_for_entries_uncached("u@example.com", [entry])
+
+        self.assertIn("created_at_utc", captured["sql"])
+        self.assertIn('s."endTime" >= key_tokens.created_at_utc', captured["sql"])
+        self.assertIn("2026-05-24 06:25:09.000000", captured["sql"])
+
+
 class FlaskSmokeTests(unittest.TestCase):
     def test_read_only_usage_routes(self):
         with portal_app.app.test_client() as client, \
@@ -413,7 +460,8 @@ class FlaskSmokeTests(unittest.TestCase):
         with portal_app.app.test_client() as client, \
              patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
              patch.object(portal_app, "load_user_keys", return_value=user_data), \
-             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batch_rows):
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batch_rows), \
+             patch.object(portal_app, "litellm_user_key_totals", return_value=[]):
             response = client.post("/api/my-keys", json={})
 
         self.assertEqual(response.status_code, 200)
@@ -452,7 +500,8 @@ class FlaskSmokeTests(unittest.TestCase):
         with portal_app.app.test_client() as client, \
              patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
              patch.object(portal_app, "load_user_keys", return_value=user_data), \
-             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batched):
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batched), \
+             patch.object(portal_app, "litellm_user_key_totals", return_value=[]):
             response = client.post("/api/my-keys", json={})
 
         self.assertEqual(response.status_code, 200)
@@ -463,6 +512,45 @@ class FlaskSmokeTests(unittest.TestCase):
         self.assertEqual(payload["keys"][0]["total_tokens"], 2193870)
         self.assertEqual(payload["keys"][0]["today_tokens"], 2326372)
         self.assertEqual(payload["keys"][0]["last_used_at"], "2026-05-26T08:00:00Z")
+
+    def test_my_keys_includes_identity_usage_key_not_registered_in_portal(self):
+        user_data = {
+            "users": {"u@example.com": {"name": "User", "api_keys": ["sk-portal"]}},
+            "keys": {"sk-portal": {"email": "u@example.com", "label": "portal", "model_group": "common"}},
+        }
+        batched = {"sk-portal": {"total_requests": 0, "total_tokens": 0}}
+        identity_rows = [{
+            "api_key": "hashed-token",
+            "key_id": "common:usr_pool_0181_d2ba19660001",
+            "key_label": "common:usr_pool_0181_d2ba19660001",
+            "total_requests": 86,
+            "total_tokens": 8820992,
+            "input_tokens": 8800000,
+            "output_tokens": 20992,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "spend_usd": 1.2,
+            "today_requests": 86,
+            "today_tokens": 8820992,
+            "last_used_at": "2026-06-02T16:24:24Z",
+        }]
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value=batched), \
+             patch.object(portal_app, "litellm_user_key_totals", return_value=identity_rows):
+            response = client.post("/api/my-keys", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        by_key = {item["key"]: item for item in payload["keys"]}
+        self.assertIn("common:usr_pool_0181_d2ba19660001", by_key)
+        pool_key = by_key["common:usr_pool_0181_d2ba19660001"]
+        self.assertEqual(pool_key["today_requests"], 86)
+        self.assertEqual(pool_key["today_tokens"], 8820992)
+        self.assertFalse(pool_key["can_revoke"])
+        self.assertTrue(pool_key["synthetic_usage_key"])
+        self.assertEqual(payload["user_today_tokens"], 8820992)
 
     def test_user_keys_returns_litellm_totals_matched_by_alias_and_keeps_unmatched_zero(self):
         user_data = {

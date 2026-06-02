@@ -56,15 +56,33 @@ _stats_cache = {
 _usage_summary_cache = {
     "data": None,
     "last_update": 0,
-    "ttl": 1
+    "ttl": 1,
+    "full_refresh_interval": 60,
+    "refreshing": False,
 }
 _usage_summary_cache_lock = threading.Lock()
 
 _user_usage_summary_cache = {
     "data": {},
-    "ttl": 2,
+    "ttl": 1,
 }
 _user_usage_summary_cache_lock = threading.Lock()
+
+_key_totals_cache = {
+    "data": {},
+    "ttl": 120,
+    "stale_ttl": 900,
+    "refreshing": {},
+}
+_key_totals_cache_lock = threading.Lock()
+
+_litellm_user_key_totals_cache = {
+    "data": {},
+    "ttl": 5,
+    "stale_ttl": 120,
+    "refreshing": {},
+}
+_litellm_user_key_totals_cache_lock = threading.Lock()
 
 _realtime_speed_cache = {
     "data": {},
@@ -85,7 +103,7 @@ _realtime_speed_snapshot_cache_lock = threading.Lock()
 _litellm_usage_cache = {
     "data": None,
     "last_update": 0,
-    "ttl": 10,
+    "ttl": 60,
 }
 _litellm_usage_cache_lock = threading.Lock()
 
@@ -1467,32 +1485,18 @@ def litellm_psql_json(sql, timeout=15):
     database_url = litellm_psycopg_database_url()
     if not database_url:
         return None
-    try:
-        result = subprocess.run(
-            ["psql", database_url, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode == 0:
-            return json.loads((result.stdout or "").strip() or "null")
-    except FileNotFoundError:
-        pass
-    except Exception:
-        return None
-
+    query_timeout = max(1, min(int(timeout or 15), 180))
     try:
         import psycopg
-        with psycopg.connect(database_url, connect_timeout=max(1, min(int(timeout or 15), 30))) as conn:
+        with psycopg.connect(database_url, connect_timeout=max(1, min(query_timeout, 30))) as conn:
             with conn.cursor() as cursor:
+                cursor.execute(f"SET LOCAL statement_timeout = {int(query_timeout * 1000)}")
                 cursor.execute(sql)
                 row = cursor.fetchone()
                 return row[0] if row else None
     except Exception as e:
         print(f"[LiteLLM] Database query unavailable: {e}")
         return None
-
 
 def _sql_literal(value):
     return "'" + str(value or "").replace("'", "''") + "'"
@@ -1855,7 +1859,7 @@ SELECT json_build_object(
     return payload
 
 
-def litellm_user_key_totals(email, keys=None):
+def _litellm_user_key_totals_uncached(email, keys=None):
     clauses = []
     identity = litellm_spend_identity_sql()
     if email:
@@ -1863,10 +1867,26 @@ def litellm_user_key_totals(email, keys=None):
     key_clause = litellm_keys_match_sql(keys)
     if key_clause:
         clauses.append(key_clause)
+    if not keys:
+        clauses.append("s.\"endTime\" >= now() - interval '30 days'")
     where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
     today = _sql_literal(beijing_today())
+    limit_sql = "" if keys else "LIMIT 80"
+    full_history_sql = "true" if keys else "false"
     sql = f"""
-WITH rows AS (
+WITH bounds AS (
+    SELECT
+        ({today}::date::timestamp - interval '8 hours') AS today_start_utc,
+        ({today}::date::timestamp + interval '16 hours') AS tomorrow_start_utc
+), recent_key_ids AS MATERIALIZED (
+    SELECT s.api_key, max(s."endTime") AS last_used_at
+    FROM "LiteLLM_SpendLogs" s
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
+    {where_sql}
+    GROUP BY s.api_key
+    ORDER BY last_used_at DESC
+    {limit_sql}
+), rows AS (
     SELECT
         s.api_key,
         coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
@@ -1879,21 +1899,72 @@ WITH rows AS (
         coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint AS cached_tokens,
         coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens,
         coalesce(sum(s.spend), 0)::float8 AS spend_usd,
-        count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours'))::bigint AS today_requests,
-        coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_tokens,
-        coalesce(sum(s.prompt_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_input_tokens,
-        coalesce(sum(s.completion_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_output_tokens,
-        coalesce(sum({litellm_cached_tokens_sql()}) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_cached_tokens,
-        coalesce(sum(s.spend) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8 AS today_spend_usd,
-        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_reasoning_tokens
-    FROM "LiteLLM_SpendLogs" s
-    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
-    {where_sql}
+        count(*) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc)::bigint AS today_requests,
+        coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc), 0)::bigint AS today_tokens,
+        coalesce(sum(s.prompt_tokens) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc), 0)::bigint AS today_input_tokens,
+        coalesce(sum(s.completion_tokens) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc), 0)::bigint AS today_output_tokens,
+        coalesce(sum({litellm_cached_tokens_sql()}) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc), 0)::bigint AS today_cached_tokens,
+        coalesce(sum(s.spend) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc), 0)::float8 AS today_spend_usd,
+        coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc), 0)::bigint AS today_reasoning_tokens,
+        max(s."endTime") AS last_used_at,
+        max(s."endTime") FILTER (WHERE s."endTime" >= bounds.today_start_utc AND s."endTime" < bounds.tomorrow_start_utc) AS today_last_used_at
+    FROM recent_key_ids k
+    JOIN "LiteLLM_SpendLogs" s ON s.api_key = k.api_key
+    LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token, bounds
+    WHERE ({full_history_sql} OR s."endTime" >= now() - interval '30 days')
     GROUP BY 1, 2, 3, 4
 )
-SELECT coalesce(json_agg(row_to_json(rows) ORDER BY total_tokens DESC), '[]'::json) FROM rows;
+SELECT coalesce(json_agg(row_to_json(rows) ORDER BY last_used_at DESC NULLS LAST), '[]'::json) FROM rows;
 """
-    return litellm_psql_json(sql, timeout=30) or []
+    return litellm_psql_json(sql, timeout=12) or []
+
+
+def _refresh_litellm_user_key_totals_cache(cache_key, email, normalized_keys):
+    try:
+        payload = _litellm_user_key_totals_uncached(email, normalized_keys)
+        if isinstance(payload, list):
+            with _litellm_user_key_totals_cache_lock:
+                _litellm_user_key_totals_cache["data"][cache_key] = {"data": payload, "last_update": time.time()}
+    finally:
+        with _litellm_user_key_totals_cache_lock:
+            _litellm_user_key_totals_cache["refreshing"].pop(cache_key, None)
+
+
+def litellm_user_key_totals(email, keys=None):
+    email = _normalize_email(email)
+    normalized_keys = sorted({str(key or "").strip() for key in (keys or []) if str(key or "").strip()})
+    cache_key = email + ":" + hashlib.sha1(json.dumps(normalized_keys, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    now = time.time()
+    stale = None
+    should_refresh = False
+    with _litellm_user_key_totals_cache_lock:
+        cached = _litellm_user_key_totals_cache["data"].get(cache_key)
+        if cached:
+            age = now - cached["last_update"]
+            if age < _litellm_user_key_totals_cache["ttl"]:
+                return list(cached["data"])
+            if age < _litellm_user_key_totals_cache["stale_ttl"]:
+                stale = list(cached["data"])
+        if stale is not None and cache_key not in _litellm_user_key_totals_cache["refreshing"]:
+            _litellm_user_key_totals_cache["refreshing"][cache_key] = now
+            should_refresh = True
+
+    if should_refresh:
+        threading.Thread(
+            target=_refresh_litellm_user_key_totals_cache,
+            args=(cache_key, email, normalized_keys),
+            daemon=True,
+        ).start()
+        return stale
+
+    payload = _litellm_user_key_totals_uncached(email, normalized_keys)
+    if isinstance(payload, list):
+        with _litellm_user_key_totals_cache_lock:
+            _litellm_user_key_totals_cache["data"][cache_key] = {"data": payload, "last_update": time.time()}
+        return payload
+    if cached:
+        return list(cached["data"])
+    return []
 
 
 def litellm_key_total(api_key, email=""):
@@ -1901,7 +1972,65 @@ def litellm_key_total(api_key, email=""):
     return rows.get(str(api_key or "").strip(), {})
 
 
-def litellm_key_totals_for_entries(email, key_entries):
+def synthetic_litellm_key_entry(row):
+    row = row or {}
+    key_id = str(row.get("key_id") or row.get("key_label") or row.get("api_key") or "").strip()
+    if not key_id:
+        return None
+    if ":" in key_id:
+        prefix, label = key_id.split(":", 1)
+        model_group = normalize_model_group(prefix)
+    else:
+        label = key_id
+        model_group = normalize_model_group(row.get("model_group") or "common")
+    return {
+        "key": key_id,
+        "label": label or key_id,
+        "model_group": model_group,
+        "source": "litellm_spendlogs",
+        "synthetic_usage_key": True,
+        "created_at": "",
+    }
+
+
+def merge_litellm_identity_usage_keys(email, key_entries, key_totals=None):
+    key_entries = [dict(entry) for entry in (key_entries or []) if entry]
+    existing = set()
+    for entry in key_entries:
+        api_key = str(entry.get("key") or "").strip()
+        label = str(entry.get("label") or "").strip()
+        model_group = normalize_model_group(entry.get("model_group") or "common")
+        if api_key:
+            existing.add(api_key)
+            existing.add(_litellm_token_hash(api_key))
+        if label:
+            existing.add(label)
+            existing.add(f"{model_group}:{label}")
+    key_totals = dict(key_totals or {})
+    for row in key_totals.values():
+        if not isinstance(row, dict):
+            continue
+        for field in ("api_key", "key_id", "key_label"):
+            value = str(row.get(field) or "").strip()
+            if value:
+                existing.add(value)
+    for row in litellm_user_key_totals(email) or []:
+        row_keys = {
+            str(row.get(field) or "").strip()
+            for field in ("api_key", "key_id", "key_label")
+            if str(row.get(field) or "").strip()
+        }
+        entry = synthetic_litellm_key_entry(row)
+        if not entry or entry["key"] in existing or row_keys.intersection(existing):
+            continue
+        existing.add(entry["key"])
+        existing.update(row_keys)
+        key_entries.append(entry)
+        key_totals.setdefault(entry["key"], row)
+    return key_entries, key_totals
+
+
+def _litellm_key_totals_for_entries_uncached(email, key_entries):
     email = _normalize_email(email)
     values = []
     seen = set()
@@ -1913,43 +2042,44 @@ def litellm_key_totals_for_entries(email, key_entries):
         label = str(entry.get("label") or "").strip()
         model_group = normalize_model_group(entry.get("model_group", "common"))
         alias = f"{model_group}:{label}" if label else ""
-        values.append("(" + ",".join(_sql_literal(item) for item in (api_key, _litellm_token_hash(api_key), label, alias)) + ")")
+        created_at = ""
+        created_at_dt = parse_detail_time_utc(entry.get("created_at")) if entry.get("created_at") else None
+        if created_at_dt:
+            created_at = created_at_dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+        values.append("(" + ",".join(_sql_literal(item) for item in (api_key, _litellm_token_hash(api_key), label, alias, created_at)) + ")")
     if not values:
         return {}
-    identity = litellm_spend_identity_sql()
-    email_clause = f"AND lower({identity}) = lower({_sql_literal(email)})" if email else ""
     today = _sql_literal(beijing_today())
     sql = f"""
-WITH input_keys(raw_key, token_hash, label, alias) AS (
+WITH input_keys(raw_key, token_hash, label, alias, created_at_utc_text) AS (
     VALUES {','.join(values)}
+), normalized_keys AS MATERIALIZED (
+    SELECT
+        raw_key,
+        token_hash,
+        label,
+        alias,
+        nullif(created_at_utc_text, '')::timestamp AS created_at_utc
+    FROM input_keys
+), key_tokens AS MATERIALIZED (
+    SELECT raw_key, raw_key AS api_key, created_at_utc FROM normalized_keys
+    UNION ALL
+    SELECT raw_key, token_hash AS api_key, created_at_utc FROM normalized_keys
 ), matched AS (
     SELECT
-        input_keys.raw_key, s.api_key, coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
-        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label, {identity} AS user_email,
+        key_tokens.raw_key, s.api_key, coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
+        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label,
         s.status, s.total_tokens, s.prompt_tokens, s.completion_tokens, s.metadata, s.spend, s."endTime"
-    FROM input_keys
-    JOIN "LiteLLM_SpendLogs" s ON s.api_key IN (input_keys.raw_key, input_keys.token_hash)
+    FROM key_tokens
+    CROSS JOIN LATERAL (
+        SELECT * FROM "LiteLLM_SpendLogs" s
+        WHERE s.api_key = key_tokens.api_key
+          AND (key_tokens.created_at_utc IS NULL OR s."endTime" >= key_tokens.created_at_utc)
+    ) s
     LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
-    WHERE true {email_clause}
-    UNION ALL
-    SELECT
-        input_keys.raw_key, s.api_key, coalesce(nullif(v.key_alias, ''), s.api_key) AS key_id,
-        coalesce(nullif(v.key_alias, ''), left(s.api_key, 16)) AS key_label, {identity} AS user_email,
-        s.status, s.total_tokens, s.prompt_tokens, s.completion_tokens, s.metadata, s.spend, s."endTime"
-    FROM input_keys
-    JOIN "LiteLLM_VerificationToken" v ON (
-        v.key_alias IN (input_keys.raw_key, input_keys.label, input_keys.alias)
-        OR right(coalesce(v.key_alias, ''), length(input_keys.raw_key) + 1) = ':' || input_keys.raw_key
-        OR (nullif(input_keys.label, '') IS NOT NULL AND right(coalesce(v.key_alias, ''), length(input_keys.label) + 1) = ':' || input_keys.label)
-    )
-    JOIN "LiteLLM_SpendLogs" s ON s.api_key = v.token
-    WHERE true {email_clause}
-), deduped AS (
-    SELECT DISTINCT ON (raw_key, api_key, "endTime", coalesce(total_tokens, 0), coalesce(spend, 0)) *
-    FROM matched
 ), rows AS (
     SELECT
-        raw_key, max(api_key) AS api_key, max(key_id) AS key_id, max(key_label) AS key_label, max(user_email) AS user_email,
+        raw_key, max(api_key) AS api_key, max(key_id) AS key_id, max(key_label) AS key_label,
         count(*)::bigint AS total_requests,
         count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS success_count,
         count(*) FILTER (WHERE coalesce(status, 'success') = 'failure')::bigint AS failure_count,
@@ -1969,14 +2099,84 @@ WITH input_keys(raw_key, token_hash, label, alias) AS (
         coalesce(sum(coalesce((metadata->'usage_object'->'prompt_tokens_details'->>'cached_tokens')::bigint, 0)) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_cached_tokens,
         coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint AS today_reasoning_tokens,
         coalesce(sum(spend) FILTER (WHERE "endTime" >= ({today}::date::timestamp - interval '8 hours') AND "endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8 AS today_spend_usd
-    FROM deduped
+    FROM matched
     GROUP BY raw_key
 )
 SELECT coalesce(json_object_agg(raw_key, row_to_json(rows)), '{{}}'::json) FROM rows;
 """
-    payload = litellm_psql_json(sql, timeout=30) or {}
+    try:
+        import psycopg
+        with psycopg.connect(litellm_psycopg_database_url(), connect_timeout=10) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET LOCAL enable_hashjoin = off")
+                cursor.execute("SET LOCAL enable_seqscan = off")
+                cursor.execute("SET LOCAL statement_timeout = 30000")
+                cursor.execute(sql)
+                row = cursor.fetchone()
+                payload = row[0] if row else {}
+    except Exception as e:
+        print(f"[LiteLLM] Key totals query unavailable: {e}")
+        payload = {}
     return payload if isinstance(payload, dict) else {}
 
+
+
+def _refresh_litellm_key_totals_cache(cache_key, email, normalized_entries):
+    try:
+        payload = _litellm_key_totals_for_entries_uncached(email, normalized_entries)
+        if isinstance(payload, dict) and payload:
+            with _key_totals_cache_lock:
+                _key_totals_cache["data"][cache_key] = {"data": payload, "last_update": time.time()}
+    finally:
+        with _key_totals_cache_lock:
+            _key_totals_cache["refreshing"].pop(cache_key, None)
+
+
+def litellm_key_totals_for_entries(email, key_entries):
+    email = _normalize_email(email)
+    normalized_entries = []
+    for entry in key_entries or []:
+        api_key = str((entry or {}).get("key") or "").strip()
+        if not api_key:
+            continue
+        normalized_entries.append({
+            "key": api_key,
+            "label": str((entry or {}).get("label") or "").strip(),
+            "model_group": normalize_model_group((entry or {}).get("model_group", "common")),
+            "created_at": str((entry or {}).get("created_at") or "").strip(),
+        })
+    cache_key = email + ":" + hashlib.sha1(json.dumps(normalized_entries, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    now = time.time()
+    stale = None
+    should_refresh = False
+    with _key_totals_cache_lock:
+        cached = _key_totals_cache["data"].get(cache_key)
+        if cached:
+            age = now - cached["last_update"]
+            if age < _key_totals_cache["ttl"]:
+                return dict(cached["data"])
+            if age < _key_totals_cache["stale_ttl"]:
+                stale = dict(cached["data"])
+        if stale and cache_key not in _key_totals_cache["refreshing"]:
+            _key_totals_cache["refreshing"][cache_key] = now
+            should_refresh = True
+
+    if should_refresh:
+        threading.Thread(
+            target=_refresh_litellm_key_totals_cache,
+            args=(cache_key, email, normalized_entries),
+            daemon=True,
+        ).start()
+        return stale
+
+    payload = _litellm_key_totals_for_entries_uncached(email, normalized_entries)
+    if isinstance(payload, dict) and payload:
+        with _key_totals_cache_lock:
+            _key_totals_cache["data"][cache_key] = {"data": payload, "last_update": time.time()}
+        return payload
+    if cached:
+        return dict(cached["data"])
+    return payload if isinstance(payload, dict) else {}
 
 def litellm_stats_have_usage(stats):
     return bool(
@@ -1986,45 +2186,76 @@ def litellm_stats_have_usage(stats):
     )
 
 
-def litellm_user_usage_summary(email, keys=None):
+def litellm_user_today_usage_summary(email):
     email = _normalize_email(email)
     if not email:
         return {}
-    identity = litellm_spend_identity_sql()
-    clauses = [f"lower({identity}) = lower({_sql_literal(email)})"]
-    key_values = ",".join(_sql_literal(k) for k in (keys or []) if k)
-    if key_values:
-        clauses.append(f"s.api_key IN ({key_values}) OR v.key_alias IN ({key_values})")
-    where_sql = " OR ".join(f"({clause})" for clause in clauses)
     today = _sql_literal(beijing_today())
+    identity = litellm_spend_identity_sql()
     sql = f"""
+WITH bounds AS (
+    SELECT
+        ({today}::date::timestamp - interval '8 hours') AS start_utc,
+        ({today}::date::timestamp + interval '16 hours') AS end_utc
+)
 SELECT json_build_object(
     'today', {today},
-    'total_requests', count(*)::bigint,
-    'success_count', count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint,
-    'failure_count', count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint,
-    'total_tokens', coalesce(sum(s.total_tokens), 0)::bigint,
-    'input_tokens', coalesce(sum(s.prompt_tokens), 0)::bigint,
-    'output_tokens', coalesce(sum(s.completion_tokens), 0)::bigint,
-    'cached_tokens', coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint,
-    'reasoning_tokens', coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint,
-    'spend_usd', coalesce(sum(s.spend), 0)::float8,
-    'today_requests', count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours'))::bigint,
-    'today_success_count', count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours') AND coalesce(s.status, 'success') != 'failure')::bigint,
-    'today_failure_count', count(*) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours') AND coalesce(s.status, 'success') = 'failure')::bigint,
-    'today_tokens', coalesce(sum(s.total_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
-    'today_input_tokens', coalesce(sum(s.prompt_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
-    'today_output_tokens', coalesce(sum(s.completion_tokens) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
-    'today_cached_tokens', coalesce(sum({litellm_cached_tokens_sql()}) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
-    'today_reasoning_tokens', coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::bigint,
-    'today_spend_usd', coalesce(sum(s.spend) FILTER (WHERE s."endTime" >= ({today}::date::timestamp - interval '8 hours') AND s."endTime" < ({today}::date::timestamp + interval '16 hours')), 0)::float8
+    'today_requests', count(*)::bigint,
+    'today_success_count', count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint,
+    'today_failure_count', count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint,
+    'today_tokens', coalesce(sum(s.total_tokens), 0)::bigint,
+    'today_input_tokens', coalesce(sum(s.prompt_tokens), 0)::bigint,
+    'today_output_tokens', coalesce(sum(s.completion_tokens), 0)::bigint,
+    'today_cached_tokens', coalesce(sum({litellm_cached_tokens_sql()}), 0)::bigint,
+    'today_reasoning_tokens', coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint,
+    'today_spend_usd', coalesce(sum(s.spend), 0)::float8
 )
 FROM "LiteLLM_SpendLogs" s
-LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token
-WHERE {where_sql};
+LEFT JOIN "LiteLLM_VerificationToken" v ON s.api_key = v.token, bounds
+WHERE s."endTime" >= bounds.start_utc
+  AND s."endTime" < bounds.end_utc
+  AND lower({identity}) = lower({_sql_literal(email)});
 """
-    return litellm_psql_json(sql, timeout=15) or {}
+    payload = litellm_psql_json(sql, timeout=8) or {}
+    return payload if isinstance(payload, dict) else {}
 
+
+def litellm_user_usage_summary(email, keys=None):
+    email = _normalize_email(email)
+    key_list = [str(k or "").strip() for k in (keys or []) if str(k or "").strip()]
+    if not email and not key_list:
+        return {}
+
+    by_key = litellm_key_totals_for_entries(email, [{"key": key} for key in key_list])
+    today_summary = litellm_user_today_usage_summary(email)
+    summary = {"today": beijing_today()}
+    total_fields = (
+        "total_requests",
+        "success_count",
+        "failure_count",
+        "total_tokens",
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "reasoning_tokens",
+    )
+    today_int_fields = (
+        "today_requests",
+        "today_success_count",
+        "today_failure_count",
+        "today_tokens",
+        "today_input_tokens",
+        "today_output_tokens",
+        "today_cached_tokens",
+        "today_reasoning_tokens",
+    )
+    for field in total_fields:
+        summary[field] = sum(_int_usage_value(row.get(field)) for row in by_key.values())
+    summary["spend_usd"] = sum(_float_usage_value(row.get("spend_usd")) for row in by_key.values())
+    for field in today_int_fields:
+        summary[field] = _int_usage_value(today_summary.get(field))
+    summary["today_spend_usd"] = _float_usage_value(today_summary.get("today_spend_usd"))
+    return summary
 
 def attach_user_usage_breakdown(summary):
     summary = dict(summary or {})
@@ -2713,6 +2944,66 @@ FROM rows;
     return data or []
 
 
+def query_litellm_today_spendlogs_aggregate():
+    database_url = litellm_database_url()
+    if not database_url:
+        return None
+    today = beijing_today()
+    today_sql = today.replace("'", "''")
+    cached_sql = litellm_cached_tokens_sql()
+    sql = f"""
+WITH bounds AS (
+    SELECT
+        ('{today_sql}'::date::timestamp - interval '8 hours') AS today_start_utc,
+        ('{today_sql}'::date::timestamp + interval '16 hours') AS tomorrow_start_utc
+), today_totals AS (
+    SELECT
+        count(*)::bigint AS today_requests,
+        count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS today_success_count,
+        count(*) FILTER (WHERE coalesce(status, 'success') = 'failure')::bigint AS today_failure_count,
+        coalesce(sum(total_tokens), 0)::bigint AS today_tokens,
+        coalesce(sum(prompt_tokens), 0)::bigint AS today_input_tokens,
+        coalesce(sum(completion_tokens), 0)::bigint AS today_output_tokens,
+        coalesce(sum({cached_sql}), 0)::bigint AS today_cached_tokens,
+        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS today_reasoning_tokens,
+        coalesce(sum(spend), 0)::float8 AS today_spend_usd,
+        max("endTime") AS today_last_end_time
+    FROM "LiteLLM_SpendLogs" s, bounds
+    WHERE "endTime" >= bounds.today_start_utc
+      AND "endTime" < bounds.tomorrow_start_utc
+)
+SELECT json_build_object(
+    'today', '{today_sql}',
+    'today_requests', today_requests,
+    'today_success_count', today_success_count,
+    'today_failure_count', today_failure_count,
+    'today_tokens', today_tokens,
+    'today_input_tokens', today_input_tokens,
+    'today_output_tokens', today_output_tokens,
+    'today_cached_tokens', today_cached_tokens,
+    'today_reasoning_tokens', today_reasoning_tokens,
+    'today_spend_usd', today_spend_usd,
+    'today_last_end_time', today_last_end_time
+) FROM today_totals;
+"""
+    payload = litellm_psql_json(sql, timeout=8)
+    if not payload:
+        return None
+    return {
+        "today": today,
+        "today_requests": _int_usage_value(payload.get("today_requests")),
+        "today_success_count": _int_usage_value(payload.get("today_success_count")),
+        "today_failure_count": _int_usage_value(payload.get("today_failure_count")),
+        "today_tokens": _int_usage_value(payload.get("today_tokens")),
+        "today_input_tokens": _int_usage_value(payload.get("today_input_tokens")),
+        "today_output_tokens": _int_usage_value(payload.get("today_output_tokens")),
+        "today_cached_tokens": _int_usage_value(payload.get("today_cached_tokens")),
+        "today_reasoning_tokens": _int_usage_value(payload.get("today_reasoning_tokens")),
+        "today_spend_usd": round(_float_usage_value(payload.get("today_spend_usd")), 6),
+        "today_last_end_time": payload.get("today_last_end_time"),
+    }
+
+
 def query_litellm_spendlogs_aggregate():
     database_url = litellm_database_url()
     if not database_url:
@@ -2732,7 +3023,7 @@ WITH bounds AS (
     SELECT
         ('{today_sql}'::date::timestamp - interval '8 hours') AS today_start_utc,
         ('{today_sql}'::date::timestamp + interval '16 hours') AS tomorrow_start_utc
-), totals AS (
+), totals AS MATERIALIZED (
     SELECT
         count(*)::bigint AS total_requests,
         count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS success_count,
@@ -2743,7 +3034,7 @@ WITH bounds AS (
         coalesce(sum(spend), 0)::float8 AS spend_usd,
         max("endTime") AS last_end_time
     FROM "LiteLLM_SpendLogs" s
-), today_totals AS (
+), today_totals AS MATERIALIZED (
     SELECT
         count(*)::bigint AS today_requests,
         count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS today_success_count,
@@ -2863,12 +3154,7 @@ def clear_persistent_floor_cache():
     return None
 
 
-def get_usage_summary_cached():
-    now = time.time()
-    with _usage_summary_cache_lock:
-        cached = _usage_summary_cache["data"]
-        if cached and (now - _usage_summary_cache["last_update"]) < _usage_summary_cache["ttl"]:
-            return dict(cached, cache_age_seconds=round(now - _usage_summary_cache["last_update"], 3)), None
+def _build_usage_summary_uncached():
     litellm = query_litellm_spendlogs_aggregate()
     if litellm:
         summary = {
@@ -2891,7 +3177,80 @@ def get_usage_summary_cached():
 
     summary = attach_token_breakdown(summary)
     summary["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return summary
 
+
+def _refresh_litellm_usage_cache():
+    try:
+        query_litellm_spendlogs_aggregate()
+    finally:
+        with _usage_summary_cache_lock:
+            _usage_summary_cache["refreshing"] = False
+
+
+
+def _build_usage_summary_fast():
+    today = query_litellm_today_spendlogs_aggregate()
+    with _litellm_usage_cache_lock:
+        cached_litellm = dict(_litellm_usage_cache["data"]) if _litellm_usage_cache["data"] else None
+    if cached_litellm:
+        summary = dict(cached_litellm)
+        if today:
+            summary.update(today)
+        summary["failed_requests"] = _int_usage_value(summary.get("failure_count"))
+        summary["summary_sources"] = ["litellm_spendlogs", "litellm_today_fast"]
+        summary["litellm_included"] = True
+        summary["litellm_usage"] = dict(summary)
+    elif today:
+        summary = {
+            **today,
+            "total_requests": 0,
+            "success_count": 0,
+            "failure_count": 0,
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "spend_usd": 0,
+            "failed_requests": 0,
+            "summary_sources": ["litellm_today_fast"],
+            "litellm_included": True,
+            "litellm_partial": True,
+            "litellm_usage": today,
+        }
+    else:
+        cluster_summary = get_cluster_usage_summary()
+        summary = build_usage_summary_response(cluster_summary)
+        summary["summary_sources"] = ["cliproxy_usage_summary_nodes"]
+        summary["litellm_included"] = False
+        summary = attach_live_node_metadata(summary, cluster_summary)
+
+    summary.setdefault("cluster_partial", False)
+    summary.setdefault("node_errors", [])
+    summary.setdefault("nodes", [])
+    summary.setdefault("live_usage_summary", {})
+    summary = attach_token_breakdown(summary)
+    summary["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return summary
+
+
+def get_usage_summary_cached():
+    now = time.time()
+    with _usage_summary_cache_lock:
+        cached = _usage_summary_cache["data"]
+        age = now - _usage_summary_cache["last_update"] if cached else None
+        if cached and age < _usage_summary_cache["ttl"]:
+            return dict(cached, cache_age_seconds=round(age, 3)), None
+        needs_full_refresh = False
+        with _litellm_usage_cache_lock:
+            full_age = now - _litellm_usage_cache["last_update"] if _litellm_usage_cache["data"] else None
+            needs_full_refresh = full_age is None or full_age >= _usage_summary_cache["full_refresh_interval"]
+        if needs_full_refresh and not _usage_summary_cache["refreshing"]:
+            _usage_summary_cache["refreshing"] = True
+            threading.Thread(target=_refresh_litellm_usage_cache, daemon=True).start()
+
+    summary = _build_usage_summary_fast()
     now = time.time()
     with _usage_summary_cache_lock:
         _usage_summary_cache["data"] = summary
@@ -2945,6 +3304,20 @@ def parse_detail_time_utc(value):
     if parsed.tzinfo is None:
         return parsed
     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def litellm_timestamp_iso_utc(value):
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = parse_detail_time_utc(value)
+    if not parsed:
+        return ""
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.isoformat(timespec="seconds") + "Z"
 
 
 def beijing_date_hour(value):
@@ -4473,6 +4846,7 @@ def get_my_keys():
         return jsonify({"email": email, "name": email, "keys": []})
 
     key_totals = litellm_key_totals_for_entries(email, key_entries)
+    key_entries, key_totals = merge_litellm_identity_usage_keys(email, key_entries, key_totals)
 
     keys_info = []
     for entry in key_entries:
@@ -4488,14 +4862,17 @@ def get_my_keys():
         spend_usd = round(_float_usage_value(key_stats.get("spend_usd", 0)), 6)
         breakdown = build_litellm_token_breakdown(total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens, spend_usd)
 
+        is_synthetic_usage_key = bool(key_meta.get("synthetic_usage_key"))
         max_budget = _key_budget(key_meta, api_key)
         keys_info.append({
             "key": api_key,
             "label": key_meta.get("label", ""),
             "model_group": key_meta.get("model_group", "common"),
             "source": key_meta.get("source", "cliproxy"),
+            "synthetic_usage_key": is_synthetic_usage_key,
             "max_budget": max_budget,
-            "can_topup": key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
+            "can_topup": (not is_synthetic_usage_key) and key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
+            "can_revoke": not is_synthetic_usage_key,
             "created_at": key_meta.get("created_at", ""),
             "total_requests": _int_usage_value(key_stats.get("total_requests")),
             "total_tokens": total_tokens,
@@ -4516,13 +4893,77 @@ def get_my_keys():
             "today_reasoning_tokens": _int_usage_value(key_stats.get("today_reasoning_tokens")),
             "today_spend_usd": round(_float_usage_value(key_stats.get("today_spend_usd")), 6),
             "usage_scope": "total_and_today",
-            "last_used_at": key_stats.get("last_used_at") or "",
+            "last_used_at": litellm_timestamp_iso_utc(key_stats.get("last_used_at")),
         })
+
+    keys_info.sort(key=lambda item: item.get("last_used_at") or "", reverse=True)
+
+    user_total_requests = sum(_int_usage_value(item.get("total_requests")) for item in keys_info)
+    user_total_tokens = sum(_int_usage_value(item.get("total_tokens")) for item in keys_info)
+    user_input_tokens = sum(_int_usage_value(item.get("input_tokens")) for item in keys_info)
+    user_output_tokens = sum(_int_usage_value(item.get("output_tokens")) for item in keys_info)
+    user_cached_tokens = sum(_int_usage_value(item.get("cached_tokens")) for item in keys_info)
+    user_reasoning_tokens = sum(_int_usage_value(item.get("reasoning_tokens")) for item in keys_info)
+    user_spend_usd = round(sum(_float_usage_value(item.get("spend_usd")) for item in keys_info), 6)
+    user_token_breakdown = build_litellm_token_breakdown(
+        user_total_tokens,
+        user_input_tokens,
+        user_output_tokens,
+        user_cached_tokens,
+        user_reasoning_tokens,
+        user_spend_usd,
+    )
+    user_today_requests = sum(_int_usage_value(item.get("today_requests")) for item in keys_info)
+    user_today_tokens = sum(_int_usage_value(item.get("today_tokens")) for item in keys_info)
+    user_today_input_tokens = sum(_int_usage_value(item.get("today_input_tokens")) for item in keys_info)
+    user_today_output_tokens = sum(_int_usage_value(item.get("today_output_tokens")) for item in keys_info)
+    user_today_cached_tokens = sum(_int_usage_value(item.get("today_cached_tokens")) for item in keys_info)
+    user_today_reasoning_tokens = sum(_int_usage_value(item.get("today_reasoning_tokens")) for item in keys_info)
+    user_today_spend_usd = round(sum(_float_usage_value(item.get("today_spend_usd")) for item in keys_info), 6)
+    user_today_token_breakdown = build_litellm_token_breakdown(
+        user_today_tokens,
+        user_today_input_tokens,
+        user_today_output_tokens,
+        user_today_cached_tokens,
+        user_today_reasoning_tokens,
+        user_today_spend_usd,
+    )
 
     return jsonify({
         "email": email,
         "name": (user or {}).get("name", email),
         "keys": keys_info,
+        "user_total_requests": user_total_requests,
+        "user_total_tokens": user_total_tokens,
+        "user_input_tokens": user_input_tokens,
+        "user_output_tokens": user_output_tokens,
+        "user_cached_tokens": user_cached_tokens,
+        "user_reasoning_tokens": user_reasoning_tokens,
+        "user_spend_usd": user_spend_usd,
+        "user_token_breakdown": user_token_breakdown,
+        "user_estimated_cost_usd": user_token_breakdown["cost_usd"],
+        "user_today_requests": user_today_requests,
+        "user_today_tokens": user_today_tokens,
+        "user_today_input_tokens": user_today_input_tokens,
+        "user_today_output_tokens": user_today_output_tokens,
+        "user_today_cached_tokens": user_today_cached_tokens,
+        "user_today_reasoning_tokens": user_today_reasoning_tokens,
+        "user_today_spend_usd": user_today_spend_usd,
+        "user_today_token_breakdown": user_today_token_breakdown,
+        "summary": {
+            "total_requests": user_total_requests,
+            "total_tokens": user_total_tokens,
+            "input_tokens": user_input_tokens,
+            "output_tokens": user_output_tokens,
+            "cached_tokens": user_cached_tokens,
+            "reasoning_tokens": user_reasoning_tokens,
+            "spend_usd": user_spend_usd,
+            "estimated_cost_usd": user_token_breakdown["cost_usd"],
+            "token_breakdown": user_token_breakdown,
+            "today_requests": user_today_requests,
+            "today_tokens": user_today_tokens,
+            "today_token_breakdown": user_today_token_breakdown,
+        },
         "usage_source": "litellm_spendlogs_pg",
         "usage_scope": "total_and_today",
         "usage_note": "total_* 为历史累计；today_* 为北京时间今天；last_used_at 为 PG 记录里的最后一次 token 消耗时间。",
@@ -4911,7 +5352,7 @@ def api_get_user_keys():
             "today_cached_tokens": _int_usage_value(key_stats.get("today_cached_tokens")),
             "today_reasoning_tokens": _int_usage_value(key_stats.get("today_reasoning_tokens")),
             "today_spend_usd": round(_float_usage_value(key_stats.get("today_spend_usd")), 6),
-            "last_used_at": key_stats.get("last_used_at") or "",
+            "last_used_at": litellm_timestamp_iso_utc(key_stats.get("last_used_at")),
             "usage_scope": "day" if date else "total_and_today",
         })
 

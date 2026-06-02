@@ -12,7 +12,7 @@ def configure_scheduler(scheduler, config, jobs):
     scheduler.add_job(
         jobs["usage_broadcast"],
         "interval",
-        seconds=15,
+        seconds=1,
         id="usage_broadcast",
         max_instances=1,
         coalesce=True,
@@ -63,7 +63,7 @@ def configure_scheduler(scheduler, config, jobs):
 def print_schedule(config):
     print("[Scheduler] Started:")
     print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
-    print("  - Broadcast:    every 15 sec while clients are connected")
+    print("  - Broadcast:    every 1 sec while clients are connected")
     print("  - Approval poll: every 30 sec")
     print(f"  - NLB monitor:  {'every ' + str(config.NLB_MONITOR_INTERVAL_SECONDS) + ' sec' if config.NLB_MONITOR_ENABLED else 'disabled'}")
     print(f"  - Usage record: {'daily at 20:00 Asia/Shanghai' if config.STATUS_USAGE_RECORD_ENABLED else 'disabled'}")
