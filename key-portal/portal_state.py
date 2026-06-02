@@ -1,9 +1,8 @@
 """
 State backends for Key Portal.
 
-Postgres stores durable user/key/session facts. Redis stores short-lived cache
-and OAuth state. Both are optional so the current file-backed deployment keeps
-working until the new backend is explicitly configured.
+Postgres stores durable user/key/session facts. Redis stores OAuth state and
+other explicitly transient coordination data.
 """
 
 import hashlib
@@ -429,8 +428,6 @@ class PortalState:
                 if api_key not in users[email].setdefault("api_keys", []):
                     users[email]["api_keys"].append(api_key)
 
-        if not users and not keys:
-            return None
         return {"version": "2.0", "users": users, "keys": keys}
 
     def save_user_keys(self, data):
@@ -524,13 +521,6 @@ class PortalState:
                             key_info.get("created_at"),
                         ),
                     )
-                if active_keys:
-                    cur.execute(
-                        "UPDATE key_portal_api_keys SET revoked_at = now(), updated_at = now() WHERE NOT (api_key = ANY(%s))",
-                        (active_keys,),
-                    )
-                else:
-                    cur.execute("UPDATE key_portal_api_keys SET revoked_at = now(), updated_at = now()")
             conn.commit()
         return True
 
@@ -539,8 +529,6 @@ class PortalState:
             return None
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM key_portal_key_pool ORDER BY created_at ASC, api_key ASC").fetchall()
-        if not rows:
-            return None
         pool = {"unused": [], "assigned": {}}
         for row in rows:
             key = row.get("api_key")

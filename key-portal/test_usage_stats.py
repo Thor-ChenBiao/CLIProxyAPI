@@ -1,60 +1,11 @@
 import os
-import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import app as portal_app
-import database as db
 import usage_sync
-
-
-SCHEMA_SQL = """
-CREATE TABLE daily_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL UNIQUE,
-    total_requests INTEGER DEFAULT 0,
-    success_count INTEGER DEFAULT 0,
-    failure_count INTEGER DEFAULT 0,
-    total_tokens INTEGER DEFAULT 0,
-    input_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE user_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    user_email TEXT NOT NULL,
-    api_key TEXT NOT NULL,
-    total_requests INTEGER DEFAULT 0,
-    success_count INTEGER DEFAULT 0,
-    failure_count INTEGER DEFAULT 0,
-    total_tokens INTEGER DEFAULT 0,
-    input_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(date, user_email, api_key)
-);
-"""
-
-
-class TempUsageDb(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(delete=False)
-        self.tmp.close()
-        self.old_db_file = db.DB_FILE
-        db.DB_FILE = self.tmp.name
-        with sqlite3.connect(db.DB_FILE) as conn:
-            conn.executescript(SCHEMA_SQL)
-            conn.commit()
-        db.ensure_indexes()
-
-    def tearDown(self):
-        db.DB_FILE = self.old_db_file
-        os.unlink(self.tmp.name)
 
 
 class UsageMergeTests(unittest.TestCase):
@@ -112,8 +63,7 @@ class UsageMergeTests(unittest.TestCase):
         self.assertEqual(results[0], ("old", {"ok": True}, None))
         self.assertEqual(results[1], ("node-b", None, "timeout"))
 
-    def test_usage_queue_history_deduplicates_and_merges_records(self):
-        portal_app.portal_state.cache_delete("usage_queue_history:test-node")
+    def test_usage_queue_results_use_live_records_only(self):
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         first = [{
             "request_id": "req-1",
@@ -122,7 +72,7 @@ class UsageMergeTests(unittest.TestCase):
             "model": "gpt-5.5",
             "tokens": {"total_tokens": 10},
         }]
-        second = first + [{
+        second = [{
             "request_id": "req-2",
             "timestamp": now,
             "api_key": "k1",
@@ -134,8 +84,9 @@ class UsageMergeTests(unittest.TestCase):
         merged_second = portal_app.merge_usage_queue_results([("test-node", second, None)])
 
         self.assertEqual(merged_first["usage"]["total_requests"], 1)
-        self.assertEqual(merged_second["usage"]["total_requests"], 2)
-        self.assertEqual(merged_second["usage"]["total_tokens"], 30)
+        self.assertEqual(merged_second["usage"]["total_requests"], 1)
+        self.assertEqual(merged_second["usage"]["total_tokens"], 20)
+        self.assertEqual(merged_second["source"], "cliproxy_usage_queue_live")
 
     def test_usage_queue_records_convert_to_legacy_usage_payload(self):
         records = [
@@ -283,37 +234,6 @@ class AuthStatsTests(unittest.TestCase):
         self.assertEqual(result["usage_percent"], 0)
         self.assertEqual(result["partial_history_count"], 20)
 
-
-class DatabaseTests(TempUsageDb):
-    def test_upserts_are_monotonic(self):
-        db.upsert_daily_usage("2026-05-11", 10, 9, 1, 100, 40, 60)
-        db.upsert_daily_usage("2026-05-11", 5, 4, 0, 50, 20, 30)
-        daily = db.get_daily_usage_history()[0]
-        self.assertEqual(daily["total_requests"], 10)
-        self.assertEqual(daily["total_tokens"], 100)
-
-        db.upsert_user_usage("2026-05-11", "u@example.com", "k1", 3, 3, 0, 30, 10, 20)
-        db.upsert_user_usage("2026-05-11", "u@example.com", "k1", 4, 4, 0, 40, 15, 25)
-        user = db.get_user_key_usage_for_date("u@example.com", "2026-05-11")["k1"]
-        self.assertEqual(user["total_requests"], 4)
-        self.assertEqual(user["total_tokens"], 40)
-
-    def test_usage_sync_uses_beijing_date_for_details(self):
-        api_data = {"usage": {"tokens_by_day": {}, "requests_by_day": {}, "apis": {
-            "k1": {"total_requests": 1, "total_tokens": 10, "models": {"m": {"details": [{
-                "timestamp": "2026-05-10T16:30:00Z",
-                "tokens": {"input_tokens": 3, "output_tokens": 7, "total_tokens": 10},
-                "failed": False,
-            }]}}}
-        }}}
-
-        ok, stats = usage_sync.sync_usage_to_database(api_data, {"k1": "u@example.com"})
-
-        self.assertTrue(ok, stats)
-        daily = db.get_daily_usage_history()[0]
-        self.assertEqual(daily["date"], "2026-05-11")
-        user = db.get_user_key_usage_for_date("u@example.com", "2026-05-11")["k1"]
-        self.assertEqual(user["total_tokens"], 10)
 
 
 class FlaskSmokeTests(unittest.TestCase):

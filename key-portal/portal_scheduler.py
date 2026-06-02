@@ -9,14 +9,6 @@ def configure_scheduler(scheduler, config, jobs):
         id="expiry_check",
     )
 
-    if config.KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED:
-        scheduler.add_job(
-            jobs["snapshot_export"],
-            "interval",
-            minutes=60,
-            id="snapshot_export",
-        )
-
     scheduler.add_job(
         jobs["usage_broadcast"],
         "interval",
@@ -71,7 +63,6 @@ def configure_scheduler(scheduler, config, jobs):
 def print_schedule(config):
     print("[Scheduler] Started:")
     print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
-    print(f"  - Snapshot:     {'every 60 min' if config.KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED else 'disabled'}")
     print("  - Broadcast:    every 15 sec while clients are connected")
     print("  - Approval poll: every 30 sec")
     print(f"  - NLB monitor:  {'every ' + str(config.NLB_MONITOR_INTERVAL_SECONDS) + ' sec' if config.NLB_MONITOR_ENABLED else 'disabled'}")

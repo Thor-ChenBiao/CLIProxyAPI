@@ -10,7 +10,6 @@ class StatusEventsService:
         config,
         portal_state,
         feishu,
-        database,
         nodes,
         beijing_today,
         int_usage_value,
@@ -22,7 +21,6 @@ class StatusEventsService:
         self.config = config
         self.portal_state = portal_state
         self.feishu = feishu
-        self.database = database
         self.nodes = nodes
         self.beijing_today = beijing_today
         self.int_usage_value = int_usage_value

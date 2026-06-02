@@ -13,7 +13,6 @@ import hashlib
 import hmac
 import json
 import os
-import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -23,7 +22,6 @@ import config
 import feishu
 import portal_state
 
-DB_FILE = os.path.join(os.path.dirname(__file__), "data", "usage.db")
 
 APPROVAL_CODE = config.FEISHU_APPROVAL_CODE
 
@@ -74,6 +72,11 @@ def _pg_enabled():
     return portal_state.is_pg_enabled() and portal_state.ensure_schema()
 
 
+def _require_pg():
+    if not _pg_enabled():
+        raise RuntimeError("Key Portal approval storage requires Postgres")
+
+
 def _pg_row_to_dict(row):
     if not row:
         return None
@@ -88,45 +91,9 @@ def _pg_conn():
     return portal_state.current().connect()
 
 
-def _ensure_column(cursor, table, column, definition):
-    columns = [row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
-    if column not in columns:
-        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-
 def init_approval_table():
-    if _pg_enabled():
-        print("[Approval] Using Postgres approval_requests table")
-        return
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS approval_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL,
-            name TEXT NOT NULL DEFAULT '',
-            label TEXT NOT NULL DEFAULT '',
-            model_group TEXT NOT NULL,
-            reason TEXT NOT NULL DEFAULT '',
-            daily_budget TEXT NOT NULL DEFAULT '',
-            instance_id TEXT UNIQUE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            api_key TEXT DEFAULT NULL,
-            created_at TEXT NOT NULL,
-            resolved_at TEXT DEFAULT NULL,
-            request_type TEXT NOT NULL DEFAULT 'new_key',
-            request_payload TEXT NOT NULL DEFAULT ''
-        )
-    """)
-    _ensure_column(cursor, "approval_requests", "request_type", "TEXT NOT NULL DEFAULT 'new_key'")
-    _ensure_column(cursor, "approval_requests", "request_payload", "TEXT NOT NULL DEFAULT ''")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_email ON approval_requests(email)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_status ON approval_requests(status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_instance ON approval_requests(instance_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_request_type ON approval_requests(request_type)")
-    conn.commit()
-    conn.close()
+    _require_pg()
+    print("[Approval] Using Postgres approval_requests table")
 
 
 def requires_approval(model_group):
@@ -135,52 +102,33 @@ def requires_approval(model_group):
 
 def _insert_approval_request(email, name, label, model_group, reason, daily_budget, request_type, request_payload):
     now = datetime.now(BEIJING_TZ).isoformat()
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO key_portal_approval_requests (
-                    email, name, label, model_group, reason, daily_budget,
-                    status, created_at, request_type, request_payload
-                ) VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    email, name, label, model_group, reason, daily_budget,
-                    now, request_type, portal_state.Jsonb(request_payload or {}),
-                ),
-            ).fetchone()
-            conn.commit()
-            return int(row["id"])
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO approval_requests (
-            email, name, label, model_group, reason, daily_budget, status, created_at, request_type, request_payload
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-    """, (email, name, label, model_group, reason, daily_budget, now, request_type, json.dumps(request_payload or {}, ensure_ascii=False)))
-    request_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return request_id
+    _require_pg()
+    with _pg_conn() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO key_portal_approval_requests (
+                email, name, label, model_group, reason, daily_budget,
+                status, created_at, request_type, request_payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                email, name, label, model_group, reason, daily_budget,
+                now, request_type, portal_state.Jsonb(request_payload or {}),
+            ),
+        ).fetchone()
+        conn.commit()
+        return int(row["id"])
 
 
 def _attach_instance_id(request_id, instance_id):
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            conn.execute(
-                "UPDATE key_portal_approval_requests SET instance_id = %s, updated_at = now() WHERE id = %s",
-                (instance_id, request_id),
-            )
-            conn.commit()
-        return
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE approval_requests SET instance_id = ? WHERE id = ?", (instance_id, request_id))
-    conn.commit()
-    conn.close()
+    _require_pg()
+    with _pg_conn() as conn:
+        conn.execute(
+            "UPDATE key_portal_approval_requests SET instance_id = %s, updated_at = now() WHERE id = %s",
+            (instance_id, request_id),
+        )
+        conn.commit()
 
 
 def create_approval_request(email, name, label, model_group, reason="", daily_budget=""):
@@ -317,22 +265,13 @@ def handle_approval_callback(payload):
     if not instance_id:
         return False, "missing instance_id"
 
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM key_portal_approval_requests WHERE instance_id = %s",
-                (instance_id,),
-            ).fetchone()
-        row = _pg_row_to_dict(row)
-    else:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        row = cursor.execute(
-            "SELECT * FROM approval_requests WHERE instance_id = ?", (instance_id,)
+    _require_pg()
+    with _pg_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM key_portal_approval_requests WHERE instance_id = %s",
+            (instance_id,),
         ).fetchone()
-        conn.close()
-        row = dict(row) if row else None
+    row = _pg_row_to_dict(row)
 
     if not row:
         print(f"[Approval] Callback for unknown instance {instance_id}")
@@ -381,29 +320,18 @@ def _on_approved(row):
 
 def _mark_request_approved(request_id, api_key):
     now = datetime.now(BEIJING_TZ).isoformat()
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            result = conn.execute(
-                """
-                UPDATE key_portal_approval_requests
-                SET status = 'approved', api_key = %s, resolved_at = %s, updated_at = now()
-                WHERE id = %s AND status = 'pending'
-                """,
-                (api_key, now, request_id),
-            )
-            changed = result.rowcount
-            conn.commit()
-        return changed
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE approval_requests SET status = 'approved', api_key = ?, resolved_at = ? WHERE id = ? AND status = 'pending'",
-        (api_key, now, request_id)
-    )
-    changed = cursor.rowcount
-    conn.commit()
-    conn.close()
+    _require_pg()
+    with _pg_conn() as conn:
+        result = conn.execute(
+            """
+            UPDATE key_portal_approval_requests
+            SET status = 'approved', api_key = %s, resolved_at = %s, updated_at = now()
+            WHERE id = %s AND status = 'pending'
+            """,
+            (api_key, now, request_id),
+        )
+        changed = result.rowcount
+        conn.commit()
     return changed
 
 
@@ -470,29 +398,17 @@ def _on_quota_topup_approved(row):
 
 def _update_request_status(request_id, status, error_msg=None):
     now = datetime.now(BEIJING_TZ).isoformat()
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            conn.execute(
-                """
-                UPDATE key_portal_approval_requests
-                SET status = %s, resolved_at = %s, updated_at = now()
-                WHERE id = %s
-                """,
-                (status, now, request_id),
-            )
-            conn.commit()
-        if error_msg:
-            print(f"[Approval] Request {request_id} -> {status}: {error_msg}")
-        return
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE approval_requests SET status = ?, resolved_at = ? WHERE id = ?",
-        (status, now, request_id)
-    )
-    conn.commit()
-    conn.close()
+    _require_pg()
+    with _pg_conn() as conn:
+        conn.execute(
+            """
+            UPDATE key_portal_approval_requests
+            SET status = %s, resolved_at = %s, updated_at = now()
+            WHERE id = %s
+            """,
+            (status, now, request_id),
+        )
+        conn.commit()
     if error_msg:
         print(f"[Approval] Request {request_id} -> {status}: {error_msg}")
 
@@ -698,51 +614,28 @@ def _portal_url():
 
 
 def get_pending_approvals(email=None):
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            if email:
-                rows = conn.execute(
-                    "SELECT * FROM key_portal_approval_requests WHERE email = %s ORDER BY created_at DESC",
-                    (email,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM key_portal_approval_requests ORDER BY created_at DESC"
-                ).fetchall()
-        return [_pg_row_to_dict(r) for r in rows]
-
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    if email:
-        rows = cursor.execute(
-            "SELECT * FROM approval_requests WHERE email = ? ORDER BY created_at DESC", (email,)
-        ).fetchall()
-    else:
-        rows = cursor.execute(
-            "SELECT * FROM approval_requests ORDER BY created_at DESC"
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    _require_pg()
+    with _pg_conn() as conn:
+        if email:
+            rows = conn.execute(
+                "SELECT * FROM key_portal_approval_requests WHERE email = %s ORDER BY created_at DESC",
+                (email,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM key_portal_approval_requests ORDER BY created_at DESC"
+            ).fetchall()
+    return [_pg_row_to_dict(r) for r in rows]
 
 
 def get_approval_by_instance(instance_id):
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM key_portal_approval_requests WHERE instance_id = %s",
-                (instance_id,),
-            ).fetchone()
-        return _pg_row_to_dict(row)
-
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    row = cursor.execute(
-        "SELECT * FROM approval_requests WHERE instance_id = ?", (instance_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    _require_pg()
+    with _pg_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM key_portal_approval_requests WHERE instance_id = %s",
+            (instance_id,),
+        ).fetchone()
+    return _pg_row_to_dict(row)
 
 
 def verify_callback_token(token):
@@ -754,21 +647,12 @@ def verify_callback_token(token):
 
 def poll_pending_approvals():
     """Check Feishu for status updates on pending approvals (fallback for missed callbacks)."""
-    if _pg_enabled():
-        with _pg_conn() as conn:
-            pending = conn.execute(
-                "SELECT * FROM key_portal_approval_requests WHERE status = 'pending' AND COALESCE(instance_id, '') != ''"
-            ).fetchall()
-        pending = [_pg_row_to_dict(row) for row in pending]
-    else:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        pending = cursor.execute(
-            "SELECT * FROM approval_requests WHERE status = 'pending' AND instance_id != ''"
+    _require_pg()
+    with _pg_conn() as conn:
+        pending = conn.execute(
+            "SELECT * FROM key_portal_approval_requests WHERE status = 'pending' AND COALESCE(instance_id, '') != ''"
         ).fetchall()
-        conn.close()
-        pending = [dict(row) for row in pending]
+    pending = [_pg_row_to_dict(row) for row in pending]
 
     if not pending:
         return
@@ -792,7 +676,7 @@ def poll_pending_approvals():
                 _on_approved(dict(row))
             elif status in ("REJECTED", "CANCELED", "DELETED"):
                 _update_request_status(row["id"], "rejected")
-                _notify_user_rejected(row["email"], row["model_group"], row["request_type"] if "request_type" in row.keys() else REQUEST_TYPE_NEW_KEY)
+                _notify_user_rejected(row["email"], row["model_group"], row.get("request_type") or REQUEST_TYPE_NEW_KEY)
                 print(f"[Approval] Poll: rejected {row['email']} ({row['model_group']})")
         except Exception as e:
             print(f"[Approval] Poll error for {instance_id}: {e}")

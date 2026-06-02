@@ -17,7 +17,7 @@ LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "").strip()
 LITELLM_ISSUE_KEYS = os.environ.get("LITELLM_ISSUE_KEYS", "").strip().lower() in {"1", "true", "yes", "on"}
 LITELLM_DATABASE_URL = os.environ.get("LITELLM_DATABASE_URL", os.environ.get("DATABASE_URL", "")).strip()
 
-# Key Portal state backends reuse the existing service database/cache by
+# Key Portal state backends reuse the existing service Postgres/Redis by
 # default. KEY_PORTAL_* can still override them if we split storage later.
 KEY_PORTAL_DATABASE_URL = os.environ.get(
     "KEY_PORTAL_DATABASE_URL", os.environ.get("DATABASE_URL", "")
@@ -29,10 +29,6 @@ try:
     KEY_PORTAL_SESSION_DAYS = int(os.environ.get("KEY_PORTAL_SESSION_DAYS", "30") or "30")
 except ValueError:
     KEY_PORTAL_SESSION_DAYS = 30
-KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED = os.environ.get(
-    "KEY_PORTAL_SNAPSHOT_EXPORT_ENABLED", "false"
-).strip().lower() in {"1", "true", "yes", "on"}
-
 # CLIProxyAPI v7.1.29 exposes live usage as a destructive management queue
 # instead of the old in-memory /usage-statistics snapshot. Key Portal is the
 # only intended local consumer when this is enabled.
@@ -47,15 +43,6 @@ try:
     KEY_PORTAL_CLIPROXY_USAGE_QUEUE_POLL_SECONDS = int(os.environ.get("KEY_PORTAL_CLIPROXY_USAGE_QUEUE_POLL_SECONDS", "2") or "2")
 except ValueError:
     KEY_PORTAL_CLIPROXY_USAGE_QUEUE_POLL_SECONDS = 2
-try:
-    KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS = int(os.environ.get("KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS", "168") or "168")
-except ValueError:
-    KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS = 168
-try:
-    KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_MAX_RECORDS = int(os.environ.get("KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_MAX_RECORDS", "50000") or "50000")
-except ValueError:
-    KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_MAX_RECORDS = 50000
-
 KEY_PORTAL_ADMIN_EMAILS = [
     email.strip().lower()
     for email in os.environ.get(

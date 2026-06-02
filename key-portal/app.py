@@ -4,7 +4,6 @@ CLIProxyAPI Key Portal
 A web service for managing OAuth key contributions and monitoring key status.
 """
 
-import csv
 import json
 import hashlib
 import math
@@ -23,7 +22,6 @@ from flask_socketio import SocketIO, emit
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import config
-import database as db
 import portal_state
 import portal_auth
 import portal_docs
@@ -34,8 +32,6 @@ import usage_realtime
 from usage_sync import usage_date_from_timestamp
 
 # Import modular components
-import snapshot
-import user_keys
 import feishu
 import approval
 import nlb_monitor
@@ -123,13 +119,10 @@ _usage_history_response_cache = {
     "refreshing": False,
 }
 _usage_history_response_cache_lock = threading.Lock()
-USAGE_HISTORY_RESPONSE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "usage_history_cache.json")
 ALERT_MUTE_FILE = os.environ.get("KEY_PORTAL_ALERT_MUTE_FILE", os.path.join(os.path.dirname(__file__), "data", "alert_mute.json"))
 _alert_mute_lock = threading.Lock()
 
-# User keys cache and file path
-USER_KEYS_FILE = os.path.join(os.path.dirname(__file__), "data", "user_keys.json")
-KEY_POOL_FILE = os.path.join(os.path.dirname(__file__), "data", "key_pool.json")
+# User keys cache
 MONITOR_LOG_DIR = os.environ.get("KEY_PORTAL_MONITOR_LOG_DIR", os.path.join(os.path.dirname(__file__), "..", "monitor-logs"))
 ALLOWED_MODEL_GROUPS = {"common", "claude", "deepseek"}
 SESSION_COOKIE_NAME = "kp_session"
@@ -216,87 +209,43 @@ def get_user_name(claude_email):
 # User Keys Management Functions
 # ============================================================================
 
+def empty_user_keys():
+    return {"version": "2.0", "users": {}, "keys": {}}
+
+
 def load_user_keys():
-    """Load user keys database into memory cache."""
-    if _user_keys_cache["loaded"] and _user_keys_cache["data"]:
+    """Load user/key state from Postgres into memory cache."""
+    if _user_keys_cache["loaded"] and _user_keys_cache["data"] is not None:
         return _user_keys_cache["data"]
 
     pg_data = portal_state.load_user_keys()
-    if pg_data:
-        _user_keys_cache["data"] = pg_data
-        _user_keys_cache["loaded"] = True
-        print(f"[UserKeys] Loaded {len(pg_data.get('users', {}))} users, {len(pg_data.get('keys', {}))} keys from Postgres")
-        return pg_data
-
-    if os.path.exists(USER_KEYS_FILE):
-        try:
-            with open(USER_KEYS_FILE, "r") as f:
-                data = json.load(f)
-                _user_keys_cache["data"] = data
-                _user_keys_cache["loaded"] = True
-                print(f"[UserKeys] Loaded {len(data.get('users', {}))} users, {len(data.get('keys', {}))} keys")
-                return data
-        except Exception as e:
-            print(f"[UserKeys] Error loading: {e}")
-
-    # Initialize empty structure
-    data = {"version": "1.0", "users": {}, "keys": {}}
-    _user_keys_cache["data"] = data
+    if pg_data is None:
+        pg_data = empty_user_keys()
+    _user_keys_cache["data"] = pg_data
     _user_keys_cache["loaded"] = True
-    return data
+    print(f"[UserKeys] Loaded {len(pg_data.get('users', {}))} users, {len(pg_data.get('keys', {}))} keys from Postgres")
+    return pg_data
 
 
 def save_user_keys(data):
-    """Save user keys database to file."""
-    if portal_state.is_pg_enabled():
-        if portal_state.save_user_keys(data):
-            _user_keys_cache["data"] = data
-            _user_keys_cache["loaded"] = True
-            print(f"[UserKeys] Saved {len(data.get('users', {}))} users to Postgres")
-            return True
+    """Save user/key state to Postgres."""
+    if not portal_state.save_user_keys(data):
         print("[UserKeys] Error saving to Postgres")
         return False
-
-    try:
-        os.makedirs(os.path.dirname(USER_KEYS_FILE), exist_ok=True)
-        with open(USER_KEYS_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-        _user_keys_cache["data"] = data
-        print(f"[UserKeys] Saved {len(data.get('users', {}))} users")
-        return True
-    except Exception as e:
-        print(f"[UserKeys] Error saving: {e}")
-        return False
+    _user_keys_cache["data"] = data
+    _user_keys_cache["loaded"] = True
+    print(f"[UserKeys] Saved {len(data.get('users', {}))} users to Postgres")
+    return True
 
 
 def load_key_pool():
-    """Load key pool."""
-    pg_pool = portal_state.load_key_pool()
-    if pg_pool:
-        return pg_pool
-
-    if os.path.exists(KEY_POOL_FILE):
-        try:
-            with open(KEY_POOL_FILE, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[KeyPool] Error loading: {e}")
-    return {"unused": [], "assigned": {}}
+    """Load key pool from Postgres."""
+    return portal_state.load_key_pool() or {"unused": [], "assigned": {}}
 
 
 def save_key_pool(data):
-    """Save key pool."""
-    if portal_state.is_pg_enabled():
-        return portal_state.save_key_pool(data)
-
-    try:
-        os.makedirs(os.path.dirname(KEY_POOL_FILE), exist_ok=True)
-        with open(KEY_POOL_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-        return True
-    except Exception as e:
-        print(f"[KeyPool] Error saving: {e}")
-        return False
+    """Save key pool to Postgres."""
+    return portal_state.save_key_pool(data)
 
 
 def normalize_model_group(model_group):
@@ -505,6 +454,50 @@ def update_user_key_budget(api_key, max_budget):
     key_info["max_budget"] = float(max_budget)
     key_info["updated_at"] = datetime.utcnow().isoformat() + "Z"
     return save_user_keys(user_keys)
+
+
+def restore_litellm_key_assignment(api_key, litellm_lookup):
+    metadata = (litellm_lookup or {}).get("metadata") or {}
+    email = _normalize_email(metadata.get("email") or (litellm_lookup or {}).get("user_id"))
+    if not email:
+        return None
+
+    model_group = normalize_model_group(metadata.get("model_group", "common"))
+    label = metadata.get("label") or (litellm_lookup or {}).get("key_alias") or "LiteLLM Key"
+    name = metadata.get("name") or email
+    now = datetime.utcnow().isoformat() + "Z"
+
+    user_keys = load_user_keys()
+    users = user_keys.setdefault("users", {})
+    user = users.setdefault(email, {
+        "email": email,
+        "name": name,
+        "api_keys": [],
+        "created_at": now,
+    })
+    user["name"] = user.get("name") or name
+    user.setdefault("api_keys", [])
+    if api_key not in user["api_keys"]:
+        user["api_keys"].append(api_key)
+
+    key_info = user_keys.setdefault("keys", {}).setdefault(api_key, {})
+    key_info.update({
+        "email": email,
+        "label": label,
+        "model_group": model_group,
+        "source": "litellm",
+        "status": "active",
+        "updated_at": now,
+    })
+    if not key_info.get("created_at"):
+        key_info["created_at"] = now
+    budget = _parse_positive_budget((litellm_lookup or {}).get("max_budget"))
+    if budget is not None:
+        key_info["max_budget"] = budget
+
+    if not save_user_keys(user_keys):
+        return None
+    return key_info
 
 
 def _parse_positive_budget(value):
@@ -905,19 +898,6 @@ def send_feishu_notification(receiver_email, title, content):
         return False
 
 
-# Snapshot file path
-SNAPSHOT_FILE = os.path.join(os.path.dirname(__file__), "data", "cliproxy_snapshot.json")
-SNAPSHOT_DIR = os.path.join(os.path.dirname(__file__), "data", "cliproxy_snapshots")
-
-# State for restart detection
-_cliproxy_state = {
-    "last_total_tokens": 0,
-    "last_total_requests": 0,
-    "last_check_time": None,
-    "restart_count": 0
-}
-
-
 def call_management_api(method, endpoint, data=None):
     """Call CLIProxyAPI management API."""
     url = f"{config.CLIPROXY_API_URL}{endpoint}"
@@ -944,11 +924,7 @@ def call_management_api(method, endpoint, data=None):
 
 DEFAULT_CLIPROXY_NODES = [
     {"name": "node-a", "url": "http://127.0.0.1:8317"},
-    {"name": "node-b", "url": "http://172.31.26.28:8317"},
-    {"name": "node-c", "url": "https://172.31.16.7"},
-    {"name": "node-d", "url": "https://172.31.24.86"},
-    {"name": "node-e", "url": "https://172.31.29.243"},
-    {"name": "node-f", "url": "https://172.31.25.74"},
+    {"name": "node-b", "url": "https://172.31.26.28"},
 ]
 
 
@@ -1255,63 +1231,6 @@ def usage_payload_from_queue_records(records):
     return {"usage": usage, "failed_requests": usage["failure_count"]}
 
 
-def usage_queue_history_cache_key(node_name):
-    return f"usage_queue_history:{node_name}"
-
-
-def usage_queue_record_identity(record):
-    if not isinstance(record, dict):
-        try:
-            record = json.loads(record) if isinstance(record, str) else {}
-        except Exception:
-            record = {}
-    request_id = str(record.get("request_id") or record.get("requestId") or "").strip()
-    if request_id:
-        return f"request:{request_id}"
-    tokens = record.get("tokens") or {}
-    return "|".join([
-        str(record.get("timestamp") or ""),
-        str(record.get("api_key") or ""),
-        str(record.get("auth_index") or ""),
-        str(record.get("model") or record.get("alias") or ""),
-        str(tokens.get("total_tokens") or ""),
-        str(record.get("failed") or ""),
-    ])
-
-
-def prune_usage_queue_history(records, now=None):
-    now = now or datetime.utcnow()
-    hours = max(1, int(getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS", 168) or 168))
-    max_records = max(100, int(getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_MAX_RECORDS", 50000) or 50000))
-    cutoff = now - timedelta(hours=hours)
-    pruned = []
-    for record in records or []:
-        detail = normalize_usage_queue_record(record)
-        if not detail:
-            continue
-        when = parse_detail_time_utc(detail.get("timestamp"))
-        if when and when < cutoff:
-            continue
-        pruned.append(record)
-    return pruned[-max_records:]
-
-
-def update_usage_queue_history(node_name, records):
-    key = usage_queue_history_cache_key(node_name)
-    cached = portal_state.cache_get_json(key) or []
-    by_id = {}
-    ordered = []
-    for record in list(cached if isinstance(cached, list) else []) + list(records or []):
-        identity = usage_queue_record_identity(record)
-        if not identity or identity in by_id:
-            continue
-        by_id[identity] = record
-        ordered.append(record)
-    history = prune_usage_queue_history(ordered)
-    portal_state.cache_set_json(key, history, max(3600, int(getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_HISTORY_HOURS", 168) or 168) * 3600))
-    return history
-
-
 def call_usage_queue_node(node, count=None, timeout=10):
     count = max(1, int(count or getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_COUNT", 1000)))
     return call_management_api_node(node, "GET", f"/v0/management/usage-queue?count={count}", timeout=timeout)
@@ -1346,11 +1265,10 @@ def merge_usage_queue_results(results):
             converted.append((node_name, None, err))
             continue
         records = payload if isinstance(payload, list) else []
-        history = update_usage_queue_history(node_name, records)
-        node_payload = usage_payload_from_queue_records(history)
+        node_payload = usage_payload_from_queue_records(records)
         converted.append((node_name, node_payload, None))
     merged = merge_usage_payloads(converted)
-    merged["source"] = "cliproxy_usage_queue_history"
+    merged["source"] = "cliproxy_usage_queue_live"
     return merged
 
 
@@ -1462,85 +1380,6 @@ def build_token_breakdown(total_tokens, input_tokens=0, output_tokens=0, cached_
         "reasoning_tokens": reasoning_tokens,
         "unknown_tokens": unknown_tokens,
         "cost_usd": round(cost_usd, 4),
-    }
-
-
-def token_breakdown_totals_from_db(today):
-    totals = {
-        "today": {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0},
-        "total": {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0},
-    }
-    for row in db.get_daily_usage_history():
-        total_tokens = int(row.get("total_tokens", 0) or 0)
-        input_tokens = int(row.get("input_tokens", 0) or 0)
-        output_tokens = int(row.get("output_tokens", 0) or 0)
-        cached_tokens = int(row.get("cached_tokens", 0) or 0)
-        reasoning_tokens = int(row.get("reasoning_tokens", 0) or 0)
-        totals["total"]["total_tokens"] += total_tokens
-        totals["total"]["input_tokens"] += input_tokens
-        totals["total"]["output_tokens"] += output_tokens
-        totals["total"]["cached_tokens"] += cached_tokens
-        totals["total"]["reasoning_tokens"] += reasoning_tokens
-        if row.get("date") == today:
-            totals["today"]["total_tokens"] = total_tokens
-            totals["today"]["input_tokens"] = input_tokens
-            totals["today"]["output_tokens"] = output_tokens
-            totals["today"]["cached_tokens"] = cached_tokens
-            totals["today"]["reasoning_tokens"] = reasoning_tokens
-
-    user_totals = db.get_all_users_total_usage()
-    user_total = {
-        "total_tokens": sum(int(item.get("total_tokens", 0) or 0) for item in user_totals),
-        "input_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in user_totals),
-        "output_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in user_totals),
-        "cached_tokens": sum(int(item.get("cached_tokens", 0) or 0) for item in user_totals),
-        "reasoning_tokens": sum(int(item.get("reasoning_tokens", 0) or 0) for item in user_totals),
-    }
-    if user_total["total_tokens"] > totals["total"]["total_tokens"]:
-        totals["total"] = user_total
-
-    today_user_rows = [item for item in db.get_user_usage_by_period("day") if item.get("period") == today]
-    today_user = {
-        "total_tokens": sum(int(item.get("total_tokens", 0) or 0) for item in today_user_rows),
-        "input_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in today_user_rows),
-        "output_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in today_user_rows),
-        "cached_tokens": sum(int(item.get("cached_tokens", 0) or 0) for item in today_user_rows),
-        "reasoning_tokens": sum(int(item.get("reasoning_tokens", 0) or 0) for item in today_user_rows),
-    }
-    if today_user["total_tokens"] > totals["today"]["total_tokens"]:
-        totals["today"] = today_user
-    return totals
-
-
-def estimate_beijing_today_breakdown_from_utc_day(today_tokens):
-    from datetime import datetime, timedelta
-    utc_now = datetime.utcnow()
-    beijing_now = utc_now + timedelta(hours=8)
-    beijing_today_str = beijing_now.strftime("%Y-%m-%d")
-    utc_now_date = utc_now.strftime("%Y-%m-%d")
-    if utc_now_date == beijing_today_str:
-        return None
-
-    utc_day = None
-    for row in db.get_daily_usage_history():
-        if row.get("date") == utc_now_date:
-            utc_day = row
-            break
-    if not utc_day:
-        return None
-
-    utc_total_tokens = int(utc_day.get("total_tokens", 0) or 0)
-    today_tokens = int(today_tokens or 0)
-    if utc_total_tokens <= 0 or today_tokens <= 0:
-        return None
-
-    fraction = min(today_tokens / utc_total_tokens, 1.0)
-    return {
-        "total_tokens": today_tokens,
-        "input_tokens": int(int(utc_day.get("input_tokens", 0) or 0) * fraction),
-        "output_tokens": int(int(utc_day.get("output_tokens", 0) or 0) * fraction),
-        "cached_tokens": int(int(utc_day.get("cached_tokens", 0) or 0) * fraction),
-        "reasoning_tokens": int(int(utc_day.get("reasoning_tokens", 0) or 0) * fraction),
     }
 
 
@@ -1749,7 +1588,7 @@ SELECT
     coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS reasoning_tokens
 FROM "LiteLLM_SpendLogs" s
 WHERE s."endTime" >= (current_date - interval '1 day')
-GROUP BY 1;
+GROUP BY 1
 """
         detail = litellm_psql_json(f"SELECT coalesce(json_agg(row_to_json(t)), '[]'::json) FROM ({sql}) t", timeout=30)
         if not detail:
@@ -2874,22 +2713,6 @@ FROM rows;
     return data or []
 
 
-def sync_litellm_usage_to_database(dates):
-    rows = litellm_usage_rows_for_dates(dates)
-    stats = db.replace_litellm_usage_for_dates(rows)
-    rebuild_stats = db.rebuild_daily_usage_from_user_usage(dates)
-    clear_persistent_floor_cache()
-    with _litellm_usage_cache_lock:
-        _litellm_usage_cache["data"] = None
-        _litellm_usage_cache["last_update"] = 0
-    return {
-        **stats,
-        "rebuilt_dates": rebuild_stats.get("dates", 0),
-        "tokens": sum(_int_usage_value(row.get("total_tokens")) for row in rows),
-        "requests": sum(_int_usage_value(row.get("total_requests")) for row in rows),
-    }
-
-
 def query_litellm_spendlogs_aggregate():
     database_url = litellm_database_url()
     if not database_url:
@@ -3046,13 +2869,6 @@ def get_usage_summary_cached():
         cached = _usage_summary_cache["data"]
         if cached and (now - _usage_summary_cache["last_update"]) < _usage_summary_cache["ttl"]:
             return dict(cached, cache_age_seconds=round(now - _usage_summary_cache["last_update"], 3)), None
-    redis_cached = portal_state.cache_get_json("usage_summary")
-    if redis_cached:
-        with _usage_summary_cache_lock:
-            _usage_summary_cache["data"] = redis_cached
-            _usage_summary_cache["last_update"] = now
-        return dict(redis_cached, cache_age_seconds=0, cache_status="redis"), None
-
     litellm = query_litellm_spendlogs_aggregate()
     if litellm:
         summary = {
@@ -3080,7 +2896,6 @@ def get_usage_summary_cached():
     with _usage_summary_cache_lock:
         _usage_summary_cache["data"] = summary
         _usage_summary_cache["last_update"] = now
-    portal_state.cache_set_json("usage_summary", summary, max(2, int(_usage_summary_cache["ttl"] * 2)))
     return dict(summary, cache_age_seconds=0), None
 
 
@@ -3188,7 +3003,6 @@ status_service = status_events.StatusEventsService(
     config=config,
     portal_state=portal_state,
     feishu=feishu,
-    database=db,
     nodes=CLIPROXY_NODES,
     beijing_today=beijing_today,
     int_usage_value=_int_usage_value,
@@ -3315,82 +3129,23 @@ def distribute_total_by_weight(items, total, field, weight_field):
         items[index][field] = value
 
 
-def normalize_recent_days(buckets, usage):
-    today = beijing_today()
-    daily_rows = {row.get("date"): row for row in db.get_daily_usage_history()}
-    by_day = defaultdict(list)
-    for bucket in buckets.values():
-        by_day[bucket["key"][:10]].append(bucket)
-    for date, items in by_day.items():
-        daily = daily_rows.get(date)
-        if date == today:
-            tokens_by_day = usage.get("tokens_by_day", {}) or {}
-            requests_by_day = usage.get("requests_by_day", {}) or {}
-            daily = dict(daily or {})
-            daily["total_tokens"] = int(tokens_by_day.get(today, 0) or 0)
-            daily["total_requests"] = int(requests_by_day.get(today, 0) or 0)
-        elif len(items) != 24:
-            continue
-        if not daily:
-            continue
-        total_requests = int(daily.get("total_requests", 0) or 0)
-        failure_total = int(daily.get("failure_count", 0) or 0)
-        if date == today and total_requests:
-            stored_requests = int((daily_rows.get(date) or {}).get("total_requests", 0) or 0)
-            if stored_requests and stored_requests != total_requests:
-                failure_total = round(failure_total * total_requests / stored_requests)
-        distribute_total_by_weight(items, daily.get("total_tokens", 0), "tokens", "tokens")
-        distribute_total_by_weight(items, total_requests, "requests", "requests")
-        distribute_total_by_weight(items, failure_total, "failure_count", "failure_count")
-        for item in items:
-            if item["failure_count"] > item["requests"]:
-                item["failure_count"] = item["requests"]
-            item["success_count"] = item["requests"] - item["failure_count"]
-
-
 def recent_hour_fallback_from_summary(usage, hours=48):
     buckets = recent_hour_empty_buckets(hours)
-    start_key = next(iter(buckets))
-    end_key = next(reversed(buckets))
-    for key, row in db.get_hourly_usage_range(start_key, end_key).items():
-        bucket = buckets.get(key)
-        if not bucket:
-            continue
-        bucket["tokens"] = int(row.get("tokens", 0) or 0)
-        bucket["requests"] = int(row.get("requests", 0) or 0)
-        bucket["success_count"] = int(row.get("success_count", 0) or 0)
-        bucket["failure_count"] = int(row.get("failure_count", 0) or 0)
-        latency_count = int(row.get("latency_count", 0) or 0)
-        if latency_count:
-            bucket["avg_latency_ms"] = round(int(row.get("latency_sum_ms", 0) or 0) / latency_count, 2)
-
     tokens_by_hour = usage.get("tokens_by_hour", {}) or {}
     requests_by_hour = usage.get("requests_by_hour", {}) or {}
     success_by_hour = usage.get("success_by_hour", {}) or {}
     failure_by_hour = usage.get("failure_by_hour", {}) or {}
-    latency_sum_by_hour = usage.get("latency_sum_by_hour", {}) or {}
-    latency_count_by_hour = usage.get("latency_count_by_hour", {}) or {}
     avg_latency_ms_by_hour = usage.get("avg_latency_ms_by_hour", {}) or {}
     today = beijing_today()
     for bucket in buckets.values():
         if bucket["key"][:10] != today:
             continue
         hour_key = bucket["key"][-2:]
-        tokens = int(tokens_by_hour.get(hour_key, 0) or 0)
-        requests = int(requests_by_hour.get(hour_key, 0) or 0)
-        success_count = int(success_by_hour.get(hour_key, 0) or 0)
-        failure_count = int(failure_by_hour.get(hour_key, 0) or 0)
-        latency_sum = int(latency_sum_by_hour.get(hour_key, 0) or 0)
-        latency_count = int(latency_count_by_hour.get(hour_key, 0) or 0)
-        if not (tokens or requests or success_count or failure_count or latency_count):
-            continue
-        bucket["tokens"] = tokens
-        bucket["requests"] = requests
-        bucket["success_count"] = success_count
-        bucket["failure_count"] = failure_count
+        bucket["tokens"] = int(tokens_by_hour.get(hour_key, 0) or 0)
+        bucket["requests"] = int(requests_by_hour.get(hour_key, 0) or 0)
+        bucket["success_count"] = int(success_by_hour.get(hour_key, 0) or 0)
+        bucket["failure_count"] = int(failure_by_hour.get(hour_key, 0) or 0)
         bucket["avg_latency_ms"] = avg_latency_ms_by_hour.get(hour_key)
-        db.upsert_hourly_usage(bucket["key"], tokens, requests, success_count, failure_count, latency_sum, latency_count)
-    normalize_recent_days(buckets, usage)
     return finalize_recent_hour_buckets(buckets)
 
 
@@ -3554,69 +3309,6 @@ def validate_oauth_params(code, state):
     return errors
 
 
-# Usage History - Memory Cache + CSV Persistence
-USAGE_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "data", "usage_history.csv")
-USAGE_CSV_FIELDS = ["date", "total_requests", "success_count", "failure_count", "total_tokens", "input_tokens", "output_tokens"]
-
-# Memory cache for usage history
-_usage_history_cache = {
-    "data": {},  # date -> {total_requests, success_count, failure_count, total_tokens, input_tokens, output_tokens}
-    "loaded": False
-}
-
-
-def load_usage_history():
-    """Load usage history from CSV into memory cache."""
-    if _usage_history_cache["loaded"]:
-        return _usage_history_cache["data"]
-
-    _usage_history_cache["data"] = {}
-
-    if os.path.exists(USAGE_HISTORY_FILE):
-        try:
-            with open(USAGE_HISTORY_FILE, "r", newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    date = row.get("date", "")
-                    if date:
-                        _usage_history_cache["data"][date] = {
-                            "total_requests": int(row.get("total_requests", 0)),
-                            "success_count": int(row.get("success_count", 0)),
-                            "failure_count": int(row.get("failure_count", 0)),
-                            "total_tokens": int(row.get("total_tokens", 0)),
-                            "input_tokens": int(row.get("input_tokens", 0)),
-                            "output_tokens": int(row.get("output_tokens", 0)),
-                        }
-            print(f"[UsageHistory] Loaded {len(_usage_history_cache['data'])} days from CSV")
-        except Exception as e:
-            print(f"[UsageHistory] Error loading CSV: {e}")
-
-    _usage_history_cache["loaded"] = True
-    return _usage_history_cache["data"]
-
-
-def save_usage_history():
-    """Save memory cache to CSV file."""
-    try:
-        os.makedirs(os.path.dirname(USAGE_HISTORY_FILE), exist_ok=True)
-
-        # Sort by date
-        sorted_dates = sorted(_usage_history_cache["data"].keys())
-
-        with open(USAGE_HISTORY_FILE, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=USAGE_CSV_FIELDS)
-            writer.writeheader()
-            for date in sorted_dates:
-                row = {"date": date, **_usage_history_cache["data"][date]}
-                writer.writerow(row)
-
-        print(f"[UsageHistory] Saved {len(sorted_dates)} days to CSV")
-        return True
-    except Exception as e:
-        print(f"[UsageHistory] Error saving CSV: {e}")
-        return False
-
-
 def sync_usage_from_api():
     """Refresh reporting caches without pulling full CLIProxyAPI usage payloads."""
     try:
@@ -3643,38 +3335,12 @@ def sync_usage_from_api():
 
 
 def get_usage_history_aggregated():
-    """Get usage history with daily, monthly, and yearly aggregations.
-
-    Merges PG (recent) with sqlite (historical) so older data is not lost.
-    """
+    """Get usage history directly from LiteLLM Postgres."""
     pg_data = litellm_usage_history_aggregated()
-    sqlite_data = db.get_usage_aggregated()
-
     if not pg_data:
-        sqlite_data["source"] = "key_portal_sqlite_fallback"
-        return sqlite_data
-
-    pg_dates = {row["date"] for row in pg_data.get("history") or []}
-    merged_history = list(pg_data.get("history") or [])
-    for row in sqlite_data.get("history") or []:
-        if row.get("date") not in pg_dates:
-            merged_history.append(row)
-    merged_history.sort(key=lambda r: r.get("date", ""))
-
-    by_month = {}
-    by_year = {}
-    for row in merged_history:
-        d = row.get("date", "")
-        mk = d[:7]
-        yk = d[:4]
-        for bucket, key in ((by_month, mk), (by_year, yk)):
-            if key not in bucket:
-                bucket[key] = {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_requests": 0, "success_count": 0, "failure_count": 0, "spend_usd": 0}
-            for field in ("total_tokens", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens", "total_requests", "success_count", "failure_count"):
-                bucket[key][field] += int(row.get(field) or 0)
-            bucket[key]["spend_usd"] += float(row.get("spend_usd") or 0)
-
-    return {"history": merged_history, "by_month": by_month, "by_year": by_year, "source": "litellm_spendlogs+sqlite"}
+        return {"history": [], "by_month": {}, "by_year": {}, "source": "litellm_spendlogs_unavailable"}
+    pg_data["source"] = "litellm_spendlogs"
+    return pg_data
 
 
 def enrich_usage_breakdowns(data):
@@ -3756,200 +3422,6 @@ def apply_live_today_usage(data, usage):
         bucket["failure_count"] = int(bucket.get("failure_count", 0) or 0) + failure_delta
 
     return data
-
-
-# ============================================================================
-# Snapshot Management (delegated to snapshot module)
-# ============================================================================
-
-def snapshot_file_for_node(node_name):
-    """Return the per-node snapshot path."""
-    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", node_name or "unknown")
-    return os.path.join(SNAPSHOT_DIR, f"{safe_name}.json")
-
-
-def snapshot_meta_file_for_node(node_name):
-    return f"{snapshot_file_for_node(node_name)}.meta.json"
-
-
-def snapshot_totals(snapshot_data):
-    usage = (snapshot_data or {}).get("usage", {}) or {}
-    return int(usage.get("total_tokens", 0) or 0), int(usage.get("total_requests", 0) or 0)
-
-
-def load_snapshot_file(path):
-    if not path or not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"[Snapshot] Ignoring invalid snapshot {path}: {e}")
-        return None
-
-
-def load_snapshot_meta(path):
-    if not path or not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-        return int(data.get("total_tokens", 0) or 0), int(data.get("total_requests", 0) or 0)
-    except (json.JSONDecodeError, OSError, ValueError) as e:
-        print(f"[Snapshot] Ignoring invalid snapshot metadata {path}: {e}")
-        return None
-
-
-def write_snapshot_meta(path, total_tokens, total_requests):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w") as f:
-        json.dump({"total_tokens": int(total_tokens or 0), "total_requests": int(total_requests or 0)}, f)
-    os.replace(tmp_path, path)
-
-
-def write_snapshot_file(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp_path, path)
-
-
-def import_snapshot_to_node(node, snapshot_data, label):
-    """v7.1.29 removed the old usage-statistics import endpoint."""
-    print(f"[Snapshot] Import skipped for {node['name']}: CLIProxyAPI v7.1.29 usage queues are not importable ({label})")
-    return False
-
-
-def export_node_snapshot(node):
-    """Persist a point-in-time aggregate built from currently queued usage records."""
-    node_name = node["name"]
-    path = snapshot_file_for_node(node_name)
-    records, err = call_usage_queue_node(
-        node,
-        count=getattr(config, "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_COUNT", 1000),
-        timeout=60,
-    )
-    if err:
-        print(f"[Snapshot] Export failed for {node_name}: {err}")
-        return False
-    payload = merge_usage_queue_results([(node_name, records, None)])
-    current_tokens, current_requests = snapshot_totals(payload)
-    write_snapshot_file(path, payload)
-    write_snapshot_meta(snapshot_meta_file_for_node(node_name), current_tokens, current_requests)
-
-    # Keep the legacy single-node file for compatibility with older tooling.
-    if node_name == CLIPROXY_NODES[0]["name"]:
-        write_snapshot_file(SNAPSHOT_FILE, payload)
-        write_snapshot_meta(f"{SNAPSHOT_FILE}.meta.json", current_tokens, current_requests)
-
-    print(f"[Snapshot] Exported {node_name}: {current_tokens:,} tokens, {current_requests:,} requests -> {path}")
-    return True
-
-
-def export_cliproxy_snapshot():
-    """Export complete usage snapshots from all CLIProxyAPI nodes."""
-    try:
-        print("[Snapshot] Exporting usage data from CLIProxyAPI nodes...")
-        results = [export_node_snapshot(node) for node in CLIPROXY_NODES]
-        return any(results)
-
-    except Exception as e:
-        print(f"[Snapshot] Export error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def import_cliproxy_snapshot():
-    """Import previously exported snapshots into CLIProxyAPI nodes."""
-    try:
-        imported = False
-        for index, node in enumerate(CLIPROXY_NODES):
-            path = snapshot_file_for_node(node["name"])
-            if not os.path.exists(path) and index == 0 and os.path.exists(SNAPSHOT_FILE):
-                path = SNAPSHOT_FILE
-            snapshot_data = load_snapshot_file(path)
-            if not snapshot_data:
-                print(f"[Snapshot] No snapshot file found for {node['name']} at {path}")
-                continue
-            tokens, requests_count = snapshot_totals(snapshot_data)
-            print(f"[Snapshot] Found {node['name']} snapshot: {tokens:,} tokens, {requests_count:,} requests")
-            imported = import_snapshot_to_node(node, snapshot_data, path) or imported
-        return imported
-
-    except Exception as e:
-        print(f"[Snapshot] Import error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def detect_cliproxy_restart(current_tokens, current_requests):
-    """
-    Detect if CLIProxyAPI has restarted by checking if token count decreased.
-    In-memory statistics only increase, so any decrease indicates a restart.
-    """
-    from datetime import datetime
-
-    now = datetime.now()
-
-    # First check, initialize state
-    if _cliproxy_state["last_check_time"] is None:
-        _cliproxy_state["last_total_tokens"] = current_tokens
-        _cliproxy_state["last_total_requests"] = current_requests
-        _cliproxy_state["last_check_time"] = now
-        print(f"[Restart] Monitoring initialized: {current_tokens:,} tokens, {current_requests:,} requests")
-        return False
-
-    # Check if data decreased (restart indicator)
-    tokens_decreased = current_tokens < _cliproxy_state["last_total_tokens"]
-    requests_decreased = current_requests < _cliproxy_state["last_total_requests"]
-
-    if tokens_decreased or requests_decreased:
-        _cliproxy_state["restart_count"] += 1
-
-        print()
-        print("=" * 80)
-        print(f"🔄 CLIProxyAPI RESTART DETECTED! (Restart #{_cliproxy_state['restart_count']})")
-        print("=" * 80)
-        print(f"Previous state (before restart):")
-        print(f"  Tokens:   {_cliproxy_state['last_total_tokens']:,}")
-        print(f"  Requests: {_cliproxy_state['last_total_requests']:,}")
-        print(f"  Time:     {_cliproxy_state['last_check_time']}")
-        print()
-        print(f"Current state (after restart):")
-        print(f"  Tokens:   {current_tokens:,}")
-        print(f"  Requests: {current_requests:,}")
-        print(f"  Time:     {now}")
-        print()
-        print(f"Data loss (in-memory):")
-        print(f"  Tokens:   {_cliproxy_state['last_total_tokens'] - current_tokens:,}")
-        print(f"  Requests: {_cliproxy_state['last_total_requests'] - current_requests:,}")
-        print("=" * 80)
-        print()
-
-        # Update state
-        _cliproxy_state["last_total_tokens"] = current_tokens
-        _cliproxy_state["last_total_requests"] = current_requests
-        _cliproxy_state["last_check_time"] = now
-
-        return True
-
-    # Normal growth, update state
-    _cliproxy_state["last_total_tokens"] = current_tokens
-    _cliproxy_state["last_total_requests"] = current_requests
-    _cliproxy_state["last_check_time"] = now
-
-    return False
-
-
-def scheduled_snapshot_export():
-    """Scheduled task to export CLIProxyAPI snapshot."""
-    with app.app_context():
-        print(f"[Scheduler] Running snapshot export at {datetime.now().isoformat()}")
-        export_cliproxy_snapshot()
 
 
 # ============================================================================
@@ -4288,10 +3760,28 @@ def usage_history_empty_response(refreshing=False):
     }
 
 
+def _usage_history_cache_beijing_date(data):
+    generated_at = str((data or {}).get("generated_at") or "")
+    if generated_at[:10]:
+        return generated_at[:10]
+    try:
+        history = (data or {}).get("history") or []
+        latest = max((str(row.get("date") or "") for row in history if isinstance(row, dict)), default="")
+        return latest[:10]
+    except Exception:
+        return ""
+
+
 def usage_history_cache_usable(data):
     if not isinstance(data, dict):
         return False
     if data.get("cache_status") == "warming":
+        return False
+    # Do not serve yesterday's history after the Beijing calendar day rolls over.
+    # The first report request of a new day should build a fresh response instead
+    # of showing the previous day while a background refresh catches up.
+    cache_date = _usage_history_cache_beijing_date(data)
+    if cache_date and cache_date < beijing_today():
         return False
     if data.get("refreshing") and not (
         data.get("history") or data.get("by_month") or data.get("by_year") or data.get("recent_hours") or data.get("model_groups")
@@ -4300,38 +3790,9 @@ def usage_history_cache_usable(data):
     return True
 
 
-def load_usage_history_response_cache_from_disk():
-    try:
-        redis_cached = portal_state.cache_get_json("usage_history_response")
-        if usage_history_cache_usable(redis_cached):
-            return redis_cached, time.time()
-        if not os.path.exists(USAGE_HISTORY_RESPONSE_CACHE_FILE):
-            return None, 0
-        with open(USAGE_HISTORY_RESPONSE_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not usage_history_cache_usable(data):
-            return None, 0
-        return data, os.path.getmtime(USAGE_HISTORY_RESPONSE_CACHE_FILE)
-    except Exception as e:
-        print(f"[UsageHistory] Failed to read disk cache: {e}")
-        return None, 0
-
-
-def save_usage_history_response_cache_to_disk(data):
-    try:
-        portal_state.cache_set_json("usage_history_response", data, _usage_history_response_cache["ttl"] * 5)
-        tmp_path = USAGE_HISTORY_RESPONSE_CACHE_FILE + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp_path, USAGE_HISTORY_RESPONSE_CACHE_FILE)
-    except Exception as e:
-        print(f"[UsageHistory] Failed to write disk cache: {e}")
-
-
 def refresh_usage_history_response_cache():
     try:
         data = build_usage_history_response()
-        save_usage_history_response_cache_to_disk(data)
         with _usage_history_response_cache_lock:
             _usage_history_response_cache["data"] = data
             _usage_history_response_cache["last_update"] = time.time()
@@ -4364,17 +3825,8 @@ def get_usage_history():
         start_usage_history_response_refresh()
         return jsonify({**cached, "cache_age_seconds": round(now - last_update, 3), "refreshing": True, "cache_status": "stale_memory"})
 
-    disk_cached, disk_mtime = load_usage_history_response_cache_from_disk()
-    if disk_cached:
-        with _usage_history_response_cache_lock:
-            _usage_history_response_cache["data"] = disk_cached
-            _usage_history_response_cache["last_update"] = disk_mtime
-        start_usage_history_response_refresh()
-        return jsonify({**disk_cached, "cache_age_seconds": round(now - disk_mtime, 3), "refreshing": True, "cache_status": "disk"})
-
     try:
         data = build_usage_history_response()
-        save_usage_history_response_cache_to_disk(data)
         with _usage_history_response_cache_lock:
             _usage_history_response_cache["data"] = data
             _usage_history_response_cache["last_update"] = time.time()
@@ -4434,8 +3886,7 @@ def reassign_key_email(api_key, new_email):
     if not save_key_pool(pool):
         return False, "保存 Key 池数据失败", None
 
-    migrated_rows = db.reassign_user_usage_key(api_key, new_email)
-    return True, None, {"old_email": old_email, "new_email": new_email, "migrated_rows": migrated_rows}
+    return True, None, {"old_email": old_email, "new_email": new_email}
 
 
 def current_portal_session():
@@ -4635,7 +4086,6 @@ def claim_api_keys_for_user(email, name, api_keys):
                 old_user = users.get(old_email)
                 if old_user:
                     old_user["api_keys"] = [key for key in old_user.get("api_keys", []) if key != api_key]
-                db.reassign_user_usage_key(api_key, email)
                 moved += 1
             key_info["email"] = email
             key_info["updated_at"] = now
@@ -4865,14 +4315,34 @@ def request_key_topup():
     user_data = load_user_keys()
     key_info = user_data.get("keys", {}).get(api_key)
     if not key_info:
-        return jsonify({"error": "Key 不存在"}), 404
+        litellm_lookup = litellm_key_lookup(api_key)
+        if not litellm_lookup:
+            return jsonify({"error": "Key 不存在"}), 404
+        metadata = litellm_lookup.get("metadata") or {}
+        lookup_email = _normalize_email(metadata.get("email") or litellm_lookup.get("user_id"))
+        if not lookup_email:
+            return jsonify({"error": "Key 不存在"}), 404
+        if not user_can_access_email(lookup_email):
+            return jsonify({"error": "不能操作其他用户的 Key"}), 403
+        key_info = restore_litellm_key_assignment(api_key, litellm_lookup)
+        if not key_info:
+            return jsonify({"error": "无法恢复该 Key 的 Portal 状态"}), 500
+        user_data = load_user_keys()
 
     email = str(key_info.get("email", "")).strip().lower()
     if not user_can_access_email(email):
         return jsonify({"error": "不能操作其他用户的 Key"}), 403
     user = user_data.get("users", {}).get(email, {})
     if api_key not in user.get("api_keys", []):
-        return jsonify({"error": "Key 归属校验失败"}), 403
+        if key_info.get("source") == "litellm":
+            litellm_lookup = litellm_key_lookup(api_key)
+            lookup_email = _normalize_email(((litellm_lookup or {}).get("metadata") or {}).get("email") or (litellm_lookup or {}).get("user_id"))
+            if lookup_email == email:
+                key_info = restore_litellm_key_assignment(api_key, litellm_lookup)
+                user_data = load_user_keys()
+                user = user_data.get("users", {}).get(email, {})
+        if api_key not in user.get("api_keys", []):
+            return jsonify({"error": "Key 归属校验失败"}), 403
 
     model_group = normalize_model_group(key_info.get("model_group", "common"))
     if not approval.requires_approval(model_group):
@@ -5978,21 +5448,14 @@ if __name__ == "__main__":
     print("[Startup] Initializing Key Portal state backend...")
     portal_state.ensure_schema()
 
-    print("[Startup] Initializing database...")
-    db.init_database()
-
     print("[Startup] Initializing approval table...")
     approval.init_approval_table()
 
-    print("[Startup] Loading user keys database...")
+    print("[Startup] Loading user/key state from Postgres...")
     load_user_keys()
-
-    print("[Startup] Restoring CLIProxyAPI usage snapshots...")
-    # import_cliproxy_snapshot()  # disabled: NLB architecture, nodes are independent
 
     portal_scheduler.configure_scheduler(scheduler, config, {
         "expiry_check": scheduled_expiry_check,
-        "snapshot_export": scheduled_snapshot_export,
         "usage_broadcast": broadcast_usage_update,
         "approval_poll": lambda: approval.poll_pending_approvals(),
         "nlb_health_monitor": scheduled_nlb_health_monitor,

@@ -504,7 +504,6 @@ class AuthStatsService:
         try:
             data = self.build()
             now = time.time()
-            self.portal_state.cache_set_json("auth_stats", data, self.stats_cache["ttl"] * 4)
             with self.stats_cache_lock:
                 self.stats_cache["data"] = data
                 self.stats_cache["last_update"] = now
@@ -513,7 +512,6 @@ class AuthStatsService:
                 self.stats_cache["refreshing"] = False
 
     def clear_cache(self):
-        self.portal_state.cache_delete("auth_stats")
         with self.stats_cache_lock:
             self.stats_cache["data"] = None
             self.stats_cache["last_update"] = 0
@@ -536,18 +534,11 @@ class AuthStatsService:
             refreshing = self.stats_cache["refreshing"]
             if cached and now - last_update < ttl:
                 return self._with_cache_metadata(cached, now, refreshing)
-        redis_cached = self.portal_state.cache_get_json("auth_stats")
-        if redis_cached:
-            with self.stats_cache_lock:
-                self.stats_cache["data"] = redis_cached
-                self.stats_cache["last_update"] = now
-            return self._with_cache_metadata(redis_cached, now, False)
         data = self.build()
         with self.stats_cache_lock:
             self.stats_cache["data"] = data
             self.stats_cache["last_update"] = time.time()
             self.stats_cache["refreshing"] = False
-        self.portal_state.cache_set_json("auth_stats", data, self.stats_cache["ttl"] * 4)
         return self._with_cache_metadata(data, self.stats_cache["last_update"], False)
 
     def build(self):
