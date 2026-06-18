@@ -942,7 +942,7 @@ def call_management_api(method, endpoint, data=None):
 
 DEFAULT_CLIPROXY_NODES = [
     {"name": "node-a", "url": "http://127.0.0.1:8317"},
-    {"name": "node-b", "url": "https://172.31.26.28"},
+    {"name": "node-b", "url": "https://172.31.26.28:8443"},
 ]
 
 

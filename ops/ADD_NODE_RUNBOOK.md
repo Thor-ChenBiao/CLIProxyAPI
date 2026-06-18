@@ -1,8 +1,8 @@
 # 新增 CLIProxyAPI 节点 Runbook
 
-最后更新: 2026-05-25
+最后更新: 2026-06-01
 
-本文档说明未来新增或恢复工作节点时需要做什么、哪些配置可以复制、哪些必须按节点定制。当前生产 active 节点以 `ops/ARCHITECTURE.md` 为准；2026-05-25 起 node-d 已从 NLB 摘除并 terminate，EIP 已释放，根卷已删除。
+本文档说明未来新增或恢复工作节点时需要做什么、哪些配置可以复制、哪些必须按节点定制。当前生产 active 节点以 `ops/ARCHITECTURE.md` 为准；截至 2026-06-01，active 节点只有 node-a/node-b，node-c/node-d 均已从 NLB 摘除并 terminate，EIP 已释放。
 
 ## 核心原则
 
@@ -22,7 +22,7 @@
   → NLB cliproxy-nlb TCP:443
     → node-a Nginx :443
     → node-b Nginx :443
-    → node-c Nginx :443
+    # node-c/node-d 已退役；未来新增节点通过本 runbook 加回
 ```
 
 模型请求链路:
@@ -45,7 +45,7 @@ Key Portal 链路:
 
 ## AWS 资源规格
 
-按现有 node-b/node-c 复制即可:
+按现有 node-b 的工作节点配置复制；未来恢复 node-c 或新增节点时按本 runbook 重新验证，不要假设 node-c 仍是 active 参考节点:
 
 - Region: `us-east-2`
 - AMI: `ami-0eb6f60b2909a10f7` (`al2023 arm64`)
@@ -286,7 +286,7 @@ node-a:
 proxy_pass http://127.0.0.1:18080;
 ```
 
-node-b/node-c/node-d:
+node-b 和未来新增/恢复的工作节点:
 
 ```nginx
 proxy_pass http://172.31.17.144:18080;
@@ -304,17 +304,19 @@ proxy_pass http://172.31.17.144:18080;
 
 ### 稳定管理后台入口
 
-每个 active 节点都应支持稳定入口:
+每个 active 节点都应支持稳定入口。当前 active 入口:
 
 ```text
 /a/management.html -> node-a
 /b/management.html -> node-b
-/c/management.html -> node-c
 ```
 
-如果恢复或新增 node-d，需要在所有节点 Nginx 里增加并重新验证:
+如果未来恢复 node-c 或新增其它节点，需要在所有节点 Nginx 里增加并重新验证对应入口，例如:
 
 ```text
+/c/management.html
+/c/v0/management
+/c/v0/management/
 /d/management.html
 /d/v0/management
 /d/v0/management/
@@ -374,7 +376,7 @@ python3 -m venv /home/ec2-user/litellm-proxy/venv
 - Nginx `server_name` 中的 EIP
 - `/healthz` proxy 目标
 - `/` 和 portal routes 是否回源到 node-a
-- 新增 `/d/management.html` 等稳定管理入口
+- 新增 `/c/management.html`、`/d/management.html` 等未来节点稳定管理入口
 - 本节点自身 `/management.html` 是否打本机 cliproxyapi
 - cliproxyapi 是否监听预期地址
 
@@ -431,8 +433,8 @@ curl http://172.31.17.144:18080/
 curl -k https://token.zasdas.com/
 curl -k https://token.zasdas.com/a/management.html
 curl -k https://token.zasdas.com/b/management.html
-curl -k https://token.zasdas.com/c/management.html
-# 只有恢复或新增 node-d 后才验证:
+# 只有恢复或新增 node-c/node-d 后才验证:
+# curl -k https://token.zasdas.com/c/management.html
 # curl -k https://token.zasdas.com/d/management.html
 ```
 
@@ -452,7 +454,7 @@ aws elbv2 describe-target-health \
   --target-group-arn arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-tls-targets/1cd4d8f8d022ef51
 ```
 
-所有 active 目标必须是 `healthy`。截至 2026-05-25，active targets 是 node-a/b/c；node-d 已 deregister 并 terminate，不应出现在 active target health 清单里。
+所有 active 目标必须是 `healthy`。截至 2026-06-01，active targets 是 node-a/b；node-c/node-d 已 deregister 并 terminate，不应出现在 active target health 清单里。
 
 ## 常见故障
 
@@ -480,7 +482,7 @@ curl -k -H 'Host: token.zasdas.com' https://127.0.0.1/healthz
 
 如果本机 502，检查 `/healthz` 是否打错 cliproxyapi 地址。
 
-### `/c/management.html` 或 `/d/management.html` 400/403
+### 未来节点 `/c/management.html` 或 `/d/management.html` 400/403
 
 常见原因:
 
@@ -501,7 +503,7 @@ proxy_ssl_name token.zasdas.com;
 
 - 不要复制 `~/.cli-proxy-api/*.json` 到新节点。
 - 不要自动移动、重命名、删除、恢复认证文件；下线节点的 auth 文件迁移只能按明确人工指令执行，并在完成后验证各 active 节点 usable auth file 数量。
-- 不要在 node-b/node-c/node-d 启动完整 Key Portal Web 服务。
+- 不要在 node-b 或未来新增/恢复的工作节点启动完整 Key Portal Web 服务。
 - 不要把非 node-a 的 Key Portal route 指到本机 `127.0.0.1:18080`。
 - 不要在未通过 `/healthz` 和 `127.0.0.1:18081/healthz` 前把节点加入 NLB。
 - 不要绕过 health-agent 直接把 Nginx/NLB `/healthz` 指到 cliproxyapi；NLB readiness 应体现本节点 cliproxyapi、LiteLLM 和可用 auth files 的综合结果。

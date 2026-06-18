@@ -1,6 +1,6 @@
 # CLIProxyAPI upstream update runbook
 
-_Last updated: 2026-05-29_
+_Last updated: 2026-06-01_
 
 ## Current baseline
 
@@ -11,7 +11,8 @@ _Last updated: 2026-05-29_
 | Current upstream core | `origin/main` at `7d9980e8`, tag `v7.1.29` |
 | Current local upgrade branch | `upgrade/v7.1.29-clean-overlay-20260529T141850Z` |
 | Core policy after this update | Keep CLIProxyAPI core identical to `origin/main`; keep local changes in `key-portal/` and `ops/` only |
-| Active runtime nodes updated | node-a, node-b, node-c |
+| Current active runtime nodes | node-a, node-b |
+| Historical 2026-05-29 rollout nodes | node-a, node-b, node-c |
 
 The important invariant is:
 
@@ -125,12 +126,12 @@ Run this suite after every upstream rebase/merge and before declaring the runtim
 
 ### 2. Runtime health checks
 
-Run on each active node after rollout. As of 2026-05-29 the active set is node-a, node-b, node-c.
+Run on each active node after rollout. As of 2026-06-01 the active set is node-a, node-b; node-c is retained below only as historical 2026-05-29 rollout context.
 
-| Test | node-a command | node-b/node-c command pattern | Expected |
+| Test | node-a command | node-b command pattern | Expected |
 |---|---|---|---|
-| Service active | `systemctl is-active cliproxyapi.service` | `ssh -i ~/.ssh/cluster-key ec2-user@HOST 'systemctl is-active cliproxyapi.service'` | `active` |
-| Health endpoint | `curl -fsS http://127.0.0.1:8317/healthz` | `ssh -i ~/.ssh/cluster-key ec2-user@HOST 'curl -fsS http://127.0.0.1:8317/healthz'` | HTTP 200 / healthy body |
+| Service active | `systemctl is-active cliproxyapi.service` | `ssh -i ~/.ssh/cluster-key ec2-user@172.31.26.28 'systemctl is-active cliproxyapi.service'` | `active` |
+| Health endpoint | `curl -fsS http://127.0.0.1:8317/healthz` | `ssh -i ~/.ssh/cluster-key ec2-user@172.31.26.28 'curl -fsS http://127.0.0.1:8317/healthz'` | HTTP 200 / healthy body |
 | Usage queue present | `curl -sS -H 'X-Management-Key: admin123' 'http://127.0.0.1:8317/v0/management/usage-queue?count=1'` | same via SSH | HTTP 200 JSON array |
 | Auth-file API reachable | `curl -sS -H 'X-Management-Key: admin123' 'http://127.0.0.1:8317/v0/management/auth-files'` | same via SSH | HTTP 200 JSON with `files` |
 
@@ -238,7 +239,7 @@ Treat these as failures in future upgrade validation until the model allowlist/a
    sha256sum /tmp/cliproxyapi-next-check
    ```
 
-8. Roll out node by node: node-a first, then node-b and node-c.
+8. Roll out node by node: node-a first, then node-b. If a future node-c/new node is deliberately reactivated, add it to the rollout set only after it is back in the active architecture document.
 
 ## Node rollout commands
 
@@ -254,11 +255,11 @@ curl -fsS http://127.0.0.1:8317/healthz
 curl -sS -H 'X-Management-Key: admin123' 'http://127.0.0.1:8317/v0/management/usage-queue?count=1'
 ```
 
-### node-b/node-c
+### node-b
 
 ```bash
 KEY=~/.ssh/cluster-key
-for item in node-b:172.31.26.28 node-c:172.31.16.7; do
+for item in node-b:172.31.26.28; do
   name=${item%%:*}
   host=${item#*:}
   TS=$(date -u +%Y%m%dT%H%M%SZ)
@@ -286,11 +287,11 @@ sudo systemctl start cliproxyapi.service
 curl -fsS http://127.0.0.1:8317/healthz
 ```
 
-For node-b/node-c, run the same command over SSH with `~/.ssh/cluster-key`.
+For node-b, run the same command over SSH with `~/.ssh/cluster-key`. Add future reactivated nodes only after they are back in the active architecture document.
 
 ## Notes
 
 - Do not edit or test auth files directly. Use management APIs only.
 - Avoid changing node-a runtime services except during an explicit rollout window.
 - Key Portal should not call upstream provider quota APIs directly; it may call CLIProxyAPI management APIs and LiteLLM Postgres.
-- The active production node set is node-a, node-b, node-c. Retired or reserved nodes should not appear in `CLIPROXY_NODES_JSON` unless deliberately reactivated.
+- The active production node set is node-a, node-b. Retired or reserved nodes such as node-c/node-d should not appear in `CLIPROXY_NODES_JSON` unless deliberately reactivated.

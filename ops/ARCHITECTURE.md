@@ -1,6 +1,6 @@
 # CLIProxyAPI 集群架构
 
-最后更新: 2026-05-25
+最后更新: 2026-06-01
 
 ## 当前结论
 
@@ -23,15 +23,15 @@ Key Portal 仍是单 active 服务，只在 node-a 运行；其它节点的门�
 | 节点 | 实例ID | 实例类型 | IP (EIP) | 内网IP | 当前角色 | 健康检查观测 |
 |------|--------|---------|----------|--------|----------|--------------|
 | node-a (biao-go-server) | i-0afbeaa90d8dc91e1 | c7g.xlarge (4vCPU/8GB) | 3.149.220.73 | 172.31.17.144 | Nginx + LiteLLM + cliproxyapi + Key Portal + health-agent | `https://127.0.0.1/healthz`、health-agent、LiteLLM、cliproxyapi 均返回 200 |
-| node-b (cliproxy-node-b) | i-08055c52390086849 | c7g.large (2vCPU/4GB) | 3.150.54.188 | 172.31.26.28 | Nginx + LiteLLM + cliproxyapi + health-agent | `https://172.31.26.28/healthz` 返回 200 |
-| node-c (cliproxy-node-c) | i-07d065661a87679df | c7g.large (2vCPU/4GB) | 18.189.167.58 | 172.31.16.7 | Nginx + LiteLLM + cliproxyapi + health-agent | `https://172.31.16.7/healthz` 返回 200 |
-| node-d (cliproxy-node-d) | i-0fd32ef2df7d69857 | c7g.large (2vCPU/4GB) | 3.19.6.233 | 172.31.24.86 | 已从 NLB 摘除并 terminate | 不承载新流量；EIP 已释放，根卷已删除；退役前 auth 文件已迁出到 node-a/b/c |
+| node-b (cliproxy-node-b) | i-08055c52390086849 | c7g.xlarge (4vCPU/8GB) | 3.150.54.188 | 172.31.26.28 | Nginx + LiteLLM + cliproxyapi + health-agent | `https://172.31.26.28/healthz` 返回 200 |
+| node-c (cliproxy-node-c) | i-07d065661a87679df | 原 c7g.large | EIP `18.189.167.58` 已释放 | 172.31.16.7 | 已于 2026-06-01 从 NLB 摘除并 terminate | 不承载新流量；EIP allocation `eipalloc-03c24af52b89b5cbc` 已释放，根卷 `vol-05029dcf130ff9126` 随实例删除 |
+| node-d (cliproxy-node-d) | i-0fd32ef2df7d69857 | 原 c7g.large | EIP `3.19.6.233` 已释放 | 172.31.24.86 | 已于 2026-05-25 从 NLB 摘除并 terminate | 不承载新流量；根卷已删除；退役前 auth 文件已迁出到当时 active 节点 |
 | node-e | 待核对 | 待核对 | 待核对 | 172.31.29.243 | 代码和 Nginx 管理入口中有预留配置 | 2026-05-24 从 node-a curl `/healthz` 不可达 |
 | node-f | 待核对 | 待核对 | 待核对 | 172.31.25.74 | 代码和 Nginx 管理入口中有预留配置 | 2026-05-24 从 node-a curl `/healthz` 不可达 |
 
 区域: `us-east-2`，VPC: `vpc-0f364ac1dc5cb2e11`，子网: `subnet-08a5e4e391a7304c4`。
 
-2026-05-25 用本地 `biao-aws` profile 复核并执行过扩缩容维护：NLB target group 当前只保留 node-a/b/c，node-d 已 deregister 并 terminate。后续正式扩缩容仍需用有权限的 AWS profile 复核 EC2 和 target health。
+2026-06-01 用本地 `biao-aws` profile 复核并执行过扩缩容维护：NLB target group 当前只保留 node-a/node-b，node-b 已升级到 `c7g.xlarge`，node-c/node-d 已 deregister 并 terminate。后续正式扩缩容仍需用有权限的 AWS profile 复核 EC2 和 target health。
 
 ## 流量架构
 
@@ -46,21 +46,21 @@ Key Portal 仍是单 active 服务，只在 node-a 运行；其它节点的门�
 │  Target Group: cliproxy-tls-targets  │
 │  协议: TCP:443 passthrough            │
 │  健康检查: HTTPS /healthz            │
-└──────┬───────────────┬───────────────┘
-       │               │               │
-       ▼               ▼               ▼
-   node-a Nginx    node-b Nginx    node-c Nginx
-   :443 TLS        :443 TLS        :443 TLS
-       │               │               │
-       ├── /v1/* ──────┼── /v1/* ──────┤
-       │               │               │
-       ▼               ▼               ▼
-   local LiteLLM    local LiteLLM   local LiteLLM
-   127.0.0.1:4000  127.0.0.1:4000  127.0.0.1:4000
-       │               │               │
-       ▼               ▼               ▼
-   local cliproxyapi local cliproxyapi local cliproxyapi
-   127.0.0.1:8317  127.0.0.1:8317  127.0.0.1:8317
+└──────┬───────────────┘
+       │               │
+       ▼               ▼
+   node-a Nginx    node-b Nginx
+   :443 TLS        :443 TLS
+       │               │
+       ├── /v1/* ──────┤
+       │               │
+       ▼               ▼
+   local LiteLLM    local LiteLLM
+   127.0.0.1:4000  127.0.0.1:4000
+       │               │
+       ▼               ▼
+   local cliproxyapi local cliproxyapi
+   127.0.0.1:8317  127.0.0.1:8317
 ```
 
 ### Nginx 路由边界
@@ -83,11 +83,11 @@ Nginx 仍负责来源 IP / 网络层访问控制、管理入口 allowlist，以�
 
 | 服务 | 端口 | 部署节点 | 当前 systemd / 入口 | 说明 |
 |------|------|---------|---------------------|------|
-| Nginx | `0.0.0.0:443`, `[::]:443` | active: node-a/b/c；node-d retired | `nginx.service` | TLS 终止、路径路由、来源访问控制 |
-| LiteLLM | `127.0.0.1:4000` | active: node-a/b/c；node-d retired | `litellm-proxy.service` → `/home/ec2-user/litellm-proxy/venv/bin/litellm --config /home/ec2-user/litellm-proxy/config.yaml --host 127.0.0.1 --port 4000 --telemetry False` | 用户 API key 校验、模型权限、预算、限流、审计和 SpendLogs |
-| cliproxyapi | `127.0.0.1:8317` | active: node-a/b/c；node-d retired | `cliproxyapi.service` → `/home/ec2-user/CLIProxyAPI/cliproxyapi` | Go 代理核心，上游适配、OAuth/provider/auth-file 管理，不再作为用户 key allowlist 的唯一入口 |
+| Nginx | `0.0.0.0:443`, `[::]:443` | active: node-a/b；node-c/node-d retired | `nginx.service` | TLS 终止、路径路由、来源访问控制 |
+| LiteLLM | `127.0.0.1:4000` | active: node-a/b；node-c/node-d retired | `litellm-proxy.service` → `/home/ec2-user/litellm-proxy/venv/bin/litellm --config /home/ec2-user/litellm-proxy/config.yaml --host 127.0.0.1 --port 4000 --telemetry False` | 用户 API key 校验、模型权限、预算、限流、审计和 SpendLogs；node-a/node-b systemd 内存限制均为 `MemoryHigh=3584M`, `MemoryMax=4G` |
+| cliproxyapi | `127.0.0.1:8317` | active: node-a/b；node-c/node-d retired | `cliproxyapi.service` → `/home/ec2-user/CLIProxyAPI/cliproxyapi` | Go 代理核心，上游适配、OAuth/provider/auth-file 管理，不再作为用户 key allowlist 的唯一入口 |
 | Key Portal | `0.0.0.0:18080` | 仅 node-a active | `key-portal.service` → `/usr/bin/python3 /home/ec2-user/CLIProxyAPI/key-portal/app.py` | 用户密钥管理、审批、用量面板、运维页面 |
-| Key Portal health-agent | `127.0.0.1:18081` | active: node-a/b/c；node-d retired | `key-portal-health.service` → `/usr/bin/python3 /home/ec2-user/CLIProxyAPI/key-portal/health_agent.py` | NLB-facing 业务健康检查 |
+| Key Portal health-agent | `127.0.0.1:18081` | active: node-a/b；node-c/node-d retired | `key-portal-health.service` → `/usr/bin/python3 /home/ec2-user/CLIProxyAPI/key-portal/health_agent.py` | NLB-facing 业务健康检查 |
 
 ## 认证与授权边界
 
@@ -112,18 +112,14 @@ health-agent 检查内容:
 
 ## Key Portal 集群视图
 
-`key-portal/app.py` 默认管理节点列表:
+`key-portal/app.py` 默认管理/监控节点列表只包含当前 active 节点:
 
 ```text
 node-a http://127.0.0.1:8317
-node-b http://172.31.26.28:8317
-node-c https://172.31.16.7
-node-d https://172.31.24.86
-node-e https://172.31.29.243
-node-f https://172.31.25.74
+node-b https://172.31.26.28
 ```
 
-其中 node-d 仍可能存在于 Key Portal 默认管理/监控节点列表，但 2026-05-25 已从 NLB 摘除并 terminate；如果继续保留在 `CLIPROXY_NODES`/监控列表中，NLB monitor 会直接探测 node-d `/healthz` 并可能记录 node health event。node-e/node-f 是配置中预留或候选节点；2026-05-24 从 node-a 直接探测 `/healthz` 不可达，不能在未验证前视为 NLB active target。
+生产 systemd 也通过 `/etc/key-portal/cluster-nodes.env` 设置同样的 `CLIPROXY_NODES_JSON`。node-c 已于 2026-06-01 从 NLB 摘除并 terminate，node-d 已于 2026-05-25 从 NLB 摘除并 terminate；退役节点不应继续保留在 `CLIPROXY_NODES`/监控列表中，否则 NLB monitor 会直接探测其 `/healthz` 并产生误报。node-e/node-f 是历史预留或候选节点；2026-05-24 从 node-a 直接探测 `/healthz` 不可达，不能在未验证前视为 NLB active target。
 
 ## 模型路由规则
 
@@ -173,7 +169,7 @@ Claude key 的 Bedrock 回归必须同时覆盖 OpenAI Chat Completions 和 Anth
 
 认证文件由人工管理，不要自动复制到新增节点，也不要由 Key Portal 主动触发上游 provider quota API。cliproxyapi 可以热加载认证文件；修改后通常无需重启服务。
 
-2026-05-25 Node-D 下线维护时，按人工指令把 Node-D 上的可用 auth 文件迁出并在 active 节点间重新均衡；维护完成后 node-a/b/c 各有 7 个 usable auth files，node-d 已退役且不承载新流量。
+2026-06-01 Node-C 退役后，active 认证文件只应分布在 node-a/node-b 上；下线节点的 auth 文件迁移或删除只能按明确人工指令执行。Node-D 已于 2026-05-25 退役且不承载新流量。
 
 ## 安全组和网络边界
 
@@ -205,7 +201,8 @@ NLB 只需要能访问各 target 的 TCP 443；`4000`、`8317`、`18081` 应保�
 - Target Group ARN: `arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-tls-targets/1cd4d8f8d022ef51`
 - 协议: TCP 443
 - 健康检查: HTTPS `/healthz`, matcher `200-399`
-- 当前 active targets: node-a (`i-0afbeaa90d8dc91e1`), node-b (`i-08055c52390086849`), node-c (`i-07d065661a87679df`)
+- 当前 active targets: node-a (`i-0afbeaa90d8dc91e1`), node-b (`i-08055c52390086849`)
+- node-c (`i-07d065661a87679df`) 已于 2026-06-01 deregister 并 terminate，EIP `18.189.167.58` / allocation `eipalloc-03c24af52b89b5cbc` 已释放，根卷 `vol-05029dcf130ff9126` 随实例删除
 - node-d (`i-0fd32ef2df7d69857`) 已于 2026-05-25 deregister 并 terminate，EIP `3.19.6.233` 已释放，根卷 `vol-0d32e1c525fe3b0e9` 已删除
 
 ## DNS
@@ -226,4 +223,4 @@ NLB 只需要能访问各 target 的 TCP 443；`4000`、`8317`、`18081` 应保�
 - 新功能/风险变更优先在 node-b 或独立工作节点验证。
 - 不要提交 runtime data、数据库、备份、日志、二进制和认证文件。
 - 不要在 Key Portal 或监控里主动轮询上游 provider quota API；只读取 proxy/LiteLLM 已经产生的数据。
-- 2026-05-25 Node-D 退役期间，`key-portal/data/alert_mute.json` 已设为 muted；解除静默前先移除/禁用 Node-D 的健康监控，或预期会产生 node-d health event。
+- 2026-05-25 Node-D 退役期间，`key-portal/data/alert_mute.json` 已设为 muted；解除静默前先移除/禁用 Node-C/Node-D 等退役节点的健康监控，或预期会产生对应 node health event。

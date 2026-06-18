@@ -69,10 +69,12 @@ def _auth_provider(item):
 def _is_usable_auth_file(item):
     if not isinstance(item, dict):
         return False
-    if item.get("disabled") is True or item.get("unavailable") is True:
+    if item.get("disabled") is True:
         return False
     status = str(item.get("status") or "").strip().lower()
-    if status in {"disabled", "expired", "error", "invalid", "unavailable", "revoked"}:
+    if status in {"disabled", "expired", "invalid", "revoked"}:
+        return False
+    if item.get("unavailable") is True:
         return False
     return True
 
