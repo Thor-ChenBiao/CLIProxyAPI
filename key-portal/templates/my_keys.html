@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的 Keys - Key Portal</title>
+    <script src="/static/i18n.js?v=20260525-2"></script>
+    {% include "_portal_shell.html" %}
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --ink: #142033;
+            --muted: #6b7589;
+            --line: #dfe6f0;
+            --blue: #2454d6;
+            --blue-soft: #e8efff;
+            --green: #138a52;
+            --green-soft: #e8f7ef;
+            --orange: #b96c00;
+            --orange-soft: #fff4db;
+            --red: #c93535;
+            --red-soft: #fff0f0;
+            --shadow: 0 18px 45px rgba(34, 49, 76, 0.10);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: linear-gradient(180deg, #f7f9fc 0%, var(--bg) 100%);
+            color: var(--ink);
+            min-height: 100vh;
+            padding: 26px;
+        }
+        .container {
+            max-width: 1440px;
+            margin: 0 auto;
+        }
+        .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 18px; }
+        .eyebrow { color: var(--blue); font-weight: 800; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 8px; }
+        h1 { font-size: clamp(28px, 3vw, 44px); line-height: 1; letter-spacing: -0.05em; color: #10192b; margin: 0; }
+        .subtitle { color: var(--muted); margin: 12px 0 0; max-width: 880px; line-height: 1.65; }
+        .lookup-panel {
+            background: rgba(255,255,255,0.94);
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        .search-box {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 18px 22px;
+            border-bottom: 1px solid #eef2ff;
+            background: #fbfcff;
+        }
+        .search-box input {
+            width: min(520px, 100%);
+            padding: 11px 14px;
+            border: 1px solid #cdd8ea;
+            border-radius: 999px;
+            background: #fff;
+            font-size: 14px;
+        }
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--blue);
+            box-shadow: 0 0 0 4px rgba(36,84,214,0.10);
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 40px;
+            padding: 10px 16px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 800;
+            transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+            white-space: nowrap;
+            color: white;
+            background: #102044;
+            box-shadow: 0 10px 22px rgba(16, 32, 68, 0.20);
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn-danger {
+            color: var(--red);
+            background: var(--red-soft);
+            border-color: #ffc1c1;
+            box-shadow: none;
+            padding: 8px 15px;
+            font-size: 13px;
+        }
+        .btn-topup {
+            color: var(--orange);
+            background: var(--orange-soft);
+            border-color: #ffd88b;
+            box-shadow: none;
+            padding: 8px 15px;
+            font-size: 13px;
+        }
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            width: min(440px, calc(100vw - 32px));
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal input, .modal textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        .modal label { display: block; margin-top: 14px; color: #333; font-weight: 600; }
+        .lookup-panel .user-info {
+            box-shadow: none;
+            border-radius: 0;
+            margin-bottom: 0;
+        }
+        .user-info {
+            background: white;
+            padding: 24px;
+            border-radius: 18px;
+            box-shadow: 0 10px 26px rgba(34, 49, 76, 0.08);
+            margin-bottom: 20px;
+            display: none;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-top: 20px;
+        }
+        .stat-card {
+            background: linear-gradient(180deg, #f9fbff 0%, #eef4ff 100%);
+            color: var(--ink);
+            border: 1px solid #cfdcff;
+            padding: 18px;
+            border-radius: 18px;
+            text-align: left;
+        }
+        .stat-value {
+            color: #10192b;
+            font-size: 30px;
+            line-height: 1;
+            font-weight: 950;
+            margin-bottom: 8px;
+            font-variant-numeric: tabular-nums;
+        }
+        .stat-label {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 850;
+        }
+        .token-detail { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+        .token-cost { font-size: 11px; color: var(--green); font-weight: 800; margin-top: 2px; }
+        .lookup-panel .keys-list {
+            box-shadow: none;
+            border-radius: 0;
+            border-top: 1px solid #eef2ff;
+        }
+        .keys-list {
+            background: white;
+            padding: 24px;
+            border-radius: 18px;
+            box-shadow: 0 10px 26px rgba(34, 49, 76, 0.08);
+            display: none;
+        }
+        .keys-table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: rgba(255,255,255,0.94);
+        }
+        table {
+            width: 100%;
+            min-width: 1120px;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 13px 14px;
+            text-align: left;
+            border-bottom: 1px solid rgba(223,230,240,0.82);
+            vertical-align: middle;
+        }
+        th {
+            background: #f8fbff;
+            font-size: 12px;
+            font-weight: 950;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+        .key-value {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            background: var(--panel-soft);
+            border: 1px solid rgba(223,230,240,0.9);
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .usage-cell { min-width: 260px; }
+        .last-used-cell { min-width: 170px; }
+        .action-cell { min-width: 135px; }
+        .keys-card-list { display: none; }
+        @media (max-width: 760px) {
+            body { padding: 16px; }
+            .topbar { flex-direction: column; }
+            .search-box { align-items: stretch; flex-direction: column; }
+            .search-box input { width: 100%; }
+            .keys-table-wrap { display: none; }
+            .keys-card-list { display: grid; gap: 12px; }
+            .key-card {
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 14px;
+                background: #fff;
+                box-shadow: 0 2px 8px rgba(31,41,55,0.06);
+            }
+            .key-card-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+            .key-card-label { font-weight: 700; color: #374151; }
+            .key-card-meta { color: #6b7280; font-size: 12px; line-height: 1.6; margin-top: 8px; }
+            .key-card-stats { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 10px 0; }
+        }
+        .lookup-panel .error {
+            margin: 0 24px 24px;
+        }
+        .help-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .help-card {
+            padding: 18px;
+            border-radius: 18px;
+            border: 1px solid var(--line);
+            line-height: 1.5;
+            box-shadow: 0 10px 26px rgba(34, 49, 76, 0.06);
+        }
+        .help-card code {
+            display: block;
+            background: rgba(255,255,255,0.72);
+            border: 1px solid rgba(223,230,240,0.78);
+            padding: 12px;
+            border-radius: 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 13px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .links {
+            text-align: center;
+            margin-top: 30px;
+        }
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 15px;
+        }
+        .links a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topbar">
+            <div>
+                <div class="eyebrow">Key Portal</div>
+                <h1>我的 Keys</h1>
+                <p class="subtitle">查看当前登录账号名下的 API Keys、额度消耗和最近使用情况；也可以输入指定 Key 做快速查询。</p>
+            </div>
+        </div>
+        <div class="lookup-panel">
+            <div class="search-box">
+                <input type="text" id="keyInput" placeholder="输入 API Key（如：sk-... 或 usr_pool_...）">
+                <button class="btn" onclick="searchKeys()">查询 Key</button>
+            </div>
+
+            <div class="error" id="error"></div>
+
+            <div class="user-info" id="userInfo">
+            <h2 id="userName"></h2>
+            <p id="userEmail" style="color: #666; margin-top: 5px;"></p>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalRequests">0</div>
+                    <div class="stat-label">总请求数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="totalTokens">0</div>
+                    <div class="stat-label">总 Tokens</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="keyCount">0</div>
+                    <div class="stat-label">Keys 数量</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="keys-list" id="keysList">
+            <h3 style="margin-bottom: 20px;">您的 API Keys</h3>
+            <div class="keys-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>标签</th>
+                            <th>Key 类型</th>
+                            <th>创建时间</th>
+                            <th>最后消耗</th>
+                            <th>请求数</th>
+                            <th>Tokens</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="keysTableBody"></tbody>
+                </table>
+            </div>
+            <div class="keys-card-list" id="keysCardList"></div>
+        </div>
+        </div>
+
+        <!-- 历史申请的Keys -->
+        <div id="myKeysHistory" style="margin-bottom: 24px; display: none;">
+            <h3 style="color: #667eea; margin-bottom: 15px;">📋 本机历史申请记录</h3>
+            <div id="myKeysList"></div>
+        </div>
+
+        <div class="help-grid">
+            <div class="help-card" style="background: #fff3cd;">
+                <strong>💡 如何查看我的 API Key？</strong>
+                <p style="margin: 10px 0; font-size: 14px; color: #856404;">在终端执行以下命令：</p>
+                <code>cat ~/.claude/settings.json | grep apiKeyHelper</code>
+                <p style="margin-top: 10px; font-size: 13px; color: #856404;">输出中 "echo" 后面的就是你的 API Key</p>
+            </div>
+
+            <div class="help-card" style="background: #f8d7da; border: 1px solid #f5c6cb;">
+                <strong style="color: #721c24;">🗑 安全移除代理配置</strong>
+                <p style="margin: 10px 0; font-size: 14px; color: #856404;">如需恢复为官方 Claude Code（移除代理配置但保留 MCP/permissions 等设置）：</p>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                    <button onclick="copyRemoveCmd(this)" style="padding: 10px 20px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s; white-space: nowrap;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                        复制移除命令
+                    </button>
+                    <span style="font-size: 12px; color: #856404;">仅移除 apiKeyHelper 和 ANTHROPIC_BASE_URL，不影响其他配置</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-backdrop" id="topupModal">
+            <div class="modal">
+                <h3 style="margin-bottom: 8px; color: #333;">申请追加额度</h3>
+                <p id="topupKeyInfo" style="font-size: 13px; color: #666; line-height: 1.5;"></p>
+                <label for="topupBudget">追加额度 (USD)</label>
+                <input type="number" id="topupBudget" min="0.1" step="0.1" placeholder="例如：5">
+                <label for="topupReason">申请理由</label>
+                <textarea id="topupReason" rows="3" placeholder="请说明为什么需要追加额度"></textarea>
+                <div id="topupResult" style="display: none; margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 13px;"></div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px;">
+                    <button class="btn" onclick="closeTopupModal()" style="background: #e5e7eb; color: #374151;">取消</button>
+                    <button class="btn btn-topup" id="topupSubmitBtn" onclick="submitTopupRequest()">提交审批</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'my_api_keys';
+        const EMAIL_STORAGE_KEY = 'my_keys_email';
+        const MODEL_GROUP_LABELS = {
+            common: 'GPT Key',
+            claude: 'Claude Key',
+            gemini: 'Gemini Key',
+            deepseek: 'DeepSeek Key'
+        };
+        let currentTopupKey = null;
+        let currentLookup = null;
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
+
+        function jsArg(value) {
+            return JSON.stringify(String(value ?? '')).replace(/</g, '\\u003c');
+        }
+
+        function topupButtonHtml(keyInfo, style) {
+            if (!keyInfo?.can_topup) return '';
+            return `<button ${style || 'class="btn btn-topup"'} onclick='openTopupModal(${jsArg(keyInfo.key)}, ${jsArg(modelGroupLabel(keyInfo.model_group || 'common'))}, ${jsArg(keyInfo.label || '')}, ${Number(keyInfo.max_budget || 0)})'>追加额度</button>`;
+        }
+
+        function rememberEmail(email) {
+            if (!email || !email.endsWith('@zilliz.com')) return;
+            localStorage.setItem(EMAIL_STORAGE_KEY, email);
+        }
+
+        function getRememberedEmail() {
+            return String(localStorage.getItem(EMAIL_STORAGE_KEY) || '').trim().toLowerCase();
+        }
+
+        async function loadPortalSession() {
+            try {
+                const resp = await fetch('/api/session');
+                const data = await resp.json();
+                if (!resp.ok || !data.authenticated) return null;
+                return data;
+            } catch (e) {
+                console.error('Failed to load session:', e);
+                return null;
+            }
+        }
+
+        async function claimLocalKeysForSession(session) {
+            const keys = getMyKeys().map(k => k.key).filter(Boolean);
+            if (!session?.authenticated || keys.length === 0) return;
+            try {
+                await fetch('/api/session/claim-local-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keys })
+                });
+            } catch (e) {
+                console.error('Failed to claim local keys:', e);
+            }
+        }
+
+        function getMyKeys() {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch (e) {
+                console.error('Failed to read localStorage:', e);
+                return [];
+            }
+        }
+
+        function removeMyKey(apiKey) {
+            try {
+                const keys = getMyKeys();
+                const filtered = keys.filter(k => k.key !== apiKey);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+                displayMyKeys();
+            } catch (e) {
+                console.error('Failed to remove from localStorage:', e);
+            }
+        }
+
+        async function displayMyKeys() {
+            const keys = getMyKeys();
+            const container = document.getElementById('myKeysHistory');
+            const listDiv = document.getElementById('myKeysList');
+
+            if (keys.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            listDiv.innerHTML = keys.map((item, index) => {
+                return `
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 18px 22px; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(0,0,0,0.08); border: 1px solid #e9ecef; transition: all 0.3s;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="flex: 1;">
+                                <div style="font-size: 15px; color: #333; margin-bottom: 6px; font-weight: 600;">
+                                    ${item.identifier}
+                                </div>
+                                <div style="font-family: 'Courier New', monospace; font-size: 12px; color: #667eea; background: #f0f4ff; padding: 4px 8px; border-radius: 4px; display: inline-block;">
+                                    ${item.key}
+                                </div>
+                                <div style="font-size: 12px; color: #999; margin-top: 8px;">
+                                    📅 ${new Date(item.created_at).toLocaleString('zh-CN')}
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button onclick="copySetupCmd('${item.key}', this)" style="padding: 9px 14px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(16,185,129,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                                    Claude 配置
+                                </button>
+                                <button onclick="copyCodexCmd('${item.key}', this)" style="padding: 9px 14px; background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(0,166,126,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                                    Codex 配置
+                                </button>
+                                <button onclick="viewKeyDetails('${item.key}')" style="padding: 9px 14px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.3s; box-shadow: 0 2px 6px rgba(102,126,234,0.3);" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
+                                    查看详情
+                                </button>
+                                <button onclick="removeMyKey('${item.key}')" style="padding: 9px 14px; background: #f8d7da; color: #dc3545; border: 1px solid #f5c6cb; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.background='#dc3545'; this.style.color='white'; this.style.borderColor='#dc3545'" onmouseout="this.style.background='#f8d7da'; this.style.color='#dc3545'; this.style.borderColor='#f5c6cb'">
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function viewKeyDetails(apiKey) {
+            document.getElementById('keyInput').value = apiKey;
+            searchKeys();
+            // Scroll to results
+            setTimeout(() => {
+                document.getElementById('userInfo').scrollIntoView({ behavior: 'smooth' });
+            }, 500);
+        }
+
+        function formatNumber(num) {
+            return Number(num || 0).toLocaleString();
+        }
+
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(item) {
+            if (!item) return 'Input 0 · Output 0 · Cache 0';
+            const parts = [
+                'Input ' + formatNumber(item.input_tokens),
+                'Output ' + formatNumber(item.output_tokens),
+                'Cache ' + formatNumber(item.cached_tokens)
+            ];
+            if (Number(item.reasoning_tokens || 0) > 0) parts.push('Reasoning ' + formatNumber(item.reasoning_tokens));
+            if (Number(item.unknown_tokens || 0) > 0) parts.push('未分类 ' + formatNumber(item.unknown_tokens));
+            return parts.join(' · ');
+        }
+
+        function tokenUsageHtml(item) {
+            const breakdown = item?.token_breakdown || item || {};
+            return `
+                <div>${formatNumber(item?.total_tokens ?? breakdown.total_tokens)}</div>
+                <div class="token-detail">${tokenBreakdownText(breakdown)}</div>
+                <div class="token-cost">累计估算 ${formatCost(item?.estimated_cost_usd ?? breakdown.cost_usd, 'usd')}</div>
+                ${todayUsageText(item)}
+            `;
+        }
+
+        function todayUsageText(item) {
+            if (!item || Number(item.today_tokens || 0) <= 0) return '';
+            const todayBreakdown = {
+                input_tokens: item.today_input_tokens,
+                output_tokens: item.today_output_tokens,
+                cached_tokens: item.today_cached_tokens,
+                reasoning_tokens: item.today_reasoning_tokens,
+                total_tokens: item.today_tokens,
+                cost_usd: item.today_spend_usd,
+            };
+            return `<div class="token-detail">今日 ${formatNumber(item.today_tokens)} · ${tokenBreakdownText(todayBreakdown)}</div><div class="token-cost">今日估算 ${formatCost(item.today_spend_usd, 'usd')}</div>`;
+        }
+
+        function usageScopeLabel(item) {
+            if (item?.usage_scope === 'day') return '单日';
+            if (item?.usage_scope === 'total_and_today' && Number(item?.today_tokens || 0) > 0) return '累计+今日';
+            return '累计';
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const parsed = new Date(dateStr);
+            if (Number.isNaN(parsed.getTime())) return '-';
+            return parsed.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderKeysResult({ title, detail, totalRequests, totalTokens, tokenBreakdown, estimatedCostUsd, keys }) {
+            const userInfo = document.getElementById('userInfo');
+            const keysList = document.getElementById('keysList');
+            const tbody = document.getElementById('keysTableBody');
+            const cards = document.getElementById('keysCardList');
+
+            document.getElementById('userName').textContent = title;
+            document.getElementById('userEmail').textContent = detail;
+            document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
+            document.getElementById('totalTokens').innerHTML = tokenUsageHtml({
+                total_tokens: totalTokens,
+                token_breakdown: tokenBreakdown,
+                estimated_cost_usd: estimatedCostUsd
+            });
+            document.getElementById('keyCount').textContent = keys.length;
+
+            tbody.innerHTML = '';
+            cards.innerHTML = '';
+            keys.forEach(key => {
+                const normalized = {
+                    ...key,
+                    estimated_cost_usd: key.estimated_cost_usd ?? key.spend_usd,
+                    total_requests: key.total_requests || 0,
+                    total_tokens: key.total_tokens || 0
+                };
+                const actions = normalized.can_revoke === false
+                    ? '<span class="token-detail">SpendLogs 归因记录</span>'
+                    : `${topupButtonHtml(normalized)} <button class="btn btn-danger" onclick='revokeKey(${jsArg(normalized.key)})'>撤销</button>`;
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td><span class="key-value">${escapeHtml(normalized.key)}</span></td>
+                    <td>${escapeHtml(normalized.label || '默认')}</td>
+                    <td>${escapeHtml(modelGroupLabel(normalized.model_group || 'common'))}</td>
+                    <td>${formatDate(normalized.created_at)}</td>
+                    <td class="last-used-cell"><div>${formatDate(normalized.last_used_at)}</div><div class="token-detail">${usageScopeLabel(normalized)}</div></td>
+                    <td>${formatNumber(normalized.total_requests)}</td>
+                    <td class="usage-cell">${tokenUsageHtml(normalized)}</td>
+                    <td class="action-cell">${actions}</td>
+                `;
+                const card = document.createElement('div');
+                card.className = 'key-card';
+                card.innerHTML = `
+                    <div class="key-card-top">
+                        <div>
+                            <div class="key-card-label">${escapeHtml(normalized.label || '默认')}</div>
+                            <div class="key-value">${escapeHtml(normalized.key)}</div>
+                        </div>
+                        <div class="token-detail">${escapeHtml(modelGroupLabel(normalized.model_group || 'common'))}</div>
+                    </div>
+                    <div class="key-card-stats">
+                        <div><strong>请求数：</strong>${formatNumber(normalized.total_requests)}</div>
+                        <div>${tokenUsageHtml(normalized)}</div>
+                    </div>
+                    <div class="key-card-meta">创建：${formatDate(normalized.created_at)}<br>最后消耗：${formatDate(normalized.last_used_at)} · ${usageScopeLabel(normalized)}</div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${actions}</div>
+                `;
+                cards.appendChild(card);
+            });
+
+            userInfo.style.display = 'block';
+            keysList.style.display = 'block';
+        }
+
+        async function searchByEmail() {
+            const errorDiv = document.getElementById('error');
+            const userInfo = document.getElementById('userInfo');
+            const keysList = document.getElementById('keysList');
+
+            errorDiv.style.display = 'none';
+            userInfo.style.display = 'none';
+            keysList.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/my-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    const keys = Array.isArray(data.keys) ? data.keys : [];
+                    const email = String(data.email || '').toLowerCase();
+                    currentLookup = { type: 'email', value: email };
+                    rememberEmail(email);
+                    const summary = data.summary || {};
+                    renderKeysResult({
+                        title: data.name || email,
+                        detail: email,
+                        totalRequests: data.user_total_requests ?? summary.total_requests ?? keys.reduce((sum, key) => sum + Number(key.total_requests || 0), 0),
+                        totalTokens: data.user_total_tokens ?? summary.total_tokens ?? keys.reduce((sum, key) => sum + Number(key.total_tokens || 0), 0),
+                        tokenBreakdown: data.user_token_breakdown || summary.token_breakdown,
+                        estimatedCostUsd: data.user_estimated_cost_usd ?? summary.estimated_cost_usd ?? keys.reduce((sum, key) => sum + Number(key.estimated_cost_usd ?? key.spend_usd ?? 0), 0),
+                        keys
+                    });
+                } else {
+                    errorDiv.textContent = data.error || '查询失败';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                errorDiv.textContent = '网络错误：' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        async function searchKeys() {
+            const apiKey = document.getElementById('keyInput').value.trim();
+            const errorDiv = document.getElementById('error');
+            const userInfo = document.getElementById('userInfo');
+            const keysList = document.getElementById('keysList');
+
+            if (!apiKey) {
+                errorDiv.textContent = '请输入 API Key';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            errorDiv.style.display = 'none';
+            userInfo.style.display = 'none';
+            keysList.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/query-by-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentLookup = { type: 'key', value: apiKey };
+                    const userTotalRequests = data.user_total_requests !== undefined ? data.user_total_requests : data.total_requests;
+                    const userTotalTokens = data.user_total_tokens !== undefined ? data.user_total_tokens : data.total_tokens;
+                    renderKeysResult({
+                        title: data.identifier,
+                        detail: `Key: ${apiKey}`,
+                        totalRequests: userTotalRequests,
+                        totalTokens: userTotalTokens,
+                        tokenBreakdown: data.user_token_breakdown,
+                        estimatedCostUsd: data.user_estimated_cost_usd,
+                        keys: Array.isArray(data.all_keys) ? data.all_keys : []
+                    });
+                } else {
+                    errorDiv.textContent = data.error || '查询失败';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                errorDiv.textContent = '网络错误：' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function openTopupModal(apiKey, modelGroupLabelText, label, currentBudget) {
+            currentTopupKey = apiKey;
+            document.getElementById('topupBudget').value = '';
+            document.getElementById('topupReason').value = '';
+            const result = document.getElementById('topupResult');
+            result.style.display = 'none';
+            result.textContent = '';
+            document.getElementById('topupKeyInfo').textContent = `${modelGroupLabelText} · ${label || '默认'} · 当前总额度 $${Number(currentBudget || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 })}`;
+            document.getElementById('topupModal').style.display = 'flex';
+        }
+
+        function closeTopupModal() {
+            currentTopupKey = null;
+            document.getElementById('topupModal').style.display = 'none';
+        }
+
+        async function submitTopupRequest() {
+            const additionalBudget = document.getElementById('topupBudget').value.trim();
+            const reason = document.getElementById('topupReason').value.trim();
+            const result = document.getElementById('topupResult');
+            const btn = document.getElementById('topupSubmitBtn');
+            if (!currentTopupKey) return;
+            if (!additionalBudget || Number(additionalBudget) <= 0) {
+                result.style.display = 'block';
+                result.style.background = '#f8d7da';
+                result.style.color = '#721c24';
+                result.textContent = '请填写有效的追加额度';
+                return;
+            }
+            if (!reason) {
+                result.style.display = 'block';
+                result.style.background = '#f8d7da';
+                result.style.color = '#721c24';
+                result.textContent = '请填写申请理由';
+                return;
+            }
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+            try {
+                const response = await fetch('/api/keys/topup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: currentTopupKey, additional_budget: additionalBudget, reason })
+                });
+                const data = await response.json();
+                result.style.display = 'block';
+                if (response.ok) {
+                    result.style.background = '#d4edda';
+                    result.style.color = '#155724';
+                    result.textContent = `已提交审批：当前 $${data.current_budget} + 追加 $${data.additional_budget} = 新预算 $${data.new_budget}`;
+                    setTimeout(closeTopupModal, 1800);
+                } else {
+                    result.style.background = '#f8d7da';
+                    result.style.color = '#721c24';
+                    result.textContent = data.error || '提交失败';
+                }
+            } catch (error) {
+                result.style.display = 'block';
+                result.style.background = '#f8d7da';
+                result.style.color = '#721c24';
+                result.textContent = '网络错误：' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '提交审批';
+            }
+        }
+
+        async function revokeKey(key) {
+            if (!confirm('确定要撤销这个 Key 吗？此操作不可恢复！')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/revoke-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert('Key 已撤销');
+                    if (currentLookup?.type === 'email') {
+                        searchByEmail();
+                    } else if (currentLookup?.type === 'key') {
+                        document.getElementById('keyInput').value = currentLookup.value;
+                        searchKeys();
+                    }
+                } else {
+                    alert('撤销失败：' + data.error);
+                }
+            } catch (error) {
+                alert('网络错误：' + error.message);
+            }
+        }
+
+        function copySetupCmd(apiKey, btn) {
+            const baseUrl = {{ service_info.base_url|tojson }};
+            const cmd = `node << 'CLAUDE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+const cf=path.join(os.homedir(),'.claude.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo ${apiKey}';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='${baseUrl}';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+const c=fs.existsSync(cf)?JSON.parse(fs.readFileSync(cf,'utf8')):{};
+c.hasCompletedOnboarding=true;
+fs.writeFileSync(cf,JSON.stringify(c,null,2));
+console.log('Done! Settings merged (MCP/permissions preserved).');
+CLAUDE_EOF`;
+            doCopy(cmd, btn);
+        }
+
+        function copyCodexCmd(apiKey, btn) {
+            const baseUrl = {{ service_info.base_url|tojson }};
+            const cmd = `node << 'CODEX_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.codex');
+const sf=path.join(dir,'config.toml');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
+function upsertTop(key,value){
+  const line=key+' = '+value;
+  const re=new RegExp('^'+key+'\\\\s*=.*$','m');
+  if(re.test(c)){c=c.replace(re,line);return}
+  const idx=c.indexOf('[');
+  c=idx>=0?line+'\\n'+c:line+'\\n'+c;
+}
+upsertTop('model_provider','"local"');
+upsertTop('model','"gpt-5.5"');
+upsertTop('model_reasoning_effort','"high"');
+upsertTop('personality','"pragmatic"');
+c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+const providerBlock=[
+  '[model_providers.local]',
+  'name = "local"',
+  'base_url = "${baseUrl}/v1"',
+  'env_key = "OPENAI_API_KEY"',
+  'wire_api = "responses"'
+].join('\\n');
+if(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m.test(c)){
+  c=c.replace(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m,providerBlock);
+}else{
+  c=c.trimEnd()+'\\n\\n'+providerBlock;
+}
+fs.writeFileSync(sf,c.trimEnd()+'\\n');
+const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  const content=fs.readFileSync(rc,'utf8');
+  const line='export OPENAI_API_KEY="${apiKey}"';
+  if(/^export OPENAI_API_KEY=.*/m.test(content)){
+    fs.writeFileSync(rc,content.replace(/^export OPENAI_API_KEY=.*/m,line));
+    console.log('Updated OPENAI_API_KEY in '+rc);
+  }else{
+    fs.appendFileSync(rc,'\\n'+line+'\\n');
+    console.log('Added OPENAI_API_KEY to '+rc);
+  }
+}else{console.log('No .bashrc/.zshrc found. Please add manually: export OPENAI_API_KEY=${apiKey}')}
+console.log('Codex config done: '+sf);
+CODEX_EOF
+export OPENAI_API_KEY="${apiKey}"`;
+            doCopy(cmd, btn);
+        }
+
+        function copyRemoveCmd(btn) {
+            const cmd = `node << 'REMOVE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+// Remove Claude proxy config
+const sf=path.join(os.homedir(),'.claude','settings.json');
+if(fs.existsSync(sf)){
+  const s=JSON.parse(fs.readFileSync(sf,'utf8'));
+  delete s.apiKeyHelper;
+  if(s.env){Object.keys(s.env).forEach(k=>{if(k.startsWith('ANTHROPIC'))delete s.env[k]});if(Object.keys(s.env).length===0)delete s.env}
+  fs.writeFileSync(sf,JSON.stringify(s,null,2));
+  console.log('Claude: proxy config removed (MCP/permissions preserved)');
+}else{console.log('Claude: no settings.json found, skipped')}
+// Remove Codex proxy config
+const cf=path.join(os.homedir(),'.codex','config.toml');
+if(fs.existsSync(cf)){
+  let c=fs.readFileSync(cf,'utf8');
+  c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+  c=c.replace(/^model_provider\\s*=\\s*"local"\\n?/m,'');
+  c=c.replace(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m,'');
+  fs.writeFileSync(cf,c);
+  console.log('Codex: local proxy provider removed from '+cf);
+}else{console.log('Codex: no config.toml found, skipped')}
+// Remove OPENAI_API_KEY from shell rc
+const rc=['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  let content=fs.readFileSync(rc,'utf8');
+  if(content.includes('OPENAI_API_KEY')){
+    content=content.replace(/^export OPENAI_API_KEY=.*\\n?/m,'');
+    fs.writeFileSync(rc,content);
+    console.log('Shell: OPENAI_API_KEY removed from '+rc);
+  }
+}
+console.log('All done! Restart terminal to take effect.');
+REMOVE_EOF`;
+            doCopy(cmd, btn);
+        }
+
+        function doCopy(text, btn) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            ta.style.top = '-9999px';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            try { document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+            const orig = btn.textContent;
+            btn.textContent = '已复制!';
+            setTimeout(() => { btn.textContent = orig; }, 2000);
+        }
+
+        // Load historical keys on page load
+        displayMyKeys();
+
+        async function bootMyKeysPage() {
+            const params = new URLSearchParams(window.location.search);
+            const keyParam = params.get('key');
+            const loginError = params.get('login_error');
+            if (loginError) {
+                const errorDiv = document.getElementById('error');
+                errorDiv.textContent = `飞书登录失败：${loginError}`;
+                errorDiv.style.display = 'block';
+            }
+
+            const session = await loadPortalSession();
+            if (session?.authenticated) {
+                const email = String(session.email || session.user?.email || '').toLowerCase();
+                if (email.endsWith('@zilliz.com')) {
+                    rememberEmail(email);
+                    await claimLocalKeysForSession(session);
+                    if (!keyParam) {
+                        searchByEmail();
+                        return;
+                    }
+                }
+            }
+
+            if (keyParam) {
+                document.getElementById('keyInput').value = keyParam;
+                searchKeys();
+                return;
+            }
+
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = '请先登录后查看自己的 Keys';
+            errorDiv.style.display = 'block';
+        }
+
+        bootMyKeysPage();
+    </script>
+</body>
+</html>

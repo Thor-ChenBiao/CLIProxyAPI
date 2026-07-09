@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>申请 API Key - Key Portal</title>
+    <script src="/static/i18n.js?v=20260525-2"></script>
+    {% include "_portal_shell.html" %}
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn:active { transform: translateY(0); }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .api-key {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: monospace;
+            word-break: break-all;
+            border: 1px solid #dee2e6;
+        }
+        .links {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        .links a:hover { text-decoration: underline; }
+        .pool-status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔑 申请 API Key</h1>
+        <p class="subtitle">填写信息获取您的专属 API Key</p>
+
+        <div class="pool-status" id="poolStatus">
+            <span>剩余可用 Key：<strong id="unusedCount">-</strong> 个</span>
+        </div>
+
+        <form id="registerForm">
+            <div class="form-group">
+                <label for="emailPrefix">公司邮箱 *</label>
+                <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;">
+                    <input type="text" id="emailPrefix" name="emailPrefix" required placeholder="your.name" style="flex: 1; min-width: 0; border: none; outline: none; padding: 12px 15px; font-size: 15px;">
+                    <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-left: 1px solid #d4ddff; font-size: 15px; font-weight: 600; white-space: nowrap;">@zilliz.com</span>
+                </div>
+                <p style="font-size: 13px; color: #999; margin-top: 5px;">只需要填写 @zilliz.com 前面的部分</p>
+            </div>
+
+            <div class="form-group">
+                <label for="name">姓名（可选）</label>
+                <input type="text" id="name" name="name" placeholder="张三">
+            </div>
+
+            <div class="form-group">
+                <label for="label">Key 标签（可选）</label>
+                <input type="text" id="label" name="label" placeholder="工作电脑">
+            </div>
+
+            <div class="form-group">
+                <label for="modelGroup">Key 类型 *</label>
+                <select id="modelGroup" name="modelGroup" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: white; color: #333;">
+                    <option value="common" selected>GPT Key（不限量）</option>
+                    <option value="claude">Claude Key（需审批）</option>
+                    <option value="deepseek">DeepSeek Key（需审批）</option>
+                </select>
+                <p id="modelGroupHint" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; line-height: 1.5;">GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。</p>
+            </div>
+
+            <div class="form-group" id="approvalFields" style="display: none;">
+                <label for="reason">申请理由 *</label>
+                <textarea id="reason" name="reason" rows="3" placeholder="Bedrock / Claude 按量计费成本较高，请说明必须使用它完成任务的紧急或必要场景；常规用量推荐优先使用 GPT Key。" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; resize: vertical; font-family: inherit;"></textarea>
+
+                <label for="dailyBudget" style="margin-top: 12px;">总额度 (USD) *</label>
+                <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                    <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-right: 1px solid #d4ddff; font-size: 15px; font-weight: 600;">$</span>
+                    <input type="number" id="dailyBudget" name="dailyBudget" placeholder="5" min="0.1" step="0.1" style="flex: 1; min-width: 0; padding: 12px 15px; border: none; outline: none; font-size: 15px;" oninput="updateBudgetEstimate()">
+                </div>
+                <div id="budgetEstimate" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; line-height: 1.6; display: none;"></div>
+                <p style="font-size: 13px; color: #999; margin-top: 5px;">额度用完后请求将被拒绝，不会按天自动重置；需要追加额度后继续使用</p>
+            </div>
+
+            <button type="submit" class="btn" id="submitBtn">申请 API Key</button>
+        </form>
+
+        <div class="result" id="result"></div>
+
+        <div class="links">
+            <a href="/my-keys">查看我的 Keys</a>
+            <a href="/admin/users">用户统计</a>
+            <a href="/">返回首页</a>
+        </div>
+    </div>
+
+    <script>
+        const MODEL_GROUP_LABELS = {
+            common: 'GPT Key',
+            claude: 'Claude Key',
+            deepseek: 'DeepSeek Key'
+        };
+        const MODEL_GROUP_HINTS = {
+            common: 'GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
+            claude: '⚠️ Claude / Bedrock 按量计费成本较高，请仅在必要、紧急或 GPT 无法满足任务时申请；常规用量推荐优先使用 GPT Key。审批通过后自动生成 Key 并通过飞书通知你。当前仅支持 Opus 4.6（模型名选 claude-opus-4-6），暂不支持 4.7。',
+            deepseek: '⚠️ DeepSeek Key 需要飞书审批。审批通过后自动生成 Key 并通过飞书通知你。'
+        };
+        const APPROVAL_REQUIRED = new Set(['claude', 'deepseek']);
+        const MODEL_PRICING = {
+            claude: { input: 5, output: 25, label: 'Claude Opus' },
+            deepseek: { input: 0.14, output: 0.28, label: 'DeepSeek' },
+        };
+
+        function updateBudgetEstimate() {
+            const budget = parseFloat(document.getElementById('dailyBudget')?.value || 0);
+            const modelGroup = document.getElementById('modelGroup')?.value || 'common';
+            const el = document.getElementById('budgetEstimate');
+            if (!el || !budget || budget <= 0 || !MODEL_PRICING[modelGroup]) {
+                if (el) el.style.display = 'none';
+                return;
+            }
+            const p = MODEL_PRICING[modelGroup];
+            const avgCostPerMToken = (p.input * 3 + p.output * 1) / 4;
+            const mTokens = budget / avgCostPerMToken;
+            const tokens = Math.round(mTokens * 1000000);
+            const requests = Math.round(tokens / 4000);
+            el.innerHTML = `<strong>$${budget}</strong> ≈ <strong>${mTokens >= 1 ? mTokens.toFixed(1) + 'M' : Math.round(mTokens * 1000) + 'K'}</strong> tokens（${p.label}）≈ <strong>${requests.toLocaleString()}</strong> 次请求`;
+            el.style.display = 'block';
+        }
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
+
+        function updateModelGroupHint() {
+            const selector = document.getElementById('modelGroup');
+            const hint = document.getElementById('modelGroupHint');
+            const approvalFields = document.getElementById('approvalFields');
+            if (!selector || !hint) return;
+            hint.textContent = MODEL_GROUP_HINTS[selector.value] || MODEL_GROUP_HINTS.common;
+            const needsApproval = APPROVAL_REQUIRED.has(selector.value);
+            approvalFields.style.display = needsApproval ? 'block' : 'none';
+            document.getElementById('submitBtn').textContent = needsApproval ? '提交审批申请' : '申请 API Key';
+        }
+
+        document.getElementById('modelGroup').addEventListener('change', updateModelGroupHint);
+        updateModelGroupHint();
+
+        // Load pool status
+        fetch('/api/key-pool-status')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('unusedCount').textContent = data.unused;
+            });
+
+        function buildZillizEmail(prefixValue) {
+            let prefix = String(prefixValue || '').trim().toLowerCase();
+            if (prefix.endsWith('@zilliz.com')) prefix = prefix.slice(0, -'@zilliz.com'.length);
+            if (!prefix || prefix.includes('@') || /\s/.test(prefix)) return '';
+            return `${prefix}@zilliz.com`;
+        }
+
+        function prefixFromZillizEmail(email) {
+            return String(email || '').toLowerCase().replace(/@zilliz\.com$/, '');
+        }
+
+        async function applySessionToForm() {
+            try {
+                const resp = await fetch('/api/session');
+                const session = await resp.json();
+                const email = String(session.email || session.user?.email || '').toLowerCase();
+                if (!session.authenticated || !email.endsWith('@zilliz.com')) return;
+                const emailInput = document.getElementById('emailPrefix');
+                if (emailInput) {
+                    emailInput.value = prefixFromZillizEmail(email);
+                    if (!session.is_admin) emailInput.disabled = true;
+                }
+                const nameInput = document.getElementById('name');
+                if (nameInput && !nameInput.value && session.user?.name) {
+                    nameInput.value = session.user.name;
+                }
+            } catch (e) {
+                console.error('Failed to apply session defaults:', e);
+            }
+        }
+
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const email = buildZillizEmail(document.getElementById('emailPrefix').value);
+            const name = document.getElementById('name').value.trim();
+            const label = document.getElementById('label').value.trim();
+            const modelGroup = document.getElementById('modelGroup').value || 'common';
+            const reason = document.getElementById('reason').value.trim();
+            const dailyBudget = document.getElementById('dailyBudget').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            const result = document.getElementById('result');
+
+            if (!email) {
+                result.className = 'result error';
+                result.innerHTML = '<strong>❌ 请输入 @zilliz.com 前面的邮箱部分</strong>';
+                result.style.display = 'block';
+                return;
+            }
+
+            if (APPROVAL_REQUIRED.has(modelGroup) && !reason) {
+                result.className = 'result error';
+                result.innerHTML = '<strong>❌ 申请该模型组需要填写申请理由</strong>';
+                result.style.display = 'block';
+                return;
+            }
+            if (APPROVAL_REQUIRED.has(modelGroup) && !dailyBudget) {
+                result.className = 'result error';
+                result.innerHTML = '<strong>❌ 请填写额度</strong>';
+                result.style.display = 'block';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            result.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/register-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, name, label, model_group: modelGroup, reason, daily_budget: dailyBudget })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (data.pending_approval) {
+                        result.className = 'result success';
+                        result.innerHTML = `
+                            <strong>📋 审批已提交</strong><br><br>
+                            <p><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
+                            <p>审批请求已发送到飞书，审批通过后将自动生成 Key 并通过飞书消息通知你。</p>
+                            <p style="margin-top: 10px; color: #666; font-size: 13px;">请在飞书中关注审批进度。</p>
+                        `;
+                    } else {
+                        result.className = 'result success';
+                        result.innerHTML = `
+                            <strong>✅ 申请成功！</strong><br><br>
+                            您的 API Key：<br>
+                            <div class="api-key">${data.api_key}</div>
+                            <p><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
+                            <p>请妥善保管此 Key，配置到 Claude Code 中使用。</p>
+                        `;
+                    }
+                    result.style.display = 'block';
+                    document.getElementById('registerForm').reset();
+                    updateModelGroupHint();
+                    applySessionToForm();
+
+                    // Refresh pool status
+                    fetch('/api/key-pool-status')
+                        .then(r => r.json())
+                        .then(d => document.getElementById('unusedCount').textContent = d.unused);
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `<strong>❌ 申请失败</strong><br>${data.error}`;
+                    result.style.display = 'block';
+                }
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `<strong>❌ 网络错误</strong><br>${error.message}`;
+                result.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                updateModelGroupHint();
+            }
+        });
+        applySessionToForm();
+    </script>
+</body>
+</html>
