@@ -1,0 +1,2848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 能量站</title>
+    <script src="/static/chart.js?v=20260521-1"></script>
+    <script>
+        window.addEventListener('error', function(event) {
+            const box = document.getElementById('pageError');
+            if (box) {
+                box.style.display = 'block';
+                box.textContent = '页面脚本错误：' + (event.message || 'unknown');
+            }
+        });
+    </script>
+    <script src="/static/socket.io.min.js?v=20260521-1"></script>
+    <script src="/static/i18n.js?v=20260525-2"></script>
+    {% include "_portal_shell.html" %}
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; line-height: 1.6; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; }
+        .header .slogan { font-size: 16px; opacity: 0.95; margin-bottom: 10px; }
+        .header .slogan em { font-style: normal; color: #ffd700; }
+        .token-banner { background: rgba(255,255,255,0.15); padding: 15px 0; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
+        .token-counter { text-align: center; flex: 0 0 250px; width: 250px; }
+        .token-counter .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; min-height: 34px; white-space: nowrap; }
+        .token-counter .label { font-size: 12px; opacity: 0.8; margin-top: 3px; }
+        .token-counter .token-detail { font-size: 10px; opacity: 0.82; margin-top: 2px; min-height: 28px; line-height: 1.35; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .token-counter .token-cost { font-size: 11px; color: #ffd700; font-weight: 600; margin-top: 1px; min-height: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .personal-token-banner { background: linear-gradient(135deg, #eef4ff 0%, #e7f7f3 100%); border: 1px solid #d7e5f2; border-radius: 10px; padding: 15px 0; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; margin: 12px 0 24px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8); }
+        .personal-token-counter { text-align: center; flex: 0 0 250px; width: 250px; color: #263445; }
+        .personal-token-counter .value { color: #132033; font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; min-height: 34px; white-space: nowrap; letter-spacing: 0; }
+        .personal-token-counter .label { color: #486072; font-size: 12px; opacity: 0.9; margin-top: 3px; font-weight: 650; }
+        .personal-token-counter .token-detail { color: #5f7486; font-size: 10px; opacity: 0.95; margin-top: 2px; min-height: 28px; line-height: 1.35; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .personal-token-counter .token-cost { color: #0f766e; font-size: 11px; font-weight: 700; margin-top: 1px; min-height: 16px; white-space: nowrap; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+        .speed-panel { margin: 12px 0 24px; padding: 18px; border: 3px solid #2d315f; border-radius: 14px; background: #101633; box-shadow: 0 8px 0 #202448, 0 16px 28px rgba(16,22,51,0.22); image-rendering: pixelated; }
+        .speed-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+        .speed-panel h3 { margin: 0; color: #ffe66d; font-family: 'Courier New', monospace; letter-spacing: 0.04em; text-shadow: 2px 2px 0 #5f3dc4; }
+        .speed-panel-subtitle { font-size: 12px; color: #9fb1ff; margin-top: 3px; font-family: 'Courier New', monospace; }
+        .speed-panel-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+        .pixel-toggle .race-apply-cta { color: #fde68a; }
+        .race-guide { display: none; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 14px; padding: 13px 16px; border: 1px solid rgba(102,126,234,0.26); border-radius: 14px; background: linear-gradient(135deg, rgba(240,244,255,0.96), rgba(255,251,235,0.92)); color: #2c334a; box-shadow: 0 8px 24px rgba(31,45,90,0.08); }
+        .race-guide.show { display: flex; }
+        .race-guide-text { font-size: 14px; line-height: 1.45; }
+        .race-guide-text strong { color: #4f5fd7; }
+        .race-guide-action { flex-shrink: 0; border: none; border-radius: 999px; padding: 9px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 800; cursor: pointer; box-shadow: 0 6px 16px rgba(102,126,234,0.28); white-space: nowrap; }
+        .race-guide-action:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(102,126,234,0.36); }
+        @media (max-width: 720px) { .race-guide { align-items: flex-start; flex-direction: column; } .race-guide-action { width: 100%; } }
+        .pixel-toggle { display: flex; gap: 8px; margin-bottom: 0; }
+        .pixel-toggle .view-btn, .pixel-toggle .pixel-select { margin: 0; padding: 8px 12px; border: 3px solid #7dd3fc; border-radius: 0; background: #182047; color: #dbeafe; font: 800 12px 'Courier New', monospace; box-shadow: 3px 3px 0 rgba(0,0,0,0.35); text-shadow: 2px 2px 0 #101633; }
+        .pixel-toggle .view-btn:hover, .pixel-toggle .pixel-select:hover { background: #24306b; transform: translate(-1px, -1px); box-shadow: 4px 4px 0 rgba(0,0,0,0.35); }
+        .pixel-toggle .view-btn.active { background: #ffe66d; color: #101633; border-color: #ffe66d; text-shadow: none; box-shadow: 3px 3px 0 #5f3dc4; }
+        .pixel-toggle .pixel-select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, #ffe66d 50%), linear-gradient(135deg, #ffe66d 50%, transparent 50%); background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; cursor: pointer; }
+        .pixel-track { position: relative; min-height: 430px; overflow: hidden; border: 3px solid #4652a8; border-radius: 8px; background: linear-gradient(#74d7ff 0 94px, #b7f4ff 94px 122px, #7fd06a 122px 156px, #5fb657 156px 184px, #4f9d4a 184px 196px, #565b7a 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.15); --world-speed: 18s; transition: background 1.2s ease, box-shadow 1.2s ease, min-height 0.35s ease; contain: layout paint; transform: translateZ(0); }
+        .pixel-track.sky-boost { background: linear-gradient(#4f46e5 0 70px, #fb7185 70px 118px, #facc15 118px 144px, #7fd06a 144px 166px, #5fb657 166px 184px, #4f9d4a 184px 196px, #3f4568 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.18), inset 0 0 80px rgba(250,204,21,0.22); }
+        .pixel-track.sky-ufo { background: linear-gradient(#111827 0 82px, #312e81 82px 128px, #0f766e 128px 160px, #5fb657 160px 184px, #4f9d4a 184px 196px, #30364f 196px 100%); box-shadow: inset 0 0 0 3px rgba(255,255,255,0.18), inset 0 0 90px rgba(94,234,212,0.25); }
+        .pixel-track.sky-evening { background: linear-gradient(#7c3aed 0 70px, #fb7185 70px 118px, #fbbf24 118px 144px, #7fd06a 144px 166px, #5fb657 166px 184px, #4f9d4a 184px 196px, #4b526f 196px 100%); }
+        .pixel-track.sky-night { background: linear-gradient(#0f172a 0 94px, #1e1b4b 94px 132px, #164e63 132px 160px, #2f855a 160px 184px, #276749 184px 196px, #30364f 196px 100%); }
+        .pixel-track::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 72px, rgba(255,255,255,0.5) 72px 110px, transparent 110px 180px); background-position-x: var(--cloud-x, 0px); opacity: 0.18; }
+        .pixel-track::after { content: ''; position: absolute; left: 0; right: 0; top: 196px; bottom: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,0.14) 0 2px, transparent 2px 44px), repeating-linear-gradient(90deg, rgba(255,255,255,0.22) 0 34px, transparent 34px 70px), linear-gradient(180deg, rgba(86,91,122,0.88), rgba(47,52,77,0.92)); background-position: 0 0, var(--road-x, 0px) 0, 0 0; opacity: 0.92; }
+        .pixel-sun { position: absolute; left: var(--celestial-left, 74%); top: var(--celestial-top, 18px); width: 12px; height: 12px; background: #fff7ad; opacity: var(--sun-opacity, 1); transform: translate(-24px, 0); transition: left 1.5s ease, top 1.5s ease, opacity 1.5s ease; box-shadow: 12px 0 #ffe66d, 24px 0 #ffe66d, 36px 0 #fff7ad, 0 12px #ffe66d, 12px 12px #ffd166, 24px 12px #ffd166, 36px 12px #ffe66d, -12px 24px rgba(255,230,109,0.82), 0 24px #ffe66d, 12px 24px #ffd166, 24px 24px #ffd166, 36px 24px #ffe66d, 48px 24px rgba(255,230,109,0.82), 0 36px #fff7ad, 12px 36px #ffe66d, 24px 36px #ffe66d, 36px 36px #fff7ad, 12px -12px rgba(255,230,109,0.72), 24px -12px rgba(255,230,109,0.72), 12px 48px rgba(255,230,109,0.72), 24px 48px rgba(255,230,109,0.72), -12px 12px rgba(255,230,109,0.58), 48px 12px rgba(255,230,109,0.58), -24px 24px rgba(255,230,109,0.38), 60px 24px rgba(255,230,109,0.38); }
+        .pixel-moon { position: absolute; left: var(--celestial-left, 74%); top: var(--celestial-top, 18px); width: 12px; height: 12px; background: transparent; opacity: var(--moon-opacity, 0); transform: translate(-18px, 0); transition: left 1.5s ease, top 1.5s ease, opacity 1.5s ease; }
+        .pixel-moon.phase-0 { background: rgba(148,163,184,0.2); box-shadow: 12px 0 rgba(148,163,184,0.16), 0 12px rgba(148,163,184,0.16), 12px 12px rgba(148,163,184,0.12); }
+        .pixel-moon.phase-1 { background: transparent; box-shadow: 24px 0 #bae6fd, 24px 12px #7dd3fc, 24px 24px #38bdf8; }
+        .pixel-moon.phase-2 { background: transparent; box-shadow: 12px 0 #e0f2fe, 24px 0 #bae6fd, 12px 12px #bae6fd, 24px 12px #7dd3fc, 12px 24px #7dd3fc, 24px 24px #38bdf8; }
+        .pixel-moon.phase-3 { background: #e0f2fe; box-shadow: 12px 0 #e0f2fe, 24px 0 #bae6fd, 0 12px #e0f2fe, 12px 12px #bae6fd, 24px 12px #7dd3fc, 0 24px #bae6fd, 12px 24px #7dd3fc, 24px 24px #38bdf8; }
+        .pixel-moon.phase-4 { background: #f8fafc; box-shadow: 12px 0 #f8fafc, 24px 0 #e0f2fe, 0 12px #f8fafc, 12px 12px #e0f2fe, 24px 12px #bae6fd, 0 24px #e0f2fe, 12px 24px #bae6fd, 24px 24px #7dd3fc, -12px 12px rgba(224,242,254,0.55), 36px 12px rgba(186,230,253,0.55); }
+        .pixel-moon.phase-5 { background: #e0f2fe; box-shadow: 12px 0 #e0f2fe, 0 12px #e0f2fe, 12px 12px #bae6fd, 0 24px #bae6fd, 12px 24px #7dd3fc; }
+        .pixel-moon.phase-6 { background: #e0f2fe; box-shadow: 0 12px #bae6fd, 0 24px #7dd3fc; }
+        .pixel-moon.phase-7 { background: #bae6fd; box-shadow: 0 12px #7dd3fc, 0 24px #38bdf8; }
+        .pixel-stars { position: absolute; inset: 0; opacity: 0; transition: opacity 1.5s ease; background: radial-gradient(circle at 18% 24%, #fff 0 2px, transparent 2px), radial-gradient(circle at 38% 14%, #fde68a 0 2px, transparent 2px), radial-gradient(circle at 62% 28%, #fff 0 1.5px, transparent 1.5px), radial-gradient(circle at 78% 18%, #bae6fd 0 2px, transparent 2px), radial-gradient(circle at 88% 36%, #fff 0 1.5px, transparent 1.5px); pointer-events: none; }
+        .pixel-track.sky-night .pixel-stars { opacity: 0.85; }
+        .pixel-cloud { position: absolute; top: 30px; width: 64px; height: 18px; background: white; box-shadow: 18px -10px 0 white, 36px 0 0 white; opacity: 0.75; animation: pixelClouds 24s linear infinite; }
+        .pixel-cloud.c2 { top: 82px; animation-duration: 31s; animation-delay: -12s; opacity: 0.55; }
+        .pixel-track.sky-night .pixel-stars { opacity: 0.78; }
+        .pixel-track.sky-night .pixel-cloud { opacity: 0.22; }
+        .pixel-track.sky-evening .pixel-cloud { opacity: 0.48; }
+        .pixel-scenery { position: absolute; left: 0; right: 0; top: 0; height: 170px; overflow: hidden; pointer-events: none; }
+        .pixel-scenery-strip { position: absolute; left: 0; top: 0; width: 200%; height: 100%; transform: translateX(var(--scenery-x, 0px)); }
+        .pixel-scenery-copy { position: absolute; left: 0; top: 0; width: 50%; height: 100%; }
+        .pixel-scenery-copy.repeat { left: 50%; }
+        .pixel-mountain { position: absolute; top: 92px; width: 0; height: 0; border-left: 52px solid transparent; border-right: 52px solid transparent; border-bottom: 74px solid #6b8e8f; opacity: 0.8; }
+        .pixel-mountain::after { content: ''; position: absolute; left: -18px; top: 18px; width: 0; height: 0; border-left: 18px solid transparent; border-right: 18px solid transparent; border-bottom: 26px solid #f8fbff; }
+        .pixel-mountain.m1 { left: 18px; }
+        .pixel-mountain.m2 { left: 58%; transform: scale(0.78); opacity: 0.62; }
+        .pixel-house { position: absolute; top: 122px; width: 42px; height: 30px; background: #ffd166; border: 3px solid #7c3f2c; box-shadow: inset 12px 12px 0 #f97316; }
+        .pixel-house::before { content: ''; position: absolute; left: -8px; top: -20px; width: 0; height: 0; border-left: 26px solid transparent; border-right: 26px solid transparent; border-bottom: 20px solid #ef4444; }
+        .pixel-house.h1 { left: 78%; }
+        .pixel-house.h2 { left: 155px; transform: scale(0.8); opacity: 0.85; }
+        .pixel-house.h3 { left: 43%; transform: scale(0.7); opacity: 0.75; }
+        .pixel-tree { position: absolute; top: 128px; width: 14px; height: 28px; background: #8b5a2b; }
+        .pixel-tree::before { content: ''; position: absolute; left: -14px; top: -30px; width: 42px; height: 34px; background: #15803d; box-shadow: 8px -12px 0 #16a34a, 20px 0 0 #166534; }
+        .pixel-tree.t1 { left: 90px; }
+        .pixel-tree.t2 { left: 90%; transform: scale(0.9); }
+        .pixel-tree.t3 { left: 46%; transform: scale(0.75); opacity: 0.9; }
+        .pixel-tree.t4 { left: 67%; transform: scale(0.65); opacity: 0.82; }
+        .race-lane { position: absolute; left: 0; right: 0; height: 44px; border-top: 2px dashed rgba(255,255,255,0.36); }
+        .race-lane:nth-child(odd) { background: rgba(255,255,255,0.04); }
+        .race-lane.me { background: rgba(52,211,153,0.18); box-shadow: inset 0 0 0 2px rgba(52,211,153,0.45); }
+        .pixel-racer { position: absolute; left: 12px; top: 0; transform: translateX(var(--race-x, 0px)) translateZ(0); transition: transform 1.35s cubic-bezier(.16,.84,.2,1), top 1.1s cubic-bezier(.16,.84,.2,1); z-index: 3; will-change: transform, top; }
+        .pixel-racer-sprite { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 28px; font-size: 24px; filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.35)); animation: racerBob 0.75s steps(2) infinite; }
+        .pixel-racer-sprite.flip { transform: scaleX(-1); }
+        .pixel-racer-sprite.level-plane { transform: rotate(45deg); }
+        .pixel-racer-sprite.level-rocket { transform: rotate(45deg); }
+        .pixel-racer-sprite.level-ufo { transform: rotate(15deg); }
+        .pixel-racer.fast .pixel-racer-sprite { animation-duration: 0.28s; }
+        .pixel-racer.slowing .pixel-racer-sprite { animation: racerCalm 1.15s steps(2) infinite; }
+        .pixel-racer.turbo .pixel-racer-sprite { animation: racerBob 0.22s steps(2) infinite, turboShake 0.18s steps(2) infinite; }
+        .pixel-racer.turbo.slowing .pixel-racer-sprite { animation: racerCalm 1.05s steps(2) infinite; }
+        .pixel-trail { position: absolute; left: -26px; top: 12px; width: 26px; height: 8px; background: repeating-linear-gradient(90deg, rgba(255,230,109,0.95) 0 7px, transparent 7px 13px); opacity: 0; }
+        .pixel-racer.fast .pixel-trail { opacity: 0.75; }
+        .pixel-racer.turbo .pixel-trail { opacity: 1; width: 42px; left: -42px; background: repeating-linear-gradient(90deg, #ff6b6b 0 7px, #ffe66d 7px 14px, transparent 14px 21px); }
+        .pixel-racer.nitro .pixel-trail { opacity: 1; width: 58px; left: -58px; top: 10px; height: 12px; background: repeating-linear-gradient(90deg, #38bdf8 0 9px, #a78bfa 9px 18px, #ffe66d 18px 27px, transparent 27px 36px); animation: nitroPulse 0.34s steps(2) infinite; }
+        .pixel-racer.nitro .pixel-racer-sprite { filter: drop-shadow(0 0 8px rgba(125,211,252,0.95)) drop-shadow(3px 3px 0 rgba(0,0,0,0.35)); }
+        .pixel-racer.idle .pixel-trail { opacity: 0.7; width: 18px; left: -18px; top: 14px; height: 8px; background: repeating-linear-gradient(90deg, rgba(203,213,225,0.76) 0 5px, transparent 5px 10px); animation: smokePuff 1.2s steps(3) infinite; }
+        .pixel-name { position: absolute; left: 4px; top: -16px; padding: 1px 5px; background: #101633; color: #ffe66d; border: 2px solid #ffe66d; font: 700 11px 'Courier New', monospace; letter-spacing: 0.08em; }
+        .pixel-racer.me .pixel-name { background: #052e26; color: #5eead4; border-color: #34d399; box-shadow: 0 0 0 2px rgba(52,211,153,0.22); }
+        .pixel-racer.me .pixel-speed { color: #a7f3d0; text-shadow: 2px 2px 0 rgba(5,46,38,0.75); }
+        .pixel-speed { position: absolute; left: 50px; top: 5px; min-width: 135px; color: #f8fbff; font: 700 11px 'Courier New', monospace; text-shadow: 2px 2px 0 rgba(0,0,0,0.45); white-space: nowrap; }
+        .pixel-hud { position: absolute; left: 14px; top: 14px; z-index: 8; width: min(260px, calc(100% - 112px)); color: #dbeafe; font: 700 10px 'Courier New', monospace; }
+        .pixel-hud-board { border: 2px solid rgba(255,230,109,0.72); background: rgba(8,13,34,0.46); box-shadow: 3px 3px 0 rgba(0,0,0,0.16), inset 0 0 0 1px rgba(70,82,168,0.38); backdrop-filter: blur(0.5px); }
+        .pixel-hud-header { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; background: linear-gradient(90deg, rgba(95,61,196,0.62), rgba(37,99,235,0.56)); color: #ffe66d; border-bottom: 2px solid rgba(255,230,109,0.62); text-shadow: 2px 2px 0 #101633; }
+        .pixel-hud-live { color: #ff6b6b; animation: liveBlink 1s steps(2) infinite; }
+        .pixel-hud-card { padding: 6px 8px; color: #f8fbff; border-bottom: 1px solid rgba(125,211,252,0.18); }
+        .pixel-hud-card:last-child { border-bottom: 0; }
+        .pixel-hud-title { display: inline-block; margin-right: 6px; color: #7dd3fc; text-shadow: 2px 2px 0 #102044; }
+        .pixel-hud-rank { color: #34d399; }
+        .pixel-hud-row { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; white-space: nowrap; transition: transform 0.55s ease, color 0.55s ease; }
+        .pixel-hud-row span:first-child { color: #ffe66d; }
+        .pixel-hud-row.up { color: #86efac; transform: translateX(4px); }
+        .pixel-hud-row.down { color: #fca5a5; transform: translateX(-3px); }
+        .pixel-radio-panel { position: absolute; left: 286px; top: 14px; z-index: 7; width: min(250px, calc(100% - 398px)); padding: 7px 9px; border: 2px solid rgba(125,211,252,0.62); border-radius: 8px; background: rgba(8,13,34,0.34); color: #fef3c7; font: 700 10px 'Courier New', monospace; box-shadow: 3px 3px 0 rgba(0,0,0,0.12); backdrop-filter: blur(0.5px); }
+        .pixel-event-line { margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fde68a; text-shadow: 2px 2px 0 #101633; }
+        .pixel-event-line strong { color: #67e8f9; }
+        .pixel-event-line.rare { color: #fca5a5; }
+        @keyframes liveBlink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.35; } }
+        @keyframes nitroPulse { 0% { transform: scaleX(0.72); opacity: 0.78; } 100% { transform: scaleX(1.08); opacity: 1; } }
+        @keyframes smokePuff { 0% { transform: translateX(0); opacity: 0.72; } 100% { transform: translateX(-12px); opacity: 0.18; } }
+        .speed-empty { padding: 16px; color: #9fb1ff; text-align: center; background: #182047; border: 2px solid #4652a8; border-radius: 6px; font-family: 'Courier New', monospace; }
+        @keyframes racerBob { 0%,100% { margin-top: 0; } 50% { margin-top: -4px; } }
+        @keyframes racerCalm { 0%,100% { margin-top: 0; } 50% { margin-top: -1px; } }
+        @keyframes turboShake { 0%,100% { margin-left: 0; } 50% { margin-left: 3px; } }
+        @keyframes pixelClouds { from { background-position-x: 0; transform: translateX(0); } to { background-position-x: -180px; transform: translateX(-60px); } }
+        @keyframes pixelRoad { from { background-position-x: 0; } to { background-position-x: -72px; } }
+        @keyframes sceneryScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        @media (max-width: 820px) { .pixel-track { min-height: 320px; } .pixel-speed { display: none; } .pixel-radio-panel { left: auto; right: 10px; top: 92px; width: min(220px, calc(100% - 24px)); } }
+        .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
+        .tabs { display: flex; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; border: none; background: white; font-size: 16px; font-weight: 500; color: #666; transition: all 0.3s; }
+        .tab:hover { background: #f8f9fa; }
+        .tab.active { background: #667eea; color: white; }
+        .tab-content { display: none; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .tab-content.active { display: block; }
+        .tab-content.apply-focus { animation: applyFocusPulse 1.4s ease; }
+        @keyframes applyFocusPulse { 0% { box-shadow: 0 0 0 0 rgba(255,230,109,0.88), 0 2px 10px rgba(0,0,0,0.1); } 45% { box-shadow: 0 0 0 8px rgba(255,230,109,0.34), 0 8px 24px rgba(95,61,196,0.22); } 100% { box-shadow: 0 2px 10px rgba(0,0,0,0.1); } }
+        .info-box { background: #f0f4ff; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+        .info-box h3 { color: #667eea; margin-bottom: 10px; }
+        .copy-field { display: flex; align-items: center; gap: 10px; background: white; padding: 12px 15px; border-radius: 8px; margin-top: 10px; }
+        .copy-field code { flex: 1; font-family: monospace; color: #333; word-break: break-all; }
+        .copy-btn { background: #667eea; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; white-space: nowrap; }
+        .copy-btn:hover { background: #5a6fd6; }
+        .login-box { text-align: center; padding: 40px 20px; }
+        .login-box h2 { color: #333; margin-bottom: 15px; }
+        .login-box p { color: #666; margin-bottom: 30px; }
+        .btn { display: inline-block; padding: 15px 40px; border: none; border-radius: 10px; font-size: 18px; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.3s; }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5); }
+        .note { background: #fff3cd; padding: 15px; border-radius: 8px; margin-top: 20px; font-size: 14px; color: #856404; }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 25px; }
+        .stat { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }
+        .stat.green { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); }
+        .stat.red { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); }
+        .stat .num { font-size: 32px; font-weight: bold; }
+        .stat .label { font-size: 14px; opacity: 0.9; }
+        .key-list { max-height: 400px; overflow-y: auto; }
+        .key-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: background 0.2s; }
+        .key-item:hover { background: #e9ecef; }
+        .key-item.expired { background: #fff5f5; border-left: 4px solid #dc3545; }
+        .key-item.unavailable { background: #fffbf0; border-left: 4px solid #ffc107; }
+        .key-item.active { background: #f0fff4; border-left: 4px solid #28a745; }
+        .key-email { font-weight: 500; }
+        .key-status { padding: 5px 12px; border-radius: 20px; font-size: 12px; }
+        .key-status.active { background: #d4edda; color: #155724; }
+        .key-status.unavailable { background: #fff3cd; color: #856404; }
+        .key-status.expired { background: #f8d7da; color: #721c24; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .refresh-btn { background: #667eea; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; margin-bottom: 15px; }
+        .report-refresh-btn { margin-bottom: 0; padding: 8px 14px; white-space: nowrap; }
+        .auth-step { text-align: center; }
+        .step-label { font-size: 16px; color: #333; margin-bottom: 15px; font-weight: 500; }
+        .paste-box { display: flex; gap: 10px; max-width: 500px; margin: 0 auto; }
+        .paste-box input { flex: 1; padding: 12px 15px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; }
+        .paste-box input:focus { border-color: #667eea; outline: none; }
+        .paste-box .btn { padding: 12px 25px; }
+        .hint { font-size: 13px; color: #999; margin-top: 10px; }
+        .result-box { display: inline-flex; align-items: center; gap: 10px; padding: 15px 30px; border-radius: 10px; font-size: 18px; font-weight: 500; }
+        .result-box.success { background: #d4edda; color: #155724; }
+        .result-box.error { background: #f8d7da; color: #721c24; }
+        .result-box .icon { font-size: 24px; }
+        .report-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .report-table th, .report-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
+        .report-table th { background: #f8f9fa; color: #667eea; font-weight: 600; }
+        .report-table tr:hover { background: #f8f9fa; }
+        .report-token-detail { font-size: 11px; color: #777; margin-top: 3px; line-height: 1.45; }
+        .report-token-cost { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 2px; }
+        .token-num { font-weight: 600; color: #667eea; }
+        .chart-container { margin: 20px 0; padding: 20px; background: #fafafa; border-radius: 10px; position: relative; height: 340px; }
+        .chart-container canvas { width: 100% !important; height: 300px !important; }
+        .view-toggle { display: flex; gap: 10px; margin-bottom: 15px; }
+        .view-btn { padding: 8px 16px; border: 2px solid #667eea; background: white; color: #667eea; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+        .view-btn:hover { background: #f0f4ff; }
+        .view-btn.active { background: #667eea; color: white; }
+        .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 15px; }
+        .section-title h3 { color: #667eea; margin: 0; }
+        .account-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; }
+        .account-item.no-key { background: #fff9e6; border-left: 4px solid #ffc107; }
+        .account-item.expired { background: #fff5f5; border-left: 4px solid #dc3545; }
+        .account-item.active { background: #f0fff4; border-left: 4px solid #28a745; }
+        .account-info { flex: 1; }
+        .account-name { font-weight: 500; font-size: 15px; }
+        .account-email { font-size: 13px; color: #666; margin-top: 3px; }
+        .account-meta { font-size: 12px; color: #999; margin-top: 3px; }
+
+        .auth-stats-panel { margin-top: 32px; padding: 22px; background: linear-gradient(180deg, #fbfcff 0%, #f6f8ff 100%); border: 1px solid #e3e8ff; border-radius: 16px; box-shadow: 0 8px 28px rgba(102,126,234,0.08); }
+        .auth-stats-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+        .auth-stats-head h3 { margin: 0; color: #4f5fd7; font-size: 20px; }
+        .auth-stats-head p { margin: 4px 0 0 0; color: #8a94b8; font-size: 13px; }
+        .auth-stats-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 16px 0 18px; }
+        .auth-node-card { background: white; border: 1px solid #e5e9ff; border-radius: 14px; padding: 16px; box-shadow: 0 4px 16px rgba(31,45,90,0.06); }
+        .auth-node-card h4 { margin: 0 0 12px 0; color: #3f4bc4; font-size: 17px; display:flex; justify-content:space-between; align-items:center; }
+        .node-pill { font-size: 11px; color: #667eea; background: #eef2ff; padding: 3px 8px; border-radius: 999px; }
+        .auth-node-card .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin: 7px 0; color: #596072; }
+        .auth-node-card .line strong { color: #20243a; font-variant-numeric: tabular-nums; }
+        .auth-table-wrap { overflow-x: auto; background: white; border: 1px solid #edf0ff; border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8); }
+        .auth-stats-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; min-width: 1120px; }
+        .auth-stats-table th { position: sticky; top: 0; z-index: 1; background: #f4f6ff; color: #5361d9; font-weight: 700; border-bottom: 1px solid #e7eaff; }
+        .auth-stats-table th, .auth-stats-table td { padding: 11px 12px; border-bottom: 1px solid #f0f2f8; text-align: right; vertical-align: top; }
+        .auth-stats-table tbody tr:hover { background: #fafbff; }
+        .auth-stats-table th:first-child, .auth-stats-table td:first-child,
+        .auth-stats-table th:nth-child(2), .auth-stats-table td:nth-child(2),
+        .auth-stats-table th:nth-child(3), .auth-stats-table td:nth-child(3) { text-align: left; }
+        .auth-status { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .auth-status.active { background: #e6f7ee; color: #0d8f4f; }
+        .auth-status.warning { background: #fff6df; color: #a66a00; }
+        .auth-status.error { background: #ffecec; color: #c82333; }
+        .auth-status.other { background: #f0f0f0; color: #666; }
+        .auth-msg { margin-top: 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9aa0ad; font-size: 12px; }
+        .auth-account { font-weight: 650; color: #2c334a; }
+        .auth-sub { color: #98a0b3; font-size: 12px; margin-top: 2px; }
+        .account-actions { display: flex; gap: 8px; }
+        .action-btn { background: #667eea; color: white; border: none; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+        .action-btn:hover { background: #5a6fd6; transform: translateY(-1px); }
+        .action-btn.warning { background: #ffc107; color: #333; }
+        .action-btn.warning:hover { background: #e0a800; }
+        .action-btn.danger { background: #dc3545; }
+        .action-btn.danger:hover { background: #c82333; }
+        .action-btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+    </style>
+</head>
+<body>
+
+    <div id="pageError" style="display:none;background:#fee2e2;color:#991b1b;padding:10px 16px;font-size:13px;"></div>
+    <div class="header">
+        <p class="slogan">Token 是 AI 时代的<em>电力</em>，用起来才能创造价值！</p>
+        <div class="token-banner">
+            <div class="token-counter">
+                <div class="value" id="todayTokenCounter">0</div>
+                <div class="label">今日 Tokens</div>
+                <div class="token-detail" id="todayTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                <div class="token-cost" id="todayTokenCost">估算 $0.00</div>
+            </div>
+            <div class="token-counter">
+                <div class="value" id="todayRequestCounter">0</div>
+                <div class="label">今日请求数</div>
+            </div>
+            <div class="token-counter">
+                <div class="value" id="totalTokenCounter">0</div>
+                <div class="label">累计 Tokens</div>
+                <div class="token-detail" id="totalTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                <div class="token-cost" id="totalTokenCost">估算 $0.00</div>
+            </div>
+            <div class="token-counter">
+                <div class="value" id="totalRequestCounter">0</div>
+                <div class="label">累计请求数</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="race-guide" id="raceApplyGuide">
+            <div class="race-guide-text"><strong>还没有个人 API Key？</strong> 先申请一个 Key，开始使用后，你的 Token 使用速度会自动加入 TOKEN ENERGY RACE。</div>
+            <button class="race-guide-action" onclick="jumpToApplyKey({ rememberGuide: true })">申请个人 API Key</button>
+        </div>
+            <div class="speed-panel">
+                <div class="speed-panel-head">
+                    <div>
+                        <h3>TOKEN ENERGY RACE</h3>
+                        <div class="speed-panel-subtitle" id="speedLeaderboardSubtitle">最近 5 分钟滚动统计；按人聚合所有 Key，只展示邮箱前两个字母。</div>
+                    </div>
+                    <div class="speed-panel-actions">
+                        <div class="pixel-toggle">
+                            <button class="view-btn race-apply-cta" onclick="jumpToApplyKey()" title="申请个人 API Key 后即可开始使用；你的 Token 使用速度会展示在这场比赛里。">申请参赛</button>
+                            <button class="view-btn active" onclick="setSpeedMetric('tokens')" id="speedMetricTokens">TOKENS</button>
+                            <button class="view-btn" onclick="setSpeedMetric('requests')" id="speedMetricRequests">REQUESTS</button>
+                            <select class="pixel-select" id="raceSizeSelect" onchange="setRaceSize(this.value)" aria-label="选择赛车人数">
+                                <option value="5" selected>TOP 5</option>
+                                <option value="10">TOP 10</option>
+                                <option value="20">TOP 20</option>
+                                <option value="30">TOP 30</option>
+                                <option value="50">TOP 50</option>
+                                <option value="100">TOP 100</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="pixel-track" id="speedRaceTrack">
+                    <div class="pixel-stars"></div>
+                    <div class="pixel-sun"></div>
+                    <div class="pixel-moon"></div>
+                    <div class="pixel-cloud"></div>
+                    <div class="pixel-cloud c2"></div>
+                    <div class="pixel-scenery">
+                        <div class="pixel-scenery-strip">
+                            <div class="pixel-scenery-copy">
+                                <div class="pixel-mountain m1"></div>
+                                <div class="pixel-mountain m2"></div>
+                                <div class="pixel-house h1"></div>
+                                <div class="pixel-house h2"></div>
+                                <div class="pixel-house h3"></div>
+                                <div class="pixel-tree t1"></div>
+                                <div class="pixel-tree t2"></div>
+                                <div class="pixel-tree t3"></div>
+                                <div class="pixel-tree t4"></div>
+                            </div>
+                            <div class="pixel-scenery-copy repeat">
+                                <div class="pixel-mountain m1"></div>
+                                <div class="pixel-mountain m2"></div>
+                                <div class="pixel-house h1"></div>
+                                <div class="pixel-house h2"></div>
+                                <div class="pixel-house h3"></div>
+                                <div class="pixel-tree t1"></div>
+                                <div class="pixel-tree t2"></div>
+                                <div class="pixel-tree t3"></div>
+                                <div class="pixel-tree t4"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pixel-hud">
+                        <div class="pixel-hud-board">
+                            <div class="pixel-hud-header"><span>RACE BOARD</span><span><span id="raceBoardClock">--:--:--</span> <span class="pixel-hud-live">LIVE</span></span></div>
+                            <div class="pixel-hud-card" id="mySpeedCard"><span class="pixel-hud-title">MY RACER</span> LOADING...</div>
+                            <div class="pixel-hud-card" id="speedLeaderboardRows"><span class="pixel-hud-title">TOP RACERS</span> LOADING...</div>
+                        </div>
+                    </div>
+                    <div class="pixel-radio-panel" id="speedRaceEvents"><span class="pixel-hud-title">RACE RADIO</span> STANDBY...</div>
+                    <div id="speedRaceRows"><div class="speed-empty" style="margin:140px 18px 0;">正在加载赛道...</div></div>
+                </div>
+            </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('register')">申请个人 Key</button>
+            <button class="tab" onclick="showTab('report')">用量报表</button>
+        </div>
+
+        <div id="register" class="tab-content active">
+            <div class="login-box">
+                <div style="background: linear-gradient(135deg, #e0e7ff 0%, #f0f4ff 100%); padding: 18px; border-radius: 10px; margin-bottom: 25px; text-align: center; border: 1px solid #d4ddff;">
+                    <div style="font-size: 14px; color: #667eea; font-weight: 600; margin-bottom: 5px;">
+                        💎 剩余可用 Key
+                    </div>
+                    <div style="font-size: 32px; font-weight: 700; color: #667eea; font-family: 'Courier New', monospace;">
+                        <span id="poolUnused">-</span>
+                    </div>
+                </div>
+
+                <div style="max-width: 600px; margin: 0 auto;">
+                    <div style="margin-bottom: 20px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">使用标识 / 标签 *</label>
+                        <input type="text" id="regIdentifier" placeholder="如：张三-工作电脑、AI项目测试、产品部"
+                            style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px;">
+                        <p style="font-size: 13px; color: #999; margin-top: 5px;">用于区分设备或用途，会作为 Key 标签展示</p>
+                    </div>
+
+                    <div style="margin-bottom: 24px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">Key 类型 *</label>
+                        <select id="regModelGroup" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: white; color: #333;">
+                            <option value="common" selected>GPT Key（不限量）</option>
+                            <option value="claude">Claude Key（需审批）</option>
+                            <option value="deepseek">DeepSeek Key（需审批）</option>
+                        </select>
+                        <div id="regModelGroupHint" style="margin-top: 8px; padding: 10px 12px; background: #f8f9ff; border: 1px solid #dfe3ff; border-radius: 8px; color: #555; font-size: 13px; line-height: 1.5;">
+                            GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。
+                        </div>
+                    </div>
+
+                    <div id="regApprovalFields" style="display: none; margin-bottom: 24px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">申请理由 *</label>
+                        <textarea id="regReason" rows="3" placeholder="Bedrock / Claude 按量计费成本较高，请说明必须使用它完成任务的紧急或必要场景；常规用量推荐优先使用 GPT Key。"
+                            style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 15px; resize: vertical; font-family: inherit;"></textarea>
+
+                        <label style="display: block; margin-bottom: 8px; margin-top: 12px; color: #333; font-weight: 500;">总额度 (USD) *</label>
+                        <div style="display: flex; align-items: center; border: 2px solid #e0e0e0; border-radius: 8px; overflow: hidden; background: white;">
+                            <span style="padding: 12px 15px; background: #f0f4ff; color: #667eea; border-right: 1px solid #d4ddff; font-size: 15px; font-weight: 600;">$</span>
+                            <input type="number" id="regDailyBudget" placeholder="5" min="0.1" step="0.1"
+                                style="flex: 1; min-width: 0; padding: 12px 15px; border: none; outline: none; font-size: 15px;"
+                                oninput="updateBudgetEstimate()">
+                        </div>
+                        <div id="regBudgetEstimate" style="font-size: 13px; color: #666; margin-top: 8px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; line-height: 1.6; display: none;"></div>
+                        <p style="font-size: 13px; color: #999; margin-top: 5px;">额度用完后请求将被拒绝，不会按天自动重置；需要追加额度后继续使用</p>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="registerUserKey()" id="regBtn">申请 API Key</button>
+                </div>
+
+                <div id="regResult" style="margin-top: 30px; display: none;"></div>
+            </div>
+        </div>
+
+        <!-- login and status tabs removed -->
+
+        <div id="report" class="tab-content">
+            <div style="margin-bottom: 20px;">
+                <h2 style="margin: 0; color: #667eea;">📊 用量报表</h2>
+                <div style="font-size:12px;color:#999;margin-top:4px;">上方展示当前登录用户的个人实时用量；下方图表和表格展示全站聚合数据。</div>
+            </div>
+            <div id="usageDataSnapshot" style="display:none;margin:12px 0 18px 0;padding:14px 16px;background:#f8f9ff;border:1px solid #dfe3ff;border-radius:10px;color:#333;font-size:13px;"></div>
+            <div class="section-title" style="margin-bottom: 10px;">
+                <div>
+                    <h3>我的实时用量</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">仅统计当前登录邮箱名下的 Key，自动刷新。</div>
+                </div>
+            </div>
+            <div class="personal-token-banner">
+                <div class="personal-token-counter">
+                    <div class="value" id="myTodayTokenCounter">0</div>
+                    <div class="label">我的今日 Tokens</div>
+                    <div class="token-detail" id="myTodayTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                    <div class="token-cost" id="myTodayTokenCost">估算 $0.00</div>
+                </div>
+                <div class="personal-token-counter requests">
+                    <div class="value" id="myTodayRequestCounter">0</div>
+                    <div class="label">我的今日请求数</div>
+                </div>
+                <div class="personal-token-counter total">
+                    <div class="value" id="myTotalTokenCounter">0</div>
+                    <div class="label">我的累计 Tokens</div>
+                    <div class="token-detail" id="myTotalTokenBreakdown">Input 0 · Output 0 · Cache 0</div>
+                    <div class="token-cost" id="myTotalTokenCost">估算 $0.00</div>
+                </div>
+                <div class="personal-token-counter total-requests">
+                    <div class="value" id="myTotalRequestCounter">0</div>
+                    <div class="label">我的累计请求数</div>
+                </div>
+            </div>
+
+            <div class="section-title">
+                <div>
+                    <h3>全站用量趋势</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">这里是全站聚合数据，不是个人数据；橙线是 Token/请求，紫线是平均 Token/小时。</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+                    <button class="refresh-btn report-refresh-btn" onclick="loadUsageHistory()">刷新全站数据</button>
+                    <div class="view-toggle">
+                        <button class="view-btn active" onclick="setChartView('hour')" id="viewHour">时</button>
+                        <button class="view-btn" onclick="setChartView('day')" id="viewDay">日</button>
+                        <button class="view-btn" onclick="setChartView('month')" id="viewMonth">月</button>
+                        <button class="view-btn" onclick="setChartView('year')" id="viewYear">年</button>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="usageChart"></canvas>
+            </div>
+
+            <div class="section-title" style="margin-top: 28px;">
+                <div>
+                    <h3>每小时请求与成功/失败率</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">全站聚合数据；柱子是每小时请求数，绿线是成功率，红线是失败率。</div>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="requestQualityChart"></canvas>
+            </div>
+
+            <div class="section-title" style="margin-top: 28px;">
+                <div>
+                    <h3>按模型类型统计</h3>
+                    <div style="font-size:12px;color:#999;margin-top:4px;">全站聚合数据；最近 7 天按模型类型聚合 Token、请求、成功率和估算费用。</div>
+                </div>
+            </div>
+            <div id="modelGroupReport" style="margin:8px 0 28px 0;"></div>
+
+            <h3 style="margin-bottom: 10px; color: #667eea;">详细数据</h3>
+            <table class="report-table">
+                <thead>
+                    <tr><th>日期</th><th>Token 消耗</th><th>请求数</th></tr>
+                </thead>
+                <tbody id="dailyReport">
+                    <tr><td colspan="3" style="text-align:center;color:#999;">加载中...</td></tr>
+                </tbody>
+            </table>
+
+        </div>
+    </div>
+
+    <script>
+        function showTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('.tab[onclick="showTab(\'' + name + '\')"]').classList.add('active');
+            document.getElementById(name).classList.add('active');
+            if (name === 'report') {
+                startPersonalUsageSummaryPolling();
+                loadUsage().then(() => {
+                    setTimeout(() => {
+                        renderChart();
+                        renderRequestQualityChart();
+                    }, 50);
+                });
+            } else {
+                stopPersonalUsageSummaryPolling();
+            }
+        }
+
+        function jumpToApplyKey(options = {}) {
+            if (options.rememberGuide) {
+                try { localStorage.setItem('tokenRaceApplyGuideSeen', '1'); } catch (e) {}
+                document.getElementById('raceApplyGuide')?.classList.remove('show');
+            }
+            showTab('register');
+            const target = document.getElementById('register');
+            if (!target) return;
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            target.classList.remove('apply-focus');
+            void target.offsetWidth;
+            target.classList.add('apply-focus');
+        }
+
+        function initRaceApplyGuide() {
+            let seen = false;
+            try { seen = localStorage.getItem('tokenRaceApplyGuideSeen') === '1'; } catch (e) {}
+            if (!seen) document.getElementById('raceApplyGuide')?.classList.add('show');
+        }
+
+        function copyText(id, btn) {
+            const el = document.getElementById(id);
+            const text = el ? el.textContent : '';
+            if (!text) return;
+
+            function showCopied() {
+                if (btn) {
+                    btn.textContent = '已复制';
+                    setTimeout(() => btn.textContent = '复制', 1500);
+                }
+            }
+
+            // Use clipboard API if available (requires HTTPS or localhost)
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(showCopied).catch(() => fallbackCopy(text, showCopied));
+            } else {
+                fallbackCopy(text, showCopied);
+            }
+        }
+
+        function fallbackCopy(text, callback) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                if (callback) callback();
+            } catch (e) {
+                alert('复制失败，请手动复制');
+            }
+            document.body.removeChild(ta);
+        }
+
+        function formatNumber(num) {
+            const value = Number(num || 0);
+            if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+            if (value >= 10000) return (value / 10000).toFixed(1) + '万';
+            return value.toLocaleString('zh-CN');
+        }
+
+        function formatNumberFull(num) {
+            // Always show full number with comma separators
+            return num.toLocaleString('zh-CN');
+        }
+
+        function formatCost(value) {
+            const amount = Number(value || 0);
+            if (amount >= 1000) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+            if (amount >= 10) return '$' + amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+            return '$' + amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function tokenBreakdownText(item) {
+            if (!item) return 'Input 0 · Output 0 · Cache 0';
+            const parts = [
+                'Input ' + formatNumber(Number(item.input_tokens || 0)),
+                'Output ' + formatNumber(Number(item.output_tokens || 0)),
+                'Cache ' + formatNumber(Number(item.cached_tokens || 0))
+            ];
+            const reasoning = Number(item.reasoning_tokens || 0);
+            const unknown = Number(item.unknown_tokens || 0);
+            if (reasoning > 0) parts.push('Reasoning ' + formatNumber(reasoning));
+            if (unknown > 0) parts.push('未分类 ' + formatNumber(unknown));
+            return parts.join(' · ');
+        }
+
+        function tokenCostText(item) {
+            if (!item) return '估算 $0.00';
+            return '估算 ' + formatCost(item.cost_usd ?? item.spend_usd, 'usd');
+        }
+
+        function tokenUsageCellHtml(item) {
+            const breakdown = item?.token_breakdown || item || {};
+            return '<div class="token-num">' + formatNumber(Number(item?.total_tokens ?? breakdown.total_tokens ?? 0)) + '</div>' +
+                '<div class="report-token-detail">' + escapeHtml(tokenBreakdownText(breakdown)) + '</div>' +
+                '<div class="report-token-cost">' + escapeHtml(tokenCostText(breakdown)) + '</div>';
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        function escapeAttr(value) {
+            return escapeHtml(value).replace(/`/g, '&#96;');
+        }
+
+        function isValidEmail(value) {
+            return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value || '').trim());
+        }
+
+        function rememberMyKeysEmail(email) {
+            const normalized = String(email || '').trim().toLowerCase();
+            if (normalized.endsWith('@zilliz.com')) {
+                localStorage.setItem(EMAIL_STORAGE_KEY, normalized);
+            }
+        }
+
+        function getRememberedMyKeysEmail() {
+            return String(localStorage.getItem(EMAIL_STORAGE_KEY) || '').trim().toLowerCase();
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '-';
+            const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+            if (!match) return String(value).replace('T', ' ').replace('Z', '').split('.')[0];
+            const utcMs = Date.UTC(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3]),
+                Number(match[4]),
+                Number(match[5]),
+                Number(match[6])
+            );
+            const bj = new Date(utcMs + 8 * 60 * 60 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${bj.getUTCFullYear()}-${pad(bj.getUTCMonth() + 1)}-${pad(bj.getUTCDate())} ${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function formatPercent(value) {
+            const num = Number(value || 0);
+            return num ? num.toFixed(num >= 10 ? 1 : 2) + '%' : '0%';
+        }
+
+        // Smooth flowing counter effect
+        const counterState = {};
+        let counterAnimationFrame = null;
+
+        function counterFormatter(elementId) {
+            const isFullCounter = ['todayTokenCounter', 'todayRequestCounter', 'myTodayTokenCounter', 'myTodayRequestCounter'].includes(elementId);
+            return isFullCounter ? formatNumberFull : formatNumber;
+        }
+
+        function updateCountersFrame() {
+            let active = false;
+            const now = performance.now();
+            Object.entries(counterState).forEach(([elementId, state]) => {
+                const el = document.getElementById(elementId);
+                if (!el) return;
+                const deltaSeconds = Math.min((now - state.lastUpdate) / 1000, 0.08);
+                state.lastUpdate = now;
+                const diff = state.target - state.display;
+                const absDiff = Math.abs(diff);
+                if (absDiff <= 0.75) {
+                    state.display = state.target;
+                } else {
+                    const smoothing = 1 - Math.exp(-2.0 * deltaSeconds);
+                    state.display += diff * smoothing;
+                    active = true;
+                }
+                el.textContent = counterFormatter(elementId)(Math.round(state.display));
+            });
+            counterAnimationFrame = active ? requestAnimationFrame(updateCountersFrame) : null;
+        }
+
+        function animateCounter(elementId, targetValue) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const target = Number(targetValue || 0);
+            const existing = counterState[elementId];
+            if (!existing) {
+                counterState[elementId] = {
+                    display: target,
+                    target,
+                    lastUpdate: performance.now()
+                };
+                el.textContent = counterFormatter(elementId)(Math.round(target));
+                return;
+            }
+            existing.target = target;
+            existing.lastUpdate = performance.now();
+            if (!counterAnimationFrame) {
+                counterAnimationFrame = requestAnimationFrame(updateCountersFrame);
+            }
+        }
+
+        // Chart state
+        window.usageChart = null;
+        window.requestQualityChart = null;
+        window.usageData = { history: [], by_month: {}, by_year: {}, tokens_by_hour: {}, requests_by_hour: {}, success_by_hour: {}, failure_by_hour: {}, avg_latency_ms_by_hour: {}, recent_hours: [], model_groups: [] };
+        window.currentView = 'hour';
+        let usageSummaryPollTimer = null;
+        let usageSummaryLoading = false;
+        let lastUsageSummary = { today: '', today_tokens: 0, today_requests: 0, total_tokens: 0, total_requests: 0, success_count: 0, failure_count: 0 };
+        let personalUsagePollTimer = null;
+        let personalUsageLoading = false;
+        let speedLeaderboardPollTimer = null;
+        let speedLeaderboardLoading = false;
+        let speedLeaderboardData = null;
+        let speedLeaderboardClockBaseMs = null;
+        let speedLeaderboardClockBaseFrameAt = 0;
+        let speedLeaderboardClockRunning = false;
+        let speedLeaderboardClockRenderedSecond = null;
+        let speedRacePositions = {};
+        let speedRaceSnapshots = [];
+        let speedRaceLanes = {};
+        let speedRaceNodes = {};
+        let speedRaceRanks = {};
+        let speedRaceStates = {};
+        let speedRaceLastLevels = {};
+        let speedRaceEventKeys = {};
+        let speedRaceEvents = [];
+        let speedRaceWorldRate = 0;
+        let speedRaceWorldOffset = { road: 0, clouds: 0, scenery: 0 };
+        let speedRaceFrameTimer = null;
+        let speedRaceLastFrameAt = 0;
+        let speedRaceTrackWidth = 900;
+        let speedRaceTrackWidthAt = 0;
+        let raceVisibleRacers = 5;
+        let raceLaneCountSetting = 6;
+        const RACE_SIZE_OPTIONS = [5, 10, 20, 30, 50, 100];
+        const RACE_SIZE_LANES = { 5: 6, 10: 10, 20: 20, 30: 30, 50: 50, 100: 100 };
+        const RACE_LANE_TOP = 196;
+        const RACE_LANE_HEIGHT = 32;
+        const RACE_TRACK_BOTTOM_PAD = 42;
+        const RACE_POLL_INTERVAL_MS = 1000;
+        const RACE_PLAYBACK_LAG_MS = 2000;
+        const RACE_NEWEST_SNAPSHOT_GUARD_MS = 450;
+        let currentSpeedMetric = 'tokens';
+        let usageHistoryRefreshTimer = null;
+        let usageSocketConnected = false;
+
+        function setElementText(elementId, value) {
+            const el = document.getElementById(elementId);
+            if (el) el.textContent = value;
+        }
+
+        // WebSocket connection
+        if (window.io) {
+            const socket = io();
+
+            socket.on('connect', () => {
+                console.log('[WebSocket] Connected');
+                usageSocketConnected = true;
+                startUsageSummaryPolling();
+                if (document.getElementById('report')?.classList.contains('active')) {
+                    startPersonalUsageSummaryPolling();
+                }
+                loadSpeedLeaderboard();
+            });
+
+            socket.on('usage_update', (data) => {
+                console.log('[WebSocket] Usage update:', data);
+                loadUsageSummary();
+            });
+
+            socket.on('disconnect', () => {
+                console.log('[WebSocket] Disconnected');
+                usageSocketConnected = false;
+                startUsageSummaryPolling();
+                if (document.getElementById('report')?.classList.contains('active')) {
+                    startPersonalUsageSummaryPolling();
+                }
+            });
+
+            setTimeout(() => {
+                startUsageSummaryPolling();
+            }, 5000);
+        } else {
+            startUsageSummaryPolling();
+        }
+
+        function setChartView(view) {
+            currentView = view;
+            ['Hour', 'Day', 'Month', 'Year'].forEach(key => document.getElementById('view' + key)?.classList.remove('active'));
+            document.getElementById('view' + view.charAt(0).toUpperCase() + view.slice(1)).classList.add('active');
+            renderChart();
+            renderRequestQualityChart();
+        }
+
+        function applyUsageSummary(data) {
+            const today = data.today || lastUsageSummary.today || '';
+            const totalTokens = Number(data.total_tokens || 0);
+            const totalRequests = Number(data.total_requests || 0);
+            const successCount = Number(data.success_count || 0);
+            const failureCount = Number(data.failure_count || 0);
+            const todayTokens = Number(data.today_tokens || 0);
+            const todayRequests = Number(data.today_requests || 0);
+            const tokenBreakdown = data.token_breakdown || lastUsageSummary.token_breakdown || {};
+            lastUsageSummary = {
+                today,
+                today_tokens: todayTokens,
+                today_requests: todayRequests,
+                total_tokens: totalTokens,
+                total_requests: totalRequests,
+                success_count: successCount,
+                failure_count: failureCount,
+                token_breakdown: tokenBreakdown
+            };
+            animateCounter('todayTokenCounter', todayTokens);
+            animateCounter('totalTokenCounter', totalTokens);
+            animateCounter('todayRequestCounter', todayRequests);
+            animateCounter('totalRequestCounter', totalRequests);
+            setElementText('todayTokenBreakdown', tokenBreakdownText(tokenBreakdown.today));
+            setElementText('totalTokenBreakdown', tokenBreakdownText(tokenBreakdown.total));
+            setElementText('todayTokenCost', tokenCostText(tokenBreakdown.today));
+            setElementText('totalTokenCost', tokenCostText(tokenBreakdown.total));
+        }
+
+        function applyPersonalUsageSummary(data) {
+            const totalTokens = Number(data.total_tokens || 0);
+            const totalRequests = Number(data.total_requests || 0);
+            const todayTokens = Number(data.today_tokens || 0);
+            const todayRequests = Number(data.today_requests || 0);
+            const tokenBreakdown = data.token_breakdown || {};
+            animateCounter('myTodayTokenCounter', todayTokens);
+            animateCounter('myTotalTokenCounter', totalTokens);
+            animateCounter('myTodayRequestCounter', todayRequests);
+            animateCounter('myTotalRequestCounter', totalRequests);
+            setElementText('myTodayTokenBreakdown', tokenBreakdownText(tokenBreakdown.today));
+            setElementText('myTotalTokenBreakdown', tokenBreakdownText(tokenBreakdown.total));
+            setElementText('myTodayTokenCost', tokenCostText(tokenBreakdown.today));
+            setElementText('myTotalTokenCost', tokenCostText(tokenBreakdown.total));
+        }
+
+        async function loadPersonalUsageSummary() {
+            if (personalUsageLoading) return;
+            personalUsageLoading = true;
+            try {
+                const resp = await fetch('/api/my-usage-summary', { cache: 'no-store' });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || '个人用量加载失败');
+                applyPersonalUsageSummary(data);
+            } catch (e) {
+                console.error('Load personal usage summary error:', e);
+            } finally {
+                personalUsageLoading = false;
+            }
+        }
+
+        function startPersonalUsageSummaryPolling() {
+            if (personalUsagePollTimer) return;
+            loadPersonalUsageSummary();
+            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 1000);
+        }
+
+        function stopPersonalUsageSummaryPolling() {
+            if (!personalUsagePollTimer) return;
+            clearInterval(personalUsagePollTimer);
+            personalUsagePollTimer = null;
+        }
+
+        function parseRaceClockMs(value) {
+            const text = String(value || '').trim();
+            const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+            if (match) {
+                return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
+            }
+            const parsed = Date.parse(text);
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+
+        function formatRaceClockMs(ms) {
+            if (ms == null) return '--:--:--';
+            const bj = new Date(ms + 8 * 60 * 60 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}:${pad(bj.getUTCSeconds())}`;
+        }
+
+        function currentRaceClockMs(now = performance.now()) {
+            if (!speedLeaderboardClockRunning || speedLeaderboardClockBaseMs == null) return null;
+            return speedLeaderboardClockBaseMs + Math.max(0, now - speedLeaderboardClockBaseFrameAt);
+        }
+
+        function applyRaceClock(data, now = performance.now()) {
+            const nextMs = parseRaceClockMs(data?.data_as_of || data?.generated_at);
+            if (nextMs == null) return;
+            const currentMs = currentRaceClockMs(now);
+            speedLeaderboardClockBaseMs = currentMs == null ? nextMs : Math.max(nextMs, currentMs);
+            speedLeaderboardClockBaseFrameAt = now;
+            speedLeaderboardClockRunning = true;
+            speedLeaderboardClockRenderedSecond = null;
+        }
+
+        function updateRaceClock(now = performance.now()) {
+            const clockEl = document.getElementById('raceBoardClock');
+            if (!clockEl) return;
+            const currentMs = currentRaceClockMs(now);
+            if (currentMs == null) {
+                if (speedLeaderboardClockRenderedSecond !== -1) {
+                    clockEl.textContent = '--:--:--';
+                    speedLeaderboardClockRenderedSecond = -1;
+                }
+                return;
+            }
+            const currentSecond = Math.floor(currentMs / 1000);
+            if (speedLeaderboardClockRenderedSecond === currentSecond) return;
+            clockEl.textContent = formatRaceClockMs(currentSecond * 1000);
+            speedLeaderboardClockRenderedSecond = currentSecond;
+        }
+
+        function raceMetricParts(row, metric) {
+            const rank = metric === 'requests' ? row.request_rank : row.token_rank;
+            const rate = Number(metric === 'requests' ? row.requests_per_minute : row.tokens_per_minute || 0);
+            const level = metric === 'requests' ? row.request_level : row.token_level;
+            const unit = metric === 'requests' ? 'req/min' : 'tok/min';
+            const value = metric === 'requests' ? row.requests : row.tokens;
+            return { rank, rate, level: level || { label: '步行', index: 0, progress: 0 }, unit, value };
+        }
+
+        function raceEventText(levelLabel) {
+            if (levelLabel === '汽车') return 'hits CAR MODE';
+            if (levelLabel === '直升机') return 'lifts into HELI MODE';
+            if (levelLabel === '飞机') return 'takes off';
+            if (levelLabel === '火箭') return 'ignites ROCKET MODE';
+            if (levelLabel === 'UFO') return 'UFO SIGHTING';
+            return '';
+        }
+
+        function pushRaceEvent(state, text, rare = false, key = '') {
+            if (!text) return;
+            const now = Date.now();
+            const eventKey = key || `${state.id}:${text}`;
+            if (speedRaceEventKeys[eventKey] && now - speedRaceEventKeys[eventKey] < 9000) return;
+            speedRaceEventKeys[eventKey] = now;
+            speedRaceEvents.unshift({ id: `${eventKey}:${now}`, name: state.row?.email_mask || 'RACER', text, rare });
+            speedRaceEvents = speedRaceEvents.slice(0, 3);
+        }
+
+        function pushRaceLevelEvent(state, levelLabel) {
+            const text = raceEventText(levelLabel);
+            if (!text) return;
+            pushRaceEvent(state, text, ['飞机', '火箭', 'UFO'].includes(levelLabel), `${state.id}:level:${levelLabel}`);
+        }
+
+        function renderRaceEvents() {
+            const eventEl = document.getElementById('speedRaceEvents');
+            if (!eventEl) return;
+            eventEl.innerHTML = speedRaceEvents.length
+                ? '<span class="pixel-hud-title">RACE RADIO</span>' + speedRaceEvents.map(event => `<div class="pixel-event-line${event.rare ? ' rare' : ''}"><strong>${escapeHtml(event.name)}</strong> ${escapeHtml(event.text)}</div>`).join('')
+                : '<span class="pixel-hud-title">RACE RADIO</span> STANDBY...';
+        }
+
+        function raceSprite(levelLabel) {
+            if (levelLabel === '熄火') return { icon: '🐢', flip: true };
+            if (levelLabel === '跑步') return { icon: '🏃', flip: true };
+            if (levelLabel === '自行车') return { icon: '🚲', flip: true };
+            if (levelLabel === '电动车') return { icon: '🛵', flip: true };
+            if (levelLabel === '汽车') return { icon: '🏎️', flip: true };
+            if (levelLabel === '直升机') return { icon: '🚁', flip: true };
+            if (levelLabel === '飞机') return { icon: '✈️', flip: false, className: 'level-plane' };
+            if (levelLabel === '火箭') return { icon: '🚀', flip: false, className: 'level-rocket' };
+            if (levelLabel === 'UFO') return { icon: '🛸', flip: false, className: 'level-ufo' };
+            return { icon: '🚶', flip: true };
+        }
+
+        function updateWorldSpeed(trackEl, leadRate, metric, deltaSeconds) {
+            const target = Math.max(0, Number(leadRate || 0));
+            const smoothing = target >= speedRaceWorldRate ? 0.16 : 0.025;
+            speedRaceWorldRate += (target - speedRaceWorldRate) * (1 - Math.pow(1 - smoothing, Math.max(1, deltaSeconds * 60)));
+            const level = levelForDisplayRate(speedRaceWorldRate, metric);
+            const ratio = clamp(level.index / 9, 0, 1);
+            const pixelsPerSecond = 18 + ratio * 112;
+            speedRaceWorldOffset.road = (speedRaceWorldOffset.road - pixelsPerSecond * 1.45 * deltaSeconds) % 72;
+            speedRaceWorldOffset.clouds = (speedRaceWorldOffset.clouds - pixelsPerSecond * 0.36 * deltaSeconds) % 180;
+            speedRaceWorldOffset.scenery = (speedRaceWorldOffset.scenery - pixelsPerSecond * 0.24 * deltaSeconds) % Math.max(1, trackEl.clientWidth || 900);
+            trackEl.style.setProperty('--road-x', `${speedRaceWorldOffset.road}px`);
+            trackEl.style.setProperty('--cloud-x', `${speedRaceWorldOffset.clouds}px`);
+            trackEl.style.setProperty('--scenery-x', `${speedRaceWorldOffset.scenery}px`);
+        }
+
+        function raceHash(value) {
+            let hash = 0;
+            for (let i = 0; i < value.length; i += 1) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+            return Math.abs(hash);
+        }
+
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        function easeOutCubic(t) {
+            return 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+        }
+
+        function easeInOutSine(t) {
+            return -(Math.cos(Math.PI * clamp(t, 0, 1)) - 1) / 2;
+        }
+
+        function transitionDuration(fromRate, toRate) {
+            const delta = Math.abs(toRate - fromRate);
+            const scale = Math.max(Math.abs(fromRate), Math.abs(toRate), 1);
+            const relative = delta / scale;
+            const base = toRate > fromRate ? 460 : 820;
+            const duration = base + Math.log10(delta + 10) * 360 + relative * 900;
+            return clamp(duration, toRate > fromRate ? 520 : 900, toRate > fromRate ? 2300 : 3200);
+        }
+
+        function displayedRaceRate(rate) {
+            return Math.max(0, Math.round(Number(rate || 0)));
+        }
+
+        function levelForDisplayRate(rate, metric) {
+            const visibleRate = displayedRaceRate(rate);
+            if (visibleRate <= 0) return { label: '熄火', index: 0, progress: 0 };
+            const requestThresholds = [
+                ['步行', 0.0001], ['跑步', 0.2], ['自行车', 0.6], ['电动车', 1.5],
+                ['汽车', 3], ['直升机', 8], ['飞机', 18], ['火箭', 40], ['UFO', 80]
+            ];
+            const tokenThresholds = [
+                ['步行', 1], ['跑步', 20000], ['自行车', 60000], ['电动车', 120000],
+                ['汽车', 250000], ['直升机', 500000], ['飞机', 750000], ['火箭', 1100000], ['UFO', 1600000]
+            ];
+            const thresholds = metric === 'requests' ? requestThresholds : tokenThresholds;
+            let idx = 0;
+            for (let i = 0; i < thresholds.length; i += 1) {
+                if (visibleRate >= thresholds[i][1]) idx = i;
+            }
+            return { label: thresholds[idx][0], index: idx + 1, progress: 0 };
+        }
+
+        function raceLevelThresholds(metric) {
+            const requestThresholds = [0, 0.0001, 0.2, 0.6, 1.5, 3, 8, 18, 40, 80];
+            const tokenThresholds = [0, 1, 20000, 60000, 120000, 250000, 500000, 750000, 1100000, 1600000];
+            return metric === 'requests' ? requestThresholds : tokenThresholds;
+        }
+
+        function raceSegmentEdges(maxTravel) {
+            const weights = [0.84, 1.16, 1.56, 2.0, 2.05, 1.8, 1.55, 1.3, 1.1];
+            const total = weights.reduce((sum, value) => sum + value, 0);
+            let cursor = 0;
+            const edges = [0];
+            weights.forEach(weight => {
+                cursor += maxTravel * weight / total;
+                edges.push(cursor);
+            });
+            return edges;
+        }
+
+        function segmentTargetX(state, trackWidth) {
+            const maxTravel = Math.max(180, trackWidth - 230);
+            const rate = Math.max(0, Number(state.displayRate || 0));
+            if (!rate) return 8;
+            const level = levelForDisplayRate(rate, state.metric);
+            const thresholds = raceLevelThresholds(state.metric);
+            const segmentCount = thresholds.length - 1;
+            const levelIndex = clamp(Number(level.index || 0), 0, segmentCount);
+            const lower = thresholds[levelIndex] || 0;
+            const upper = thresholds[levelIndex + 1] || Math.max(lower * 2, lower + 1);
+            const local = upper > lower ? clamp((rate - lower) / (upper - lower), 0, 1) : 0;
+            const edges = raceSegmentEdges(maxTravel);
+            const segmentStart = edges[Math.max(0, levelIndex - 1)] || 0;
+            const segmentEnd = edges[Math.max(1, levelIndex)] || maxTravel;
+            const segmentWidth = Math.max(1, segmentEnd - segmentStart);
+            const segmentProgress = easeOutCubic(local) * segmentWidth * 0.82;
+            const rankNudge = clamp((Number(state.rank || 1) - 1) * 10, 0, segmentWidth * 0.24);
+            return clamp(8 + segmentStart + segmentProgress - rankNudge, 8, maxTravel);
+        }
+
+        function raceStateFor(row, metric, fallbackIndex, now) {
+            const parts = raceMetricParts(row, metric);
+            const id = raceIdentity(row, metric, fallbackIndex);
+            let state = speedRaceStates[id];
+            if (!state) {
+                const seed = raceHash(id);
+                const initialRate = Number(parts.rate || 0);
+                state = speedRaceStates[id] = {
+                    id,
+                    row,
+                    metric,
+                    seed,
+                    phaseMs: seed % 170,
+                    visualLagMs: 40 + (seed % 260),
+                    visualResponsiveness: 1.08 + ((seed % 23) / 100),
+                    visualDriftPhase: seed % 628,
+                    visualDriftPx: 1.5 + (seed % 4),
+                    rank: parts.rank || fallbackIndex + 1,
+                    displayRate: initialRate,
+                    fromRate: initialRate,
+                    targetRate: initialRate,
+                    transitionStart: now,
+                    transitionEnd: now + 1,
+                    x: null,
+                    lane: fallbackIndex,
+                    lastSeenAt: now,
+                    lastSnapshotAt: 0,
+                };
+            }
+            state.row = row;
+            state.metric = metric;
+            state.parts = parts;
+            return state;
+        }
+
+        function applyRaceSnapshot(row, metric, fallbackIndex, now) {
+            const state = raceStateFor(row, metric, fallbackIndex, now);
+            const parts = state.parts || raceMetricParts(row, metric);
+            const nextRank = parts.rank || fallbackIndex + 1;
+            const targetRate = Number(parts.rate || 0);
+            if (state.rank && nextRank && nextRank < state.rank) {
+                const jump = state.rank - nextRank;
+                pushRaceEvent(state, jump >= 2 ? `jumps to #${nextRank}` : `takes #${nextRank}`, false, `${state.id}:rank:${nextRank}:${Math.floor(now / 12000)}`);
+            }
+            if (state.targetRate !== targetRate || state.rank !== nextRank) {
+                state.fromRate = state.displayRate;
+                state.previousTargetRate = state.targetRate;
+                state.targetRate = targetRate;
+                if (targetRate >= Math.max(1, state.previousTargetRate) * 1.5 && targetRate - state.previousTargetRate >= 20000) {
+                    state.nitroUntil = now + 3600;
+                    const gain = Math.round((targetRate / Math.max(1, state.previousTargetRate) - 1) * 100);
+                    pushRaceEvent(state, `hits NITRO +${gain}%`, true, `${state.id}:nitro:${Math.floor(now / 10000)}`);
+                }
+                state.transitionStart = now + state.phaseMs;
+                state.transitionEnd = state.transitionStart + transitionDuration(state.displayRate, targetRate);
+                state.rank = nextRank;
+            }
+            const nextLevel = levelForDisplayRate(targetRate, metric);
+            const previousLevelIndex = speedRaceLastLevels[state.id] || 0;
+            if (Number(nextLevel.index || 0) >= 5 && Number(nextLevel.index || 0) > previousLevelIndex) pushRaceLevelEvent(state, nextLevel.label);
+            speedRaceLastLevels[state.id] = Math.max(previousLevelIndex, Number(nextLevel.index || 0));
+            state.lastSeenAt = now;
+            state.lastSnapshotAt = now;
+            return state;
+        }
+
+        function updateRaceState(state, now) {
+            const duration = Math.max(1, state.transitionEnd - state.transitionStart);
+            const rawProgress = (now - state.transitionStart) / duration;
+            if (rawProgress <= 0) return;
+            const easing = state.targetRate >= state.fromRate ? easeOutCubic : easeInOutSine;
+            const progress = easing(rawProgress);
+            const next = state.fromRate + (state.targetRate - state.fromRate) * progress;
+            state.displayRate = Math.abs(next) < 1 ? 0 : Math.max(0, next);
+        }
+
+        function applyRankSpacing(states, trackWidth, deltaSeconds = 1 / 60) {
+            const maxX = Math.max(180, trackWidth - 190);
+            const minGap = Math.max(36, Math.min(76, maxX / Math.max(7, states.length + 2)));
+            const ordered = [...states].sort((a, b) => (a.rank || 999) - (b.rank || 999));
+            const retreatStep = Math.max(4, Math.min(18, 260 * deltaSeconds));
+            let previousX = maxX;
+            ordered.forEach((state, idx) => {
+                const limit = idx === 0 ? maxX : Math.max(8, previousX - minGap);
+                if (state.x != null && state.x > limit) state.x = Math.max(limit, state.x - retreatStep);
+                previousX = state.x == null ? limit : state.x;
+            });
+        }
+
+        function raceIdentity(row, metric, fallback) {
+            const userKey = row.email_mask || row.email || row.user || `racer-${fallback}`;
+            return `${metric}:${row.is_current_user ? 'me' : userKey}`;
+        }
+
+        function stableLaneIndex(id, preferredIndex, maxLanes) {
+            const target = Math.max(0, Math.min(maxLanes - 1, preferredIndex % maxLanes));
+            const previous = speedRaceLanes[id];
+            if (previous == null) {
+                speedRaceLanes[id] = target;
+                return target;
+            }
+            const next = previous + Math.max(-1, Math.min(1, target - previous));
+            const clamped = Math.max(0, Math.min(maxLanes - 1, next));
+            speedRaceLanes[id] = clamped;
+            return clamped;
+        }
+
+        function raceLaneCount() {
+            return Math.max(raceLaneCountSetting, currentRaceRows().length, 6);
+        }
+
+        function raceTrackHeight(laneCount) {
+            return RACE_LANE_TOP + laneCount * RACE_LANE_HEIGHT + RACE_TRACK_BOTTOM_PAD;
+        }
+
+        function ensureRaceNode(raceEl, id) {
+            let entry = speedRaceNodes[id];
+            if (entry?.lane?.isConnected && entry?.racer?.isConnected) return entry;
+            const lane = document.createElement('div');
+            const racer = document.createElement('div');
+            lane.dataset.laneId = id;
+            racer.dataset.racerId = id;
+            racer.innerHTML = '<div class="pixel-name"></div><div class="pixel-trail"></div><div class="pixel-racer-sprite"></div><div class="pixel-speed"></div>';
+            entry = speedRaceNodes[id] = {
+                lane,
+                racer,
+                nameEl: racer.querySelector('.pixel-name'),
+                spriteEl: racer.querySelector('.pixel-racer-sprite'),
+                speedEl: racer.querySelector('.pixel-speed'),
+                laneClass: '',
+                laneTop: '',
+                racerClass: '',
+                racerTop: '',
+                raceX: '',
+                nameText: '',
+                spriteClass: '',
+                spriteText: '',
+                speedText: '',
+            };
+            raceEl.appendChild(lane);
+            raceEl.appendChild(racer);
+            return entry;
+        }
+
+        function updateRaceNode(raceEl, state, laneIndex, trackWidth, maxLanes, activeIds) {
+            const row = state.row;
+            const parts = state.parts || raceMetricParts(row, state.metric);
+            activeIds.add(state.id);
+            const stableLane = stableLaneIndex(state.id, laneIndex, maxLanes);
+            const laneTop = RACE_LANE_TOP + stableLane * RACE_LANE_HEIGHT;
+            const level = levelForDisplayRate(state.displayRate, state.metric);
+            const previous = speedRacePositions[state.id];
+            const levelIndex = Number(level.index || 0);
+            const speedDelta = previous == null ? 0 : state.x - previous;
+            speedRacePositions[state.id] = state.x;
+            const rateJump = state.previousTargetRate > 0 ? state.targetRate / Math.max(1, state.previousTargetRate) : 0;
+            const nitroActive = state.nitroUntil && performance.now() < state.nitroUntil;
+            const slowingClass = state.targetRate < state.fromRate && Math.abs(state.targetRate - state.fromRate) > 1000 ? ' slowing' : '';
+            const fastClass = state.displayRate > 0 && (levelIndex >= 4 || speedDelta > 16) ? ' fast' : '';
+            const turboClass = state.displayRate > 0 && (levelIndex >= 8 || speedDelta > 34) ? ' turbo' : '';
+            const nitroClass = nitroActive || rateJump >= 1.5 ? ' nitro' : '';
+            const idleClass = state.displayRate > 0 && levelIndex <= 2 ? ' idle' : '';
+            const meClass = row.is_current_user ? ' me' : '';
+            const sprite = raceSprite(level.label);
+            const node = ensureRaceNode(raceEl, state.id);
+            const laneClass = `race-lane${meClass}`;
+            const laneTopText = `${laneTop}px`;
+            const racerClass = `pixel-racer${fastClass}${turboClass}${nitroClass}${slowingClass}${idleClass}${meClass}`;
+            const racerTopText = `${laneTop + 10}px`;
+            const raceXText = `${state.x.toFixed(2)}px`;
+            const nameText = `${row.email_mask || '??'}${row.is_current_user ? ' YOU' : ''}`;
+            const spriteClass = `pixel-racer-sprite${sprite.flip ? ' flip' : ''}${sprite.className ? ' ' + sprite.className : ''}`;
+            const visibleRate = displayedRaceRate(state.displayRate);
+            const speedText = `#${parts.rank || '-'} ${level.label} · ${formatNumber(visibleRate)} ${parts.unit}`;
+            if (node.laneClass !== laneClass) { node.lane.className = laneClass; node.laneClass = laneClass; }
+            if (node.laneTop !== laneTopText) { node.lane.style.top = laneTopText; node.laneTop = laneTopText; }
+            if (node.racerClass !== racerClass) { node.racer.className = racerClass; node.racerClass = racerClass; }
+            if (node.racerTop !== racerTopText) { node.racer.style.top = racerTopText; node.racerTop = racerTopText; }
+            if (node.raceX !== raceXText) { node.racer.style.setProperty('--race-x', raceXText); node.raceX = raceXText; }
+            if (node.nameText !== nameText) { node.nameEl.textContent = nameText; node.nameText = nameText; }
+            if (node.spriteClass !== spriteClass) { node.spriteEl.className = spriteClass; node.spriteClass = spriteClass; }
+            if (node.spriteText !== sprite.icon) { node.spriteEl.textContent = sprite.icon; node.spriteText = sprite.icon; }
+            if (node.speedText !== speedText) { node.speedEl.textContent = speedText; node.speedText = speedText; }
+        }
+
+        function pruneRaceNodes(raceEl, activeIds) {
+            Object.keys(speedRaceNodes).forEach(id => {
+                if (!activeIds.has(id)) {
+                    speedRaceNodes[id].racer.remove();
+                    speedRaceNodes[id].lane.remove();
+                    delete speedRaceNodes[id];
+                }
+            });
+        }
+
+        function raceRankValue(row, metric) {
+            const value = metric === 'requests' ? row.request_rank : row.token_rank;
+            return value == null ? 999999 : Number(value || 999999);
+        }
+
+        function raceRowsFromData(data, metric = currentSpeedMetric) {
+            const top = Array.isArray(data?.top) ? [...data.top] : [];
+            top.sort((a, b) => raceRankValue(a, metric) - raceRankValue(b, metric));
+            const racers = top.slice(0, raceVisibleRacers);
+            const currentUser = data?.current_user;
+            if (currentUser && !racers.some(row => row.is_current_user)) racers.push({ ...currentUser, is_current_user: true });
+            return racers.map((row, index) => ({ ...row, race_display_index: index }));
+        }
+
+        function currentRaceRows() {
+            return raceRowsFromData(speedLeaderboardData || {}, currentSpeedMetric);
+        }
+
+        function raceSnapshotTime(now) {
+            return Date.now() - performance.now() + now;
+        }
+
+        function pushSpeedRaceSnapshot(data, now = performance.now()) {
+            const time = raceSnapshotTime(now);
+            const rows = raceRowsFromData(data, currentSpeedMetric);
+            speedRaceSnapshots.push({ time, data, rows });
+            speedRaceSnapshots = speedRaceSnapshots.slice(-8);
+        }
+
+        function rowPointMap(snapshot, metric) {
+            const map = new Map();
+            (snapshot?.rows || []).forEach((row, idx) => {
+                const id = raceIdentity(row, metric, idx);
+                map.set(id, { row, parts: raceMetricParts(row, metric), index: idx });
+            });
+            return map;
+        }
+
+        function catmullRomValue(p0, p1, p2, p3, t) {
+            const t2 = t * t;
+            const t3 = t2 * t;
+            const value = 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+            return clamp(value, Math.min(p1, p2), Math.max(p1, p2));
+        }
+
+        function raceDebugRows(data, metric = currentSpeedMetric) {
+            return raceRowsFromData(data || {}, metric).slice(0, 8).map((row, idx) => {
+                const parts = raceMetricParts(row, metric);
+                return `${idx + 1}:${row.email_mask || '??'}#${parts.rank || '-'}=${Math.round(parts.rate || 0)}`;
+            }).join(' | ');
+        }
+
+        function logRaceSnapshotDebug(data, now = performance.now()) {
+            const times = speedRaceSnapshots.map(snapshot => Math.round((snapshot.time - speedRaceSnapshots[0].time) / 1000));
+            console.info('[TokenRace]', {
+                now: Math.round(now),
+                metric: currentSpeedMetric,
+                cache: data?.cache_status,
+                cacheAge: data?.cache_age_seconds,
+                activeSeconds: data?.active_seconds,
+                dataAsOf: data?.data_as_of,
+                generatedAt: data?.generated_at,
+                snapshots: speedRaceSnapshots.length,
+                snapshotOffsets: times,
+                rows: raceDebugRows(data)
+            });
+        }
+
+        function playbackRaceRows(now = performance.now()) {
+            if (speedRaceSnapshots.length < 2) return currentRaceRows();
+            const newestTime = speedRaceSnapshots[speedRaceSnapshots.length - 1].time;
+            const playbackTime = Math.min(Date.now() - RACE_PLAYBACK_LAG_MS, newestTime - RACE_NEWEST_SNAPSHOT_GUARD_MS);
+            const previousPlaybackLog = playbackRaceRows.lastLogAt || 0;
+            if (now - previousPlaybackLog > 5000) {
+                playbackRaceRows.lastLogAt = now;
+                console.debug('[TokenRacePlayback]', {
+                    now: Math.round(now),
+                    playbackLagMs: Math.round(Date.now() - playbackTime),
+                    newestLagMs: Math.round(Date.now() - newestTime),
+                    snapshots: speedRaceSnapshots.length
+                });
+            }
+            let endIndex = speedRaceSnapshots.findIndex(snapshot => snapshot.time >= playbackTime);
+            if (endIndex <= 0) endIndex = Math.min(1, speedRaceSnapshots.length - 1);
+            const startIndex = endIndex - 1;
+            const s0 = speedRaceSnapshots[Math.max(0, startIndex - 1)];
+            const s1 = speedRaceSnapshots[startIndex];
+            const s2 = speedRaceSnapshots[endIndex];
+            const s3 = speedRaceSnapshots[Math.min(speedRaceSnapshots.length - 1, endIndex + 1)];
+            const span = Math.max(1, s2.time - s1.time);
+            const t = clamp((playbackTime - s1.time) / span, 0, 1);
+            const metric = currentSpeedMetric;
+            const maps = [s0, s1, s2, s3].map(snapshot => rowPointMap(snapshot, metric));
+            return s1.rows.map((baseRow, idx) => {
+                const id = raceIdentity(baseRow, metric, idx);
+                const points = maps.map(map => map.get(id));
+                const p1 = points[1];
+                const p2 = points[2];
+                if (!p1 || !p2) return { ...baseRow };
+                const fallbackRate = raceMetricParts(baseRow, metric).rate;
+                const ratePoints = points.map(point => Number(point?.parts?.rate ?? fallbackRate));
+                const rankPoints = points.map(point => Number(point?.parts?.rank ?? p1.parts.rank ?? idx + 1));
+                const row = { ...baseRow };
+                const rate = Math.max(0, catmullRomValue(ratePoints[0], ratePoints[1], ratePoints[2], ratePoints[3], t));
+                const rank = Math.round(catmullRomValue(rankPoints[0], rankPoints[1], rankPoints[2], rankPoints[3], t));
+                if (metric === 'requests') {
+                    row.requests_per_minute = rate;
+                    row.request_rank = rank;
+                    row.request_level = levelForDisplayRate(rate, 'requests');
+                } else {
+                    row.tokens_per_minute = rate;
+                    row.token_rank = rank;
+                    row.token_level = levelForDisplayRate(rate, 'tokens');
+                }
+                row.race_display_index = idx;
+                return row;
+            });
+        }
+
+        function syncRaceSnapshot(now = performance.now()) {
+            const metric = currentSpeedMetric;
+            const racers = currentRaceRows();
+            racers.forEach((row, idx) => applyRaceSnapshot(row, metric, idx, now));
+            Object.values(speedRaceStates).forEach(state => {
+                if (state.metric === metric && now - state.lastSeenAt > 3200 && state.targetRate > 0) {
+                    state.fromRate = state.displayRate;
+                    state.targetRate = 0;
+                    state.transitionStart = now + state.phaseMs;
+                    state.transitionEnd = state.transitionStart + transitionDuration(state.displayRate, 0);
+                }
+            });
+            return racers;
+        }
+
+        function updatePlaybackRaceEvents(state, parts, level) {
+            const previousRank = state.rank;
+            const nextRank = parts.rank || state.row?.race_display_index + 1 || 999;
+            if (previousRank && nextRank && nextRank < previousRank) {
+                const jump = previousRank - nextRank;
+                pushRaceEvent(state, jump >= 2 ? `jumps to #${nextRank}` : `takes #${nextRank}`, false, `${state.id}:rank:${nextRank}:${Math.floor(Date.now() / 12000)}`);
+            }
+            const now = performance.now();
+            const rate = Number(parts.rate || 0);
+            const baselineRate = Number(state.nitroBaselineRate ?? state.displayRate ?? 0);
+            const baselineAt = Number(state.nitroBaselineAt || 0);
+            const nitroDeltaThreshold = state.metric === 'requests' ? 1 : 20000;
+            if (baselineAt && rate >= Math.max(1, baselineRate) * 1.35 && rate - baselineRate >= nitroDeltaThreshold) {
+                state.nitroUntil = now + 3600;
+                const gain = Math.round((rate / Math.max(1, baselineRate) - 1) * 100);
+                pushRaceEvent(state, `hits NITRO +${gain}%`, true, `${state.id}:nitro:${Math.floor(Date.now() / 10000)}`);
+            }
+            if (!baselineAt || now - baselineAt >= 900 || rate < baselineRate * 0.85) {
+                state.nitroBaselineRate = rate;
+                state.nitroBaselineAt = now;
+            }
+            const previousLevelIndex = speedRaceLastLevels[state.id] || 0;
+            const levelIndex = Number(level.index || 0);
+            if (levelIndex >= 5 && levelIndex > previousLevelIndex) pushRaceLevelEvent(state, level.label);
+            speedRaceLastLevels[state.id] = Math.max(previousLevelIndex, levelIndex);
+        }
+
+        function liveRaceStates(now = performance.now()) {
+            const metric = currentSpeedMetric;
+            const racers = playbackRaceRows(now);
+            return racers.map((row, idx) => {
+                const state = raceStateFor(row, metric, idx, now);
+                const parts = raceMetricParts(row, metric);
+                const rate = Number(parts.rate || 0);
+                const level = levelForDisplayRate(rate, metric);
+                state.row = row;
+                state.parts = parts;
+                updatePlaybackRaceEvents(state, parts, level);
+                state.rank = parts.rank || idx + 1;
+                state.displayRate = rate;
+                state.fromRate = rate;
+                state.targetRate = rate;
+                state.transitionStart = now;
+                state.transitionEnd = now + 1;
+                state.lastSeenAt = now;
+                return state;
+            });
+        }
+
+        function moonPhaseIndex(date) {
+            const knownNewMoon = Date.UTC(2026, 0, 18, 2, 52);
+            const lunarCycleMs = 29.530588853 * 24 * 60 * 60 * 1000;
+            const age = ((date.getTime() - knownNewMoon) % lunarCycleMs + lunarCycleMs) % lunarCycleMs;
+            return Math.floor((age / lunarCycleMs) * 8 + 0.5) % 8;
+        }
+
+        function updateTrackSky(trackEl) {
+            const bj = new Date(Date.now() + 8 * 60 * 60 * 1000);
+            const hour = bj.getUTCHours() + bj.getUTCMinutes() / 60;
+            const isNight = hour < 6 || hour >= 19;
+            const isEvening = hour >= 17 && hour < 19;
+            const dayProgress = isNight ? ((hour >= 19 ? hour - 19 : hour + 5) / 11) : clamp((hour - 6) / 13, 0, 1);
+            const left = 10 + dayProgress * 78;
+            const arc = Math.sin(dayProgress * Math.PI);
+            const top = isNight ? 34 + (1 - arc) * 34 : 18 + (1 - arc) * 62;
+            trackEl.style.setProperty('--celestial-left', `${left}%`);
+            trackEl.style.setProperty('--celestial-top', `${top}px`);
+            trackEl.style.setProperty('--sun-opacity', isNight ? 0 : 1);
+            trackEl.style.setProperty('--moon-opacity', isNight ? 1 : 0);
+            trackEl.classList.toggle('sky-night', isNight);
+            trackEl.classList.toggle('sky-evening', isEvening);
+            const moonEl = trackEl.querySelector('.pixel-moon');
+            if (moonEl) moonEl.className = `pixel-moon phase-${moonPhaseIndex(bj)}`;
+        }
+
+        function renderSpeedLeaderboard(now = performance.now()) {
+            const deltaSeconds = speedRaceLastFrameAt ? Math.min((now - speedRaceLastFrameAt) / 1000, 0.2) : 1 / 60;
+            updateRaceClock(now);
+            const hudEl = document.getElementById('speedLeaderboardRows');
+            const myEl = document.getElementById('mySpeedCard');
+            const raceEl = document.getElementById('speedRaceRows');
+            const trackEl = document.getElementById('speedRaceTrack');
+            const subtitle = document.getElementById('speedLeaderboardSubtitle');
+            if (!hudEl || !myEl || !raceEl || !trackEl) return;
+            const metric = currentSpeedMetric;
+            if (subtitle) subtitle.textContent = 'READY · STEADY · TOKEN!';
+            document.getElementById('speedMetricTokens')?.classList.toggle('active', metric === 'tokens');
+            document.getElementById('speedMetricRequests')?.classList.toggle('active', metric === 'requests');
+            const states = liveRaceStates(now);
+            const laneCount = raceLaneCount();
+            const trackHeight = `${raceTrackHeight(laneCount)}px`;
+            if (trackEl.dataset.raceHeight !== trackHeight) {
+                trackEl.style.minHeight = trackHeight;
+                trackEl.dataset.raceHeight = trackHeight;
+            }
+            if (!speedRaceTrackWidthAt || now - speedRaceTrackWidthAt > 1000) {
+                speedRaceTrackWidth = trackEl.clientWidth || speedRaceTrackWidth || 900;
+                speedRaceTrackWidthAt = now;
+            }
+            const trackWidth = speedRaceTrackWidth;
+            updateTrackSky(trackEl);
+            const leadRate = states.reduce((max, state) => Math.max(max, state.displayRate), 0);
+            updateWorldSpeed(trackEl, leadRate, metric, deltaSeconds);
+            const activeIds = new Set();
+            const emptyEl = raceEl.querySelector('.speed-empty');
+            if (emptyEl && states.length) emptyEl.remove();
+            states.sort((a, b) => {
+                const ai = Number.isFinite(Number(a.row?.race_display_index)) ? Number(a.row.race_display_index) : 999999;
+                const bi = Number.isFinite(Number(b.row?.race_display_index)) ? Number(b.row.race_display_index) : 999999;
+                if (ai !== bi) return ai - bi;
+                return (a.rank || 999999) - (b.rank || 999999);
+            });
+            states.forEach((state, idx) => {
+                const targetX = segmentTargetX(state, trackWidth);
+                const previous = state.x;
+                const visualTime = Math.max(0, now - state.visualLagMs);
+                const drift = Math.sin((visualTime / 820) + state.visualDriftPhase) * state.visualDriftPx;
+                const visualTargetX = targetX + drift;
+                const delta = visualTargetX - (previous == null ? visualTargetX : previous);
+                const frameScale = Math.min(2.5, Math.max(0.4, deltaSeconds * 60));
+                const baseFactor = (delta > 0 ? 0.074 : 0.046) * state.visualResponsiveness;
+                const factor = 1 - Math.pow(1 - baseFactor, frameScale);
+                state.x = previous == null ? visualTargetX : clamp(previous + delta * factor, 8, trackWidth - 190);
+            });
+            if (states.length) {
+                states.forEach((state, idx) => updateRaceNode(raceEl, state, idx, trackWidth, states.length, activeIds));
+                pruneRaceNodes(raceEl, activeIds);
+            } else if (!emptyEl) {
+                raceEl.innerHTML = '<div class="speed-empty" style="margin:140px 18px 0;">最近窗口还没有赛车出发。</div>';
+            }
+            const currentState = states.find(state => state.row?.is_current_user);
+            if (currentState) {
+                const parts = currentState.parts || raceMetricParts(currentState.row, metric);
+                const level = levelForDisplayRate(currentState.displayRate, metric);
+                myEl.innerHTML = `<span class="pixel-hud-title">MY RACER</span><span class="pixel-hud-rank">${currentState.row.email_mask || '??'} · #${parts.rank || '-'}</span> · ${level.label} · ${formatNumber(displayedRaceRate(currentState.displayRate))} ${parts.unit}`;
+            } else {
+                myEl.innerHTML = '<span class="pixel-hud-title">MY RACER</span> WAITING...';
+            }
+            const hudStates = states.filter(state => Number(state.row?.race_display_index ?? 999999) < raceVisibleRacers || state.row?.is_current_user);
+            hudEl.innerHTML = states.length
+                ? `<span class="pixel-hud-title">TOP RACERS</span><span style="color:#9fb1ff;">${states.length}/${raceVisibleRacers}</span>` + hudStates.map(state => {
+                    const p = state.parts || raceMetricParts(state.row, metric);
+                    const level = levelForDisplayRate(state.displayRate, metric);
+                    const prevRank = speedRaceRanks[state.id];
+                    const moveClass = prevRank && p.rank ? (p.rank < prevRank ? ' up' : (p.rank > prevRank ? ' down' : '')) : '';
+                    speedRaceRanks[state.id] = p.rank || prevRank || 999;
+                    return `<div class="pixel-hud-row${moveClass}"><span>#${p.rank || '-'} ${state.row.email_mask || '??'}${state.row.is_current_user ? ' YOU' : ''}</span><span>${level.label} · ${formatNumber(displayedRaceRate(state.displayRate))}${p.unit}</span></div>`;
+                }).join('')
+                : '<span class="pixel-hud-title">TOP RACERS</span> WAITING...';
+            renderRaceEvents();
+        }
+
+        function speedRaceFrame(now) {
+            renderSpeedLeaderboard(now);
+            speedRaceLastFrameAt = now;
+            speedRaceFrameTimer = requestAnimationFrame(speedRaceFrame);
+        }
+
+        function startSpeedRaceAnimation() {
+            if (speedRaceFrameTimer) return;
+            speedRaceLastFrameAt = 0;
+            speedRaceFrameTimer = requestAnimationFrame(speedRaceFrame);
+        }
+
+        function stopSpeedRaceAnimation() {
+            if (!speedRaceFrameTimer) return;
+            cancelAnimationFrame(speedRaceFrameTimer);
+            speedRaceFrameTimer = null;
+            speedRaceLastFrameAt = 0;
+            Object.keys(speedRaceStates).forEach(id => {
+                if (performance.now() - speedRaceStates[id].lastSeenAt > 12000) delete speedRaceStates[id];
+            });
+        }
+
+        function clearRaceNodes() {
+            Object.values(speedRaceNodes).forEach(node => {
+                node.racer?.remove();
+                node.lane?.remove();
+            });
+            speedRaceNodes = {};
+        }
+
+        function setSpeedMetric(metric) {
+            currentSpeedMetric = metric === 'requests' ? 'requests' : 'tokens';
+            speedRacePositions = {};
+            speedRaceSnapshots = [];
+            speedRaceLanes = {};
+            speedRaceStates = {};
+            clearRaceNodes();
+            speedRaceWorldRate = 0;
+            speedRaceWorldOffset = { road: 0, clouds: 0, scenery: 0 };
+            renderSpeedLeaderboard();
+        }
+
+        function setRaceSize(value) {
+            const parsed = Number(value);
+            const size = RACE_SIZE_OPTIONS.includes(parsed) ? parsed : 5;
+            raceVisibleRacers = size;
+            raceLaneCountSetting = RACE_SIZE_LANES[size] || size;
+            const selector = document.getElementById('raceSizeSelect');
+            if (selector) selector.value = String(size);
+            speedRacePositions = {};
+            speedRaceSnapshots = [];
+            speedRaceLanes = {};
+            clearRaceNodes();
+            loadSpeedLeaderboard();
+            renderSpeedLeaderboard();
+        }
+
+        async function loadSpeedLeaderboard() {
+            if (speedLeaderboardLoading) return;
+            speedLeaderboardLoading = true;
+            try {
+                const resp = await fetch(`/api/realtime-speed-leaderboard?window_seconds=60&limit=${raceVisibleRacers}`, { cache: 'no-store' });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || '速度榜加载失败');
+                const now = performance.now();
+                speedLeaderboardData = data;
+                pushSpeedRaceSnapshot(data, now);
+                applyRaceClock(data, now);
+                logRaceSnapshotDebug(data, now);
+            } catch (e) {
+                console.error('Load speed leaderboard error:', e);
+                const rowsEl = document.getElementById('speedLeaderboardRows');
+                if (rowsEl) rowsEl.innerHTML = '<div class="speed-empty">速度榜加载失败</div>';
+            } finally {
+                speedLeaderboardLoading = false;
+            }
+        }
+
+        function startSpeedLeaderboardPolling() {
+            if (speedLeaderboardPollTimer) return;
+            loadSpeedLeaderboard();
+            startSpeedRaceAnimation();
+            speedLeaderboardPollTimer = setInterval(loadSpeedLeaderboard, RACE_POLL_INTERVAL_MS);
+        }
+
+        function stopSpeedLeaderboardPolling() {
+            if (speedLeaderboardPollTimer) {
+                clearInterval(speedLeaderboardPollTimer);
+                speedLeaderboardPollTimer = null;
+            }
+            stopSpeedRaceAnimation();
+        }
+
+        async function loadUsageSummary() {
+            if (usageSummaryLoading) return;
+            usageSummaryLoading = true;
+            try {
+                const resp = await fetch('/api/usage-summary');
+                const data = await resp.json();
+                applyUsageSummary(data);
+            } catch (e) {
+                console.error('Load usage summary error:', e);
+            } finally {
+                usageSummaryLoading = false;
+            }
+        }
+
+        function startUsageSummaryPolling() {
+            if (usageSummaryPollTimer) return;
+            loadUsageSummary();
+            usageSummaryPollTimer = setInterval(loadUsageSummary, 1000);
+        }
+
+        function stopUsageSummaryPolling() {
+            if (!usageSummaryPollTimer) return;
+            clearInterval(usageSummaryPollTimer);
+            usageSummaryPollTimer = null;
+        }
+
+        function getRecentBeijingHourBuckets() {
+            if (Array.isArray(usageData.recent_hours) && usageData.recent_hours.length > 0) {
+                return usageData.recent_hours.map(h => ({
+                    ...h,
+                    label: h.label || h.hour || h.utcKey || '',
+                    utcKey: h.utcKey || h.hour || h.label || '',
+                    tokens: Number(h.tokens ?? h.total_tokens ?? 0),
+                    requests: Number(h.requests ?? h.total_requests ?? 0),
+                    success_count: Number(h.success_count ?? 0),
+                    failure_count: Number(h.failure_count ?? 0),
+                    avg_latency_ms: h.avg_latency_ms == null ? null : Number(h.avg_latency_ms)
+                }));
+            }
+            return Array.from({ length: 48 }, (_, i) => {
+                const offset = 47 - i;
+                const utcDate = new Date(Date.now() - offset * 60 * 60 * 1000);
+                const beijingDate = new Date(utcDate.getTime() + 8 * 60 * 60 * 1000);
+                const beijingMonth = String(beijingDate.getUTCMonth() + 1).padStart(2, '0');
+                const beijingDay = String(beijingDate.getUTCDate()).padStart(2, '0');
+                const beijingHour = beijingDate.getUTCHours();
+                return {
+                    label: `${beijingMonth}-${beijingDay} ${String(beijingHour).padStart(2, '0')}:00`,
+                    utcKey: `${beijingMonth}-${beijingDay} ${String(beijingHour).padStart(2, '0')}:00`,
+                    tokens: 0,
+                    requests: 0,
+                    success_count: 0,
+                    failure_count: 0,
+                    avg_latency_ms: null
+                };
+            });
+        }
+
+        function modelGroupLabelForReport(group) {
+            const labels = { gpt: 'GPT', claude: 'Claude / Bedrock', deepseek: 'DeepSeek', gemini: 'Gemini' };
+            return labels[group] || group || '其他';
+        }
+
+        function renderModelGroupReport() {
+            const container = document.getElementById('modelGroupReport');
+            if (!container) return;
+            const rows = Array.isArray(usageData.model_groups) ? usageData.model_groups : [];
+            if (!rows.length) {
+                container.innerHTML = '<div style="padding:14px 16px;background:#f8f9ff;border:1px solid #dfe3ff;border-radius:8px;color:#999;">暂无模型类型用量数据</div>';
+                return;
+            }
+            container.innerHTML = '<table class="report-table"><thead><tr><th>模型类型</th><th>Tokens</th><th>请求</th><th>成功率</th><th>失败率</th><th>估算费用</th></tr></thead><tbody>' +
+                rows.map(row => {
+                    const requests = Number(row.requests || 0);
+                    const success = Number(row.success_count || 0);
+                    const failure = Number(row.failure_count || 0);
+                    const successRate = requests ? (success * 100 / requests).toFixed(1) + '%' : '-';
+                    const failureRate = requests ? (failure * 100 / requests).toFixed(1) + '%' : '-';
+                    return '<tr><td>' + escapeHtml(modelGroupLabelForReport(row.model_group)) + '</td>' +
+                        '<td>' + tokenUsageCellHtml({
+                            total_tokens: row.tokens,
+                            input_tokens: row.input_tokens,
+                            output_tokens: row.output_tokens,
+                            cached_tokens: row.cached_tokens,
+                            spend_usd: row.spend_usd
+                        }) + '</td>' +
+                        '<td>' + escapeHtml(formatNumber(requests)) + '</td>' +
+                        '<td>' + escapeHtml(successRate) + '</td>' +
+                        '<td>' + escapeHtml(failureRate) + '</td>' +
+                        '<td>' + escapeHtml(formatCost(row.spend_usd || 0)) + '</td></tr>';
+                }).join('') + '</tbody></table>';
+        }
+
+        function renderChart() {
+            const canvas = document.getElementById('usageChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            let labels = [];
+            let tokenData = [];
+            let requestData = [];
+            let hoursForRate = [];
+
+            const daysInMonth = (monthKey) => {
+                const [year, month] = monthKey.split('-').map(Number);
+                return new Date(year, month, 0).getDate();
+            };
+            const daysInYear = (year) => {
+                const y = Number(year);
+                return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
+            };
+
+            if (currentView === 'hour') {
+                const hourBuckets = getRecentBeijingHourBuckets();
+                labels = hourBuckets.map(h => h.label);
+                tokenData = hourBuckets.map(h => h.tokens ?? usageData.tokens_by_hour?.[h.utcKey] ?? 0);
+                requestData = hourBuckets.map(h => h.requests ?? usageData.requests_by_hour?.[h.utcKey] ?? 0);
+                hoursForRate = hourBuckets.map(() => 1);
+            } else if (currentView === 'day') {
+                // Last 30 days
+                const sorted = [...usageData.history].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
+                labels = sorted.map(d => d.date.slice(5)); // MM-DD
+                tokenData = sorted.map(d => d.total_tokens);
+                requestData = sorted.map(d => d.total_requests);
+                hoursForRate = sorted.map(() => 24);
+            } else if (currentView === 'month') {
+                // By month
+                const months = Object.keys(usageData.by_month).sort().slice(-12);
+                labels = months.map(m => m.slice(2)); // YY-MM
+                tokenData = months.map(m => usageData.by_month[m].total_tokens);
+                requestData = months.map(m => usageData.by_month[m].total_requests);
+                hoursForRate = months.map(m => daysInMonth(m) * 24);
+            } else if (currentView === 'year') {
+                // By year
+                const years = Object.keys(usageData.by_year).sort();
+                labels = years;
+                tokenData = years.map(y => usageData.by_year[y].total_tokens);
+                requestData = years.map(y => usageData.by_year[y].total_requests);
+                hoursForRate = years.map(y => daysInYear(y) * 24);
+            }
+
+            const tokensPerRequestData = tokenData.map((tokens, i) => requestData[i] ? tokens / requestData[i] : null);
+            const tokensPerHourData = tokenData.map((tokens, i) => hoursForRate[i] ? tokens / hoursForRate[i] : null);
+
+            if (window.usageChart) {
+                window.usageChart.destroy();
+            }
+
+            if (!window.Chart) {
+                console.error('Chart.js not loaded');
+                return;
+            }
+
+            window.usageChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Token 消耗',
+                            data: tokenData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.55)',
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: '请求数',
+                            data: requestData,
+                            borderColor: '#28a745',
+                            backgroundColor: 'rgba(40, 167, 69, 0.45)',
+                            yAxisID: 'y1'
+                        },
+                        {
+                            type: 'line',
+                            label: 'Token/请求',
+                            data: tokensPerRequestData,
+                            borderColor: '#fd7e14',
+                            backgroundColor: 'rgba(253, 126, 20, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'y2'
+                        },
+                        {
+                            type: 'line',
+                            label: '平均 Token/小时',
+                            data: tokensPerHourData,
+                            borderColor: '#6f42c1',
+                            backgroundColor: 'rgba(111, 66, 193, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'y3'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.dataset.label || '';
+                                    const value = context.parsed.y;
+                                    if (value === null || value === undefined || Number.isNaN(value)) {
+                                        return label + ': 无请求';
+                                    }
+                                    if (label === 'Token/请求') {
+                                        return label + ': ' + value.toFixed(1);
+                                    }
+                                    if (label === '平均 Token/小时') {
+                                        return label + ': ' + formatNumber(Math.round(value));
+                                    }
+                                    return label + ': ' + formatNumber(value);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            beginAtZero: true,
+                            title: { display: true, text: 'Tokens' },
+                            ticks: { callback: v => formatNumber(v) }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            beginAtZero: true,
+                            title: { display: true, text: '请求数' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { callback: v => formatNumber(v) }
+                        },
+                        y2: {
+                            type: 'linear',
+                            display: currentView !== 'hour',
+                            position: 'left',
+                            offset: true,
+                            beginAtZero: true,
+                            title: { display: true, text: 'Token/请求', color: '#fd7e14' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#fd7e14', callback: v => Number(v).toFixed(0) }
+                        },
+                        y3: {
+                            type: 'linear',
+                            display: currentView !== 'hour',
+                            position: 'right',
+                            offset: true,
+                            beginAtZero: true,
+                            title: { display: true, text: '平均 Token/小时', color: '#6f42c1' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#6f42c1', callback: v => formatNumber(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderRequestQualityChart() {
+            const ctx = document.getElementById('requestQualityChart').getContext('2d');
+            let labels = [];
+            let requestData = [];
+            let successData = [];
+            let failureData = [];
+            let latencyData = [];
+            let requestLabel = '每小时请求数';
+
+            if (currentView === 'hour') {
+                const hourBuckets = getRecentBeijingHourBuckets();
+                labels = hourBuckets.map(h => h.label);
+                requestData = hourBuckets.map(h => h.requests ?? usageData.requests_by_hour?.[h.utcKey] ?? 0);
+                successData = hourBuckets.map(h => h.success_count ?? usageData.success_by_hour?.[h.utcKey] ?? 0);
+                failureData = hourBuckets.map(h => h.failure_count ?? usageData.failure_by_hour?.[h.utcKey] ?? 0);
+                latencyData = hourBuckets.map(h => h.avg_latency_ms ?? usageData.avg_latency_ms_by_hour?.[h.utcKey] ?? null);
+                requestLabel = '每小时请求数';
+            } else if (currentView === 'day') {
+                const sorted = [...(usageData.history || [])].sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
+                labels = sorted.map(d => d.date.slice(5));
+                requestData = sorted.map(d => d.total_requests || 0);
+                successData = sorted.map(d => d.success_count || 0);
+                failureData = sorted.map(d => d.failure_count || 0);
+                requestLabel = '每日请求数';
+            } else if (currentView === 'month') {
+                const months = Object.keys(usageData.by_month || {}).sort().slice(-12);
+                labels = months.map(m => m.slice(2));
+                requestData = months.map(m => usageData.by_month[m].total_requests || 0);
+                successData = months.map(m => usageData.by_month[m].success_count || 0);
+                failureData = months.map(m => usageData.by_month[m].failure_count || 0);
+                requestLabel = '每月请求数';
+            } else if (currentView === 'year') {
+                const years = Object.keys(usageData.by_year || {}).sort();
+                labels = years;
+                requestData = years.map(y => usageData.by_year[y].total_requests || 0);
+                successData = years.map(y => usageData.by_year[y].success_count || 0);
+                failureData = years.map(y => usageData.by_year[y].failure_count || 0);
+                requestLabel = '每年请求数';
+            }
+
+            const successRateData = requestData.map((requests, i) => requests ? successData[i] * 100 / requests : null);
+            const failureRateData = requestData.map((requests, i) => requests ? failureData[i] * 100 / requests : null);
+
+            if (window.requestQualityChart) {
+                window.requestQualityChart.destroy();
+            }
+
+            if (!window.Chart) {
+                console.error('Chart.js not loaded');
+                return;
+            }
+
+            window.requestQualityChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: requestLabel,
+                            data: requestData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.45)',
+                            yAxisID: 'requests'
+                        },
+                        {
+                            type: 'line',
+                            label: '成功率',
+                            data: successRateData,
+                            borderColor: '#28a745',
+                            backgroundColor: 'rgba(40, 167, 69, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'rate'
+                        },
+                        {
+                            type: 'line',
+                            label: '失败率',
+                            data: failureRateData,
+                            borderColor: '#dc3545',
+                            backgroundColor: 'rgba(220, 53, 69, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'rate'
+                        },
+                        {
+                            type: 'line',
+                            label: '平均耗时(ms)',
+                            data: latencyData,
+                            borderColor: '#17a2b8',
+                            backgroundColor: 'rgba(23, 162, 184, 0.08)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 7,
+                            fill: false,
+                            tension: 0.25,
+                            yAxisID: 'latency'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.dataset.label || '';
+                                    const value = context.parsed.y;
+                                    if (value === null || value === undefined || Number.isNaN(value)) {
+                                        return label + ': 无请求';
+                                    }
+                                    if (label === '成功率' || label === '失败率') {
+                                        return label + ': ' + value.toFixed(1) + '%';
+                                    }
+                                    if (label === '平均耗时(ms)') {
+                                        return label + ': ' + formatNumber(Math.round(value)) + ' ms';
+                                    }
+                                    return label + ': ' + formatNumber(value);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        requests: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: '请求数' },
+                            ticks: { callback: v => formatNumber(v) }
+                        },
+                        rate: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            title: { display: true, text: '成功率 / 失败率' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { callback: v => v + '%' }
+                        },
+                        latency: {
+                            type: 'linear',
+                            display: currentView === 'hour',
+                            position: 'right',
+                            offset: true,
+                            beginAtZero: true,
+                            title: { display: true, text: '平均耗时(ms)', color: '#17a2b8' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#17a2b8', callback: v => formatNumber(v) }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadUsageHistory() {
+            const tbody = document.getElementById('dailyReport');
+            try {
+                if (usageHistoryRefreshTimer) {
+                    clearTimeout(usageHistoryRefreshTimer);
+                    usageHistoryRefreshTimer = null;
+                }
+                loadUsageSummary();
+                loadPersonalUsageSummary();
+
+                const histResp = await fetch('/api/usage-history', {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                });
+                const histText = await histResp.text();
+                if (!histResp.ok) {
+                    throw new Error('HTTP ' + histResp.status + ': ' + histText.slice(0, 120));
+                }
+                if (!histResp.headers.get('content-type')?.includes('application/json')) {
+                    throw new Error('接口返回了非 JSON：' + histText.slice(0, 120));
+                }
+                window.usageData = JSON.parse(histText);
+
+                const history = window.usageData.history || [];
+                if (history.length === 0) {
+                    const warming = window.usageData.refreshing || window.usageData.cache_status === 'warming';
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">' + (warming ? '正在刷新数据...' : '暂无数据') + '</td></tr>';
+                } else {
+                    const sorted = [...history].sort((a, b) => b.date.localeCompare(a.date));
+                    tbody.innerHTML = sorted.map(d =>
+                        '<tr><td>' + d.date + '</td><td>' + tokenUsageCellHtml(d) + '</td><td>' + d.total_requests + '</td></tr>'
+                    ).join('');
+                }
+
+                const hasAnyUsageData = history.length > 0 ||
+                    (window.usageData.model_groups || []).length > 0 ||
+                    (window.usageData.recent_hours || []).some(row => Number(row.tokens ?? row.total_tokens ?? row.requests ?? row.total_requests ?? 0) > 0);
+                if (!hasAnyUsageData && (window.usageData.refreshing || window.usageData.cache_status === 'warming')) {
+                    usageHistoryRefreshTimer = setTimeout(loadUsageHistory, 1500);
+                }
+
+                renderModelGroupReport();
+
+                try {
+                    renderChart();
+                } catch (chartError) {
+                    console.error('Usage chart render error:', chartError);
+                }
+                try {
+                    renderRequestQualityChart();
+                } catch (chartError) {
+                    console.error('Request quality chart render error:', chartError);
+                }
+            } catch (e) {
+                console.error('Load usage error:', e);
+                if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">加载失败</td></tr>';
+                const box = document.getElementById('pageError');
+                if (box) {
+                    box.style.display = 'block';
+                    box.textContent = '用量报表加载失败：' + (e.message || e);
+                }
+            }
+        }
+
+
+        // Keep old loadUsage for backward compatibility
+        async function loadUsage() {
+            await loadUsageHistory();
+        }
+
+        // ========================================
+        // User Key Registration & localStorage
+        // ========================================
+
+        const STORAGE_KEY = 'my_api_keys';
+        const EMAIL_STORAGE_KEY = 'my_keys_email';
+        let portalSessionEmail = '';
+        const MODEL_GROUP_LABELS = {
+            common: 'GPT Key',
+            claude: 'Claude Key',
+            deepseek: 'DeepSeek Key'
+        };
+        const MODEL_GROUP_HINTS = {
+            common: 'GPT Key 默认开放，主要包含 GPT 模型，以及用 GPT 转成 Claude 兼容形态的模型，不限量。',
+            claude: '⚠️ Claude / Bedrock 按量计费成本较高，请仅在必要、紧急或 GPT 无法满足任务时申请；常规用量推荐优先使用 GPT Key。审批通过后自动生成 Key 并通过飞书通知你。当前仅支持 Opus 4.6（模型名选 claude-opus-4-6），暂不支持 4.7。',
+            deepseek: '⚠️ DeepSeek Key 需要飞书审批。审批通过后自动生成 Key 并通过飞书通知你。'
+        };
+        const APPROVAL_REQUIRED = new Set(['claude', 'deepseek']);
+
+        function modelGroupLabel(modelGroup) {
+            return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
+        }
+
+        // Pricing: input/output per 1M tokens (USD)
+        const MODEL_PRICING = {
+            claude: { input: 5, output: 25, label: 'Claude Opus' },
+            deepseek: { input: 0.14, output: 0.28, label: 'DeepSeek' },
+        };
+
+        function updateBudgetEstimate() {
+            const budget = parseFloat(document.getElementById('regDailyBudget')?.value || 0);
+            const modelGroup = document.getElementById('regModelGroup')?.value || 'common';
+            const el = document.getElementById('regBudgetEstimate');
+            if (!el || !budget || budget <= 0 || !MODEL_PRICING[modelGroup]) {
+                if (el) el.style.display = 'none';
+                return;
+            }
+            const p = MODEL_PRICING[modelGroup];
+            // Assume average mix: 3:1 input:output ratio
+            const avgCostPerMToken = (p.input * 3 + p.output * 1) / 4;
+            const mTokens = budget / avgCostPerMToken;
+            const tokens = Math.round(mTokens * 1000000);
+            // Rough estimate: ~4000 tokens per request average
+            const requests = Math.round(tokens / 4000);
+            el.innerHTML = `<strong>$${budget}</strong> ≈ <strong>${mTokens >= 1 ? mTokens.toFixed(1) + 'M' : Math.round(mTokens * 1000) + 'K'}</strong> tokens（${p.label}）≈ <strong>${requests.toLocaleString()}</strong> 次请求`;
+            el.style.display = 'block';
+        }
+
+        function updateModelGroupHint() {
+            const selector = document.getElementById('regModelGroup');
+            const hint = document.getElementById('regModelGroupHint');
+            const approvalFields = document.getElementById('regApprovalFields');
+            const btn = document.getElementById('regBtn');
+            if (!selector || !hint) return;
+            hint.textContent = MODEL_GROUP_HINTS[selector.value] || MODEL_GROUP_HINTS.common;
+            const needsApproval = APPROVAL_REQUIRED.has(selector.value);
+            if (approvalFields) approvalFields.style.display = needsApproval ? 'block' : 'none';
+            if (btn) btn.textContent = needsApproval ? '提交审批申请' : '申请 API Key';
+            updateBudgetEstimate();
+        }
+
+        function getMyKeys() {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch (e) {
+                console.error('Failed to read localStorage:', e);
+                return [];
+            }
+        }
+
+        function saveMyKey(keyInfo) {
+            try {
+                const keys = getMyKeys();
+                const existing = keys.find(k => k.key === keyInfo.key);
+                if (existing) {
+                    Object.assign(existing, keyInfo);
+                } else {
+                    keys.unshift(keyInfo);
+                }
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
+            } catch (e) {
+                console.error('Failed to save to localStorage:', e);
+            }
+        }
+
+        async function loadPoolStatus() {
+            try {
+                const resp = await fetch('/api/key-pool-status');
+                const data = await resp.json();
+                document.getElementById('poolUnused').textContent = data.unused || 0;
+            } catch (e) {
+                console.error('Failed to load pool status:', e);
+            }
+        }
+
+        async function applySessionToRegisterForm() {
+            try {
+                const resp = await fetch('/api/session');
+                const session = await resp.json();
+                const email = String(session.email || session.user?.email || '').toLowerCase();
+                if (!session.authenticated || !email.endsWith('@zilliz.com')) return;
+                portalSessionEmail = email;
+                const identifier = document.getElementById('regIdentifier');
+                if (identifier && !identifier.value && session.user?.name) {
+                    identifier.placeholder = `${session.user.name}-工作电脑`;
+                }
+                rememberMyKeysEmail(email);
+            } catch (e) {
+                console.error('Failed to apply session defaults:', e);
+            }
+        }
+
+        async function registerUserKey() {
+            const identifier = document.getElementById('regIdentifier').value.trim();
+            const email = portalSessionEmail;
+            const modelGroup = document.getElementById('regModelGroup')?.value || 'common';
+            const reason = document.getElementById('regReason')?.value.trim() || '';
+            const dailyBudget = document.getElementById('regDailyBudget')?.value.trim() || '';
+            const btn = document.getElementById('regBtn');
+            const result = document.getElementById('regResult');
+
+            if (!identifier) {
+                alert('请输入使用标识 / 标签');
+                return;
+            }
+            if (!email) {
+                alert('登录态未加载完成，请稍后再试或刷新页面');
+                return;
+            }
+            if (APPROVAL_REQUIRED.has(modelGroup) && !reason) {
+                alert('申请该模型组需要填写申请理由');
+                return;
+            }
+            if (APPROVAL_REQUIRED.has(modelGroup) && !dailyBudget) {
+                alert('请填写额度');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+            result.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/register-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, name: identifier, label: identifier, model_group: modelGroup, reason, daily_budget: dailyBudget })
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    const assignedEmail = String(data.email || email).toLowerCase();
+                    rememberMyKeysEmail(assignedEmail);
+                    if (data.pending_approval) {
+                        result.className = '';
+                        result.innerHTML = `
+                            <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 2px solid #ffc107; border-radius: 12px; padding: 25px; text-align: left;">
+                                <h3 style="color: #856404; margin: 0 0 15px 0; font-size: 18px;">📋 审批已提交</h3>
+                                <p style="color: #856404; margin: 0 0 10px 0; font-size: 14px;"><strong>Key 类型：</strong>${modelGroupLabel(modelGroup)}</p>
+                                <p style="color: #856404; margin: 0 0 10px 0; font-size: 14px;">审批请求已发送到飞书，审批通过后将自动生成 Key 并通过飞书消息通知你。</p>
+                                <p style="color: #856404; margin: 0; font-size: 13px;">请在飞书中关注审批进度。</p>
+                            </div>
+                        `;
+                        result.style.display = 'block';
+                        result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        document.getElementById('regIdentifier').value = '';
+                        document.getElementById('regModelGroup').value = 'common';
+                        document.getElementById('regReason').value = '';
+                        document.getElementById('regDailyBudget').value = '';
+                        updateModelGroupHint();
+                        return;
+                    }
+                    const apiKey = data.api_key;
+                    const baseUrl = {{ service_info.base_url|tojson }};
+                    const claudeCmd = `node << 'CLAUDE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+const cf=path.join(os.homedir(),'.claude.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo ${apiKey}';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='${baseUrl}';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+const c=fs.existsSync(cf)?JSON.parse(fs.readFileSync(cf,'utf8')):{};
+c.hasCompletedOnboarding=true;
+fs.writeFileSync(cf,JSON.stringify(c,null,2));
+console.log('Done! Settings merged (MCP/permissions preserved).');
+CLAUDE_EOF`;
+
+                    const codexCmd = `node << 'CODEX_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.codex');
+const sf=path.join(dir,'config.toml');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
+function upsertTop(key,value){
+  const line=key+' = '+value;
+  const re=new RegExp('^'+key+'\\\\s*=.*$','m');
+  if(re.test(c)){c=c.replace(re,line);return}
+  const idx=c.indexOf('[');
+  c=idx>=0?line+'\\n'+c:line+'\\n'+c;
+}
+upsertTop('model_provider','"local"');
+upsertTop('model','"gpt-5.5"');
+upsertTop('model_reasoning_effort','"high"');
+upsertTop('personality','"pragmatic"');
+c=c.replace(/^openai_base_url\\s*=.*\\n?/m,'');
+const providerBlock=[
+  '[model_providers.local]',
+  'name = "local"',
+  'base_url = "${baseUrl}/v1"',
+  'env_key = "OPENAI_API_KEY"',
+  'wire_api = "responses"'
+].join('\\n');
+if(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m.test(c)){
+  c=c.replace(/\\[model_providers\\.local\\][\\s\\S]*?(?=\\n\\[|$)/m,providerBlock);
+}else{
+  c=c.trimEnd()+'\\n\\n'+providerBlock;
+}
+fs.writeFileSync(sf,c.trimEnd()+'\\n');
+const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  const content=fs.readFileSync(rc,'utf8');
+  const line='export OPENAI_API_KEY="${apiKey}"';
+  if(/^export OPENAI_API_KEY=.*/m.test(content)){
+    fs.writeFileSync(rc,content.replace(/^export OPENAI_API_KEY=.*/m,line));
+    console.log('Updated OPENAI_API_KEY in '+rc);
+  }else{
+    fs.appendFileSync(rc,'\\n'+line+'\\n');
+    console.log('Added OPENAI_API_KEY to '+rc);
+  }
+}else{console.log('No .bashrc/.zshrc found. Please add manually: export OPENAI_API_KEY=${apiKey}')}
+console.log('Codex config done: '+sf);
+CODEX_EOF
+export OPENAI_API_KEY="${apiKey}"`;
+
+                    // Save to localStorage
+                    saveMyKey({
+                        key: apiKey,
+                        identifier: identifier,
+                        email: assignedEmail,
+                        model_group: modelGroup,
+                        model_group_label: modelGroupLabel(modelGroup),
+                        created_at: new Date().toISOString()
+                    });
+
+                    // Show inline success result
+                    result.className = '';
+                    result.innerHTML = `
+                        <div style="background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 2px solid #28a745; border-radius: 12px; padding: 25px; text-align: left;">
+                            <h3 style="color: #155724; margin: 0 0 20px 0; font-size: 18px;">申请成功！</h3>
+
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">API Key：</p>
+                                <div style="display: flex; align-items: center; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newApiKey" style="flex: 1; font-family: monospace; color: #667eea; font-size: 14px; word-break: break-all; font-weight: 600;">${apiKey}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newApiKey')">复制</button>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">Key 类型：</p>
+                                <div style="background: white; padding: 12px; border-radius: 8px; color: #155724; font-weight: 600;">
+                                    ${modelGroupLabel(modelGroup)}
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">API URL：</p>
+                                <div style="display: flex; align-items: center; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newApiUrl" style="flex: 1; font-family: monospace; color: #667eea; font-size: 14px;">${baseUrl}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newApiUrl')">复制</button>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">Claude Code 一键配置命令：</p>
+                                <div style="display: flex; align-items: start; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newClaudeCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap; line-height: 1.5;">${claudeCmd}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newClaudeCmd')" style="flex-shrink: 0;">复制</button>
+                                </div>
+                                <p style="font-size: 12px; color: #155724; margin: 10px 0 0 0;">复制命令到终端执行，即可自动配置 Claude Code</p>
+                            </div>
+
+                            <div style="margin-bottom: 18px;">
+                                <p style="font-size: 14px; color: #155724; margin: 0 0 8px 0; font-weight: 600;">Codex CLI 一键配置命令：</p>
+                                <div style="display: flex; align-items: start; gap: 10px; background: white; padding: 12px; border-radius: 8px;">
+                                    <code id="newCodexCmd" style="flex: 1; font-family: monospace; color: #333; font-size: 12px; word-break: break-all; white-space: pre-wrap; line-height: 1.5;">${codexCmd}</code>
+                                    <button class="copy-btn" onclick="copyToClipboard('newCodexCmd')" style="flex-shrink: 0;">复制</button>
+                                </div>
+                                <p style="font-size: 12px; color: #155724; margin: 10px 0 0 0;">同一个 API Key 也可用于 Codex CLI，复制到终端执行即可</p>
+                            </div>
+
+                            <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 18px; border-radius: 10px; margin-top: 15px;">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <div style="font-size: 28px;">🚀</div>
+                                    <div style="flex: 1;">
+                                        <h4 style="margin: 0 0 5px 0; color: white; font-size: 15px; font-weight: 700;">下一步：安装公司级 Claude Skills</h4>
+                                        <a href="https://github.com/zilliztech/cloud-skills" target="_blank" style="display: inline-block; padding: 6px 16px; background: white; color: #4facfe; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 700;">访问 GitHub 仓库</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    result.style.display = 'block';
+
+                    // Scroll to result
+                    result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                    // Clear form
+                    document.getElementById('regIdentifier').value = '';
+                    document.getElementById('regModelGroup').value = 'common';
+                    updateModelGroupHint();
+
+                    // Refresh pool status
+                    loadPoolStatus();
+                } else {
+                    result.className = 'result-box error';
+                    result.innerHTML = `
+                        <span class="icon">✗</span>
+                        <span>${data.error || '申请失败'}</span>
+                    `;
+                    result.style.display = 'inline-block';
+                }
+            } catch (e) {
+                result.className = 'result-box error';
+                result.innerHTML = `
+                    <span class="icon">✗</span>
+                    <span>网络错误：${e.message}</span>
+                `;
+                result.style.display = 'inline-block';
+            } finally {
+                btn.disabled = false;
+                updateModelGroupHint();
+            }
+        }
+
+        function copyToClipboard(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+
+            const text = el.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('已复制到剪贴板！');
+                }).catch(() => {
+                    fallbackCopy(text, () => alert('已复制到剪贴板！'));
+                });
+            } else {
+                fallbackCopy(text, () => alert('已复制到剪贴板！'));
+            }
+        }
+
+        function copyApiKey() {
+            const el = document.getElementById('newApiKey');
+            if (!el) return;
+
+            const text = el.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('已复制到剪贴板');
+                });
+            } else {
+                fallbackCopy(text, () => alert('已复制到剪贴板'));
+            }
+        }
+
+        // Load pool status when showing register tab
+        const originalShowTab = showTab;
+        showTab = function(name) {
+            originalShowTab(name);
+            if (name === 'register') {
+                loadPoolStatus();
+            }
+        };
+
+        // Keep the lightweight counters initialized; live updates come from Socket.IO when available.
+        loadUsageSummary();
+        initRaceApplyGuide();
+        startSpeedLeaderboardPolling();
+
+        // Fill dynamic API URL shown in UI
+        const dynamicApiUrl = {{ service_info.base_url|tojson }};
+        const apiUrlEl = document.getElementById('apiUrl');
+        if (apiUrlEl) {
+            apiUrlEl.textContent = dynamicApiUrl;
+        }
+
+        // Keep tutorial snippets in sync with current host
+        document.querySelectorAll('pre').forEach((pre) => {
+            pre.innerHTML = pre.innerHTML.split('http://当前页面IP:8317').join(dynamicApiUrl);
+        });
+
+        // Load pool status and historical keys on page load (register tab is active by default)
+        document.getElementById('regModelGroup')?.addEventListener('change', updateModelGroupHint);
+        updateModelGroupHint();
+        applySessionToRegisterForm();
+        loadPoolStatus();
+
+        // Tutorial Modal Functions
+        function showTutorialModal() {
+            document.getElementById('tutorialModal').style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeTutorialModal() {
+            document.getElementById('tutorialModal').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
+
+        function copyTutorialRemoveCmd(btn) {
+            copyElementText('tutorialRemoveCmd', btn);
+        }
+
+        function copyElementText(elementId, btn) {
+            const cmd = document.getElementById(elementId).textContent;
+            fallbackCopy(cmd, function() {
+                const orig = btn.textContent;
+                btn.textContent = '已复制!';
+                setTimeout(() => { btn.textContent = orig; }, 2000);
+            });
+        }
+
+        // Close tutorial modal when clicking outside
+        window.addEventListener('click', function(event) {
+            const tutorialModal = document.getElementById('tutorialModal');
+            if (event.target === tutorialModal) {
+                closeTutorialModal();
+            }
+        });
+
+        // Close tutorial modal with Escape key
+        window.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const tutorialModal = document.getElementById('tutorialModal');
+                if (tutorialModal && tutorialModal.style.display !== 'none') {
+                    closeTutorialModal();
+                }
+            }
+        });
+    </script>
+
+    <!-- Tutorial Modal -->
+    <div id="tutorialModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; justify-content: center; align-items: center;">
+        <div style="background: white; border-radius: 16px; max-width: 700px; max-height: 85vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); position: relative; margin: 20px;">
+            <div style="position: sticky; top: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 16px 16px 0 0; display: flex; justify-content: space-between; align-items: center; z-index: 1;">
+                <h3 style="margin: 0; font-size: 20px; font-weight: 700;">📖 Claude Code 使用教程</h3>
+                <button onclick="closeTutorialModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
+            </div>
+
+            <div style="padding: 30px;">
+                <!-- Step 1 -->
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;">1</div>
+                        <h4 style="margin: 0; color: #333; font-size: 16px; font-weight: 600;">执行配置命令</h4>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 12px 44px; line-height: 1.6;">
+                        申请成功后，复制显示的<strong>"Claude Code 一键配置命令"</strong>，粘贴到终端执行：
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
+                        <pre style="margin: 0; font-size: 12px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'CLAUDE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const dir=path.join(os.homedir(),'.claude');
+const sf=path.join(dir,'settings.json');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+const s=fs.existsSync(sf)?JSON.parse(fs.readFileSync(sf,'utf8')):{};
+s.apiKeyHelper='echo <span style="color: #dc3545; font-weight: 700; background: #ffebee; padding: 2px 4px; border-radius: 3px;">YOUR_API_KEY</span>';
+if(!s.env)s.env={};
+s.env.ANTHROPIC_BASE_URL='http://当前页面IP:8317';
+fs.writeFileSync(sf,JSON.stringify(s,null,2));
+console.log('Done!');
+CLAUDE_EOF</pre>
+                    </div>
+                    <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; margin: 12px 0 0 44px; border-left: 4px solid #2196f3;">
+                        <p style="font-size: 13px; color: #1565c0; margin: 0; line-height: 1.5;">
+                            <strong>💡 说明：</strong>这条命令会<strong>合并更新</strong> <code style="background: white; padding: 2px 6px; border-radius: 3px;">~/.claude/settings.json</code>，只修改 API Key 和服务器地址，保留你已有的 MCP、permissions 等配置
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;">2</div>
+                        <h4 style="margin: 0; color: #333; font-size: 16px; font-weight: 600;">验证配置</h4>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 12px 44px; line-height: 1.6;">
+                        运行 <code style="background: #f8f9fa; padding: 3px 8px; border-radius: 4px; font-size: 13px; color: #667eea; border: 1px solid #e0e0e0;">claude</code> 命令，Claude Code 会自动读取配置的 API Key 和 Base URL
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
+                        <pre style="margin: 0; font-size: 12px; color: #333;">$ claude
+<span style="color: #667eea;">✓ Configuration loaded from ~/.claude/settings.json</span>
+<span style="color: #999;"># 看到这个提示说明配置成功</span></pre>
+                    </div>
+                </div>
+
+                <!-- Step 3 -->
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px;">
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;">3</div>
+                        <h4 style="margin: 0; color: #333; font-size: 16px; font-weight: 600;">开始使用</h4>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 12px 44px; line-height: 1.6;">
+                        现在可以正常使用 Claude Code 了！以下是一些常用命令示例：
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-left: 44px; border: 1px solid #e0e0e0;">
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #667eea; font-weight: 600;">基础对话：</p>
+                            <pre style="margin: 0; font-size: 12px; color: #333;">claude "帮我写一个Python快速排序函数"</pre>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #667eea; font-weight: 600;">代码项目：</p>
+                            <pre style="margin: 0; font-size: 12px; color: #333;">cd your-project
+claude "分析这个项目的代码结构"</pre>
+                        </div>
+                        <div>
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #667eea; font-weight: 600;">交互模式：</p>
+                            <pre style="margin: 0; font-size: 12px; color: #333;">claude  # 直接进入交互式对话</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Additional Tips -->
+                <div style="background: linear-gradient(135deg, #fff3cd 0%, #fffbea 100%); padding: 20px; border-radius: 10px; border: 1px solid #ffc107;">
+                    <h4 style="margin: 0 0 12px 0; color: #856404; font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 20px;">💡</span> 重要提示
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; color: #856404; font-size: 13px; line-height: 1.8;">
+                        <li>配置文件保存在 <code style="background: white; padding: 2px 6px; border-radius: 3px; font-size: 12px;">~/.claude/settings.json</code>，重启终端后依然有效</li>
+                        <li>如需更换 API Key，只需重新执行配置命令即可覆盖</li>
+                        <li>多台电脑使用：每台电脑都需要执行一次配置命令</li>
+                    </ul>
+                </div>
+
+                <!-- Manual Config -->
+                <div style="margin-top: 25px; padding-top: 25px; border-top: 2px solid #f0f0f0;">
+                    <h4 style="margin: 0 0 12px 0; color: #999; font-size: 14px; font-weight: 600;">手动配置方式（可选）</h4>
+                    <p style="font-size: 13px; color: #999; margin: 0 0 10px 0; line-height: 1.6;">
+                        如果需要手动配置，可以创建 <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-size: 12px;">~/.claude/settings.json</code> 文件：
+                    </p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <pre style="margin: 0; font-size: 11px; color: #666; overflow-x: auto;">{
+  "apiKeyHelper": "echo <span style="color: #dc3545; font-weight: 700; background: #ffebee; padding: 2px 4px; border-radius: 3px;">YOUR_API_KEY</span>",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://当前页面IP:8317"
+  }
+}</pre>
+                    </div>
+                </div>
+
+                <!-- Safe Remove -->
+                <div style="margin-top: 25px; padding-top: 25px; border-top: 2px solid #f0f0f0;">
+                    <h4 style="margin: 0 0 12px 0; color: #dc3545; font-size: 14px; font-weight: 600;">🗑 安全移除代理配置</h4>
+                    <p style="font-size: 13px; color: #666; margin: 0 0 10px 0; line-height: 1.6;">
+                        如需恢复为官方 Claude Code（仅移除代理相关配置，<strong>保留 MCP、permissions 等设置</strong>）：
+                    </p>
+                    <div style="background: #fff5f5; padding: 15px; border-radius: 8px; border: 1px solid #f5c6cb; position: relative;">
+                        <pre id="tutorialRemoveCmd" style="margin: 0; font-size: 11px; color: #666; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'REMOVE_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+// Remove Claude proxy config
+const sf=path.join(os.homedir(),'.claude','settings.json');
+if(fs.existsSync(sf)){
+  const s=JSON.parse(fs.readFileSync(sf,'utf8'));
+  delete s.apiKeyHelper;
+  if(s.env){Object.keys(s.env).forEach(k=>{if(k.startsWith('ANTHROPIC'))delete s.env[k]});if(Object.keys(s.env).length===0)delete s.env}
+  fs.writeFileSync(sf,JSON.stringify(s,null,2));
+  console.log('Claude: proxy config removed (MCP/permissions preserved)');
+}else{console.log('Claude: no settings.json, skipped')}
+// Remove Codex proxy config
+const cf=path.join(os.homedir(),'.codex','config.toml');
+if(fs.existsSync(cf)){
+  let c=fs.readFileSync(cf,'utf8');
+  c=c.replace(/^openai_base_url\s*=.*\n?/m,'');
+  c=c.replace(/^model_provider\s*=\s*"local"\n?/m,'');
+  c=c.replace(/\[model_providers\.local\][\s\S]*?(?=\n\[|$)/m,'');
+  fs.writeFileSync(cf,c);
+  console.log('Codex: local proxy provider removed from '+cf);
+}else{console.log('Codex: no config.toml, skipped')}
+// Remove OPENAI_API_KEY from shell rc
+const rc=['.zshrc','.bashrc'].map(f=>path.join(os.homedir(),f)).find(f=>fs.existsSync(f));
+if(rc){
+  let content=fs.readFileSync(rc,'utf8');
+  if(content.includes('OPENAI_API_KEY')){
+    content=content.replace(/^export OPENAI_API_KEY=.*\n?/m,'');
+    fs.writeFileSync(rc,content);
+    console.log('Shell: OPENAI_API_KEY removed from '+rc);
+  }
+}
+console.log('All done! Restart terminal to take effect.');
+REMOVE_EOF</pre>
+                        <button onclick="copyTutorialRemoveCmd(this)" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.3s;" onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">
+                            复制移除命令
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Codex CLI Section -->
+                <div style="margin-top: 35px; padding-top: 25px; border-top: 3px solid #667eea;">
+                    <h3 style="margin: 0 0 20px 0; color: #333; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        <span style="background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px;">C</span>
+                        Codex CLI 配置
+                    </h3>
+                    <p style="font-size: 14px; color: #666; margin: 0 0 15px 0; line-height: 1.6;">
+                        同一个 API Key 也可用于 OpenAI Codex CLI，执行以下命令一键配置：
+                    </p>
+                    <div style="background: #f0faf6; padding: 15px; border-radius: 8px; border: 1px solid #b2dfdb; position: relative;">
+                        <pre id="codexSetupCmd" style="margin: 0; font-size: 11px; color: #333; overflow-x: auto; white-space: pre-wrap; word-break: break-all;">node &lt;&lt; 'CODEX_EOF'
+const fs=require('fs'),path=require('path'),os=require('os');
+const apiKey='<span style="color: #dc3545; font-weight: 700;">YOUR_API_KEY</span>';
+const dir=path.join(os.homedir(),'.codex');
+const sf=path.join(dir,'config.toml');
+if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+let c=fs.existsSync(sf)?fs.readFileSync(sf,'utf8'):'';
+function upsertTop(key,value){
+  const line=key+' = '+value;
+  const re=new RegExp('^'+key+'\\s*=.*$','m');
+  if(re.test(c)){c=c.replace(re,line);return}
+  const idx=c.indexOf('[');
+  c=idx&gt;=0?line+'\n'+c:line+'\n'+c;
+}
+upsertTop('model_provider','"local"');
+upsertTop('model','"gpt-5.5"');
+upsertTop('model_reasoning_effort','"high"');
+upsertTop('personality','"pragmatic"');
+c=c.replace(/^openai_base_url\s*=.*\n?/m,'');
+const providerBlock=[
+  '[model_providers.local]',
+  'name = "local"',
+  'base_url = "{{ service_info.base_url }}/v1"',
+  'env_key = "OPENAI_API_KEY"',
+  'wire_api = "responses"'
+].join('\n');
+if(/\[model_providers\.local\][\s\S]*?(?=\n\[|$)/m.test(c)){
+  c=c.replace(/\[model_providers\.local\][\s\S]*?(?=\n\[|$)/m,providerBlock);
+}else{
+  c=c.trimEnd()+'\n\n'+providerBlock;
+}
+fs.writeFileSync(sf,c.trimEnd()+'\n');
+const rc=os.platform()==='win32'?null:['.zshrc','.bashrc'].map(f=&gt;path.join(os.homedir(),f)).find(f=&gt;fs.existsSync(f));
+if(apiKey==='YOUR_API_KEY'){
+  console.log('Codex config done: '+sf);
+  console.log('Replace YOUR_API_KEY with your real API key, or use the generated command after requesting a key.');
+}else if(rc){
+  const content=fs.readFileSync(rc,'utf8');
+  const line='export OPENAI_API_KEY="'+apiKey+'"';
+  if(/^export OPENAI_API_KEY=.*/m.test(content)){
+    fs.writeFileSync(rc,content.replace(/^export OPENAI_API_KEY=.*/m,line));
+    console.log('Updated OPENAI_API_KEY in '+rc);
+  }else{
+    fs.appendFileSync(rc,'\n'+line+'\n');
+    console.log('Added OPENAI_API_KEY to '+rc);
+  }
+}else{console.log('No .bashrc/.zshrc found. Add manually: export OPENAI_API_KEY='+apiKey)}
+console.log('Codex config done: '+sf);
+CODEX_EOF</pre>
+                        <button onclick="copyElementText('codexSetupCmd', this)" style="margin-top: 10px; padding: 8px 16px; background: linear-gradient(135deg, #00a67e 0%, #00d4aa 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;">
+                            复制 Codex 配置命令
+                        </button>
+                    <div style="background: #e8f5e9; padding: 10px; border-radius: 6px; margin-top: 10px; border-left: 4px solid #4caf50;">
+                        <p style="font-size: 12px; color: #2e7d32; margin: 0;">API Key 与 Claude Code 通用，用你申请到的同一个 Key 即可。设置完后运行 <code>codex</code> 即可使用。</p>
+                    </div>
+                </div>
+
+                <!-- Gemini section removed -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Success Modal removed - using inline results instead -->
+</body>
+</html>
