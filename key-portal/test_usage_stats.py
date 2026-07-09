@@ -18,6 +18,10 @@ class ModelGroupConfigTests(unittest.TestCase):
         self.assertIn("gpt-5.6-terra", models)
         self.assertNotIn("gpt-5.6-luna", models)
 
+    def test_fable_alias_is_available_only_to_gpt_group(self):
+        self.assertIn("claude-fable-5", portal_app.LITELLM_MODEL_GROUPS["common"]["models"])
+        self.assertNotIn("claude-fable-5", portal_app.LITELLM_MODEL_GROUPS["claude"]["models"])
+
 
 class UsageMergeTests(unittest.TestCase):
     def test_merge_usage_payloads_combines_nodes_and_preserves_details(self):
