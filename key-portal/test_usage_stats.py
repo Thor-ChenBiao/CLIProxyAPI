@@ -10,6 +10,15 @@ import app as portal_app
 import usage_sync
 
 
+class ModelGroupConfigTests(unittest.TestCase):
+    def test_common_group_exposes_available_gpt_56_models(self):
+        models = portal_app.LITELLM_MODEL_GROUPS["common"]["models"]
+
+        self.assertIn("gpt-5.6-sol", models)
+        self.assertIn("gpt-5.6-terra", models)
+        self.assertNotIn("gpt-5.6-luna", models)
+
+
 class UsageMergeTests(unittest.TestCase):
     def test_merge_usage_payloads_combines_nodes_and_preserves_details(self):
         detail = {

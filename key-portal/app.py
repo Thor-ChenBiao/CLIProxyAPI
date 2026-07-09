@@ -283,6 +283,8 @@ def mask_api_key(api_key):
 LITELLM_MODEL_GROUPS = {
     "common": {
         "models": [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
             "gpt-5.5",
             "gpt-5.4",
             "claude-sonnet-4-5",
