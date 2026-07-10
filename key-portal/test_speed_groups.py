@@ -198,6 +198,38 @@ class SpeedGroupApiTests(unittest.TestCase):
         self.assertEqual(key_info["speed_group"], "fast")
         self.assertTrue(key_info["can_change_speed"])
 
+    def test_my_keys_deferred_usage_skips_expensive_queries(self):
+        speed_info = {
+            "usr_pool_test": {
+                "editable": True,
+                "metadata": {"speed_group": "fast"},
+                "speed_group": "fast",
+            },
+        }
+        with portal_app.app.test_client() as client, \
+             self.portal_session(), \
+             patch.object(portal_app, "load_user_keys", return_value=self.user_data), \
+             patch.object(portal_app, "litellm_key_totals_for_entries") as totals, \
+             patch.object(portal_app, "merge_litellm_identity_usage_keys") as merge, \
+             patch.object(
+                 portal_app,
+                 "litellm_speed_groups_for_entries",
+                 return_value=speed_info,
+             ), \
+             patch.object(portal_app, "_key_budget", return_value=None):
+            response = client.post(
+                "/api/my-keys",
+                json={"defer_usage": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["usage_pending"])
+        self.assertEqual(payload["keys"][0]["speed_group"], "fast")
+        self.assertTrue(payload["keys"][0]["usage_pending"])
+        totals.assert_not_called()
+        merge.assert_not_called()
+
     def test_query_by_key_returns_authoritative_speed_group(self):
         speed_info = {
             "usr_pool_test": {
@@ -345,6 +377,14 @@ class SpeedGroupTemplateTests(unittest.TestCase):
         self.assertIn("/static/key_speed_groups.js", html)
         self.assertIn("运行模式", html)
         self.assertIn("setKeySpeedGroup", html)
+
+    def test_my_keys_loads_keys_before_usage(self):
+        html = (
+            Path(__file__).parent / "templates" / "my_keys.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("defer_usage: true", html)
+        self.assertIn("usagePending", html)
 
 if __name__ == "__main__":
     unittest.main()

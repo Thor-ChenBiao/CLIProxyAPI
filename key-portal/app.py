@@ -5220,6 +5220,7 @@ def update_key_email():
 def get_my_keys():
     """Get all keys for a user by email."""
     data = request.get_json(silent=True) or {}
+    defer_usage = data.get("defer_usage") is True
     requested_email = _normalize_email(data.get("email"))
     if is_current_admin():
         email = requested_email or current_user_email()
@@ -5236,10 +5237,17 @@ def get_my_keys():
     key_entries = find_user_key_entries(user_data, email)
 
     if not user and not key_entries:
-        return jsonify({"email": email, "name": email, "keys": []})
+        return jsonify({
+            "email": email,
+            "name": email,
+            "keys": [],
+            "usage_pending": defer_usage,
+        })
 
-    key_totals = litellm_key_totals_for_entries(email, key_entries)
-    key_entries, key_totals = merge_litellm_identity_usage_keys(email, key_entries, key_totals)
+    key_totals = {}
+    if not defer_usage:
+        key_totals = litellm_key_totals_for_entries(email, key_entries)
+        key_entries, key_totals = merge_litellm_identity_usage_keys(email, key_entries, key_totals)
     speed_info_by_key = litellm_speed_groups_for_entries(key_entries)
 
     keys_info = []
@@ -5271,6 +5279,7 @@ def get_my_keys():
             "can_topup": (not is_synthetic_usage_key) and key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
             "can_revoke": not is_synthetic_usage_key,
             "created_at": key_meta.get("created_at", ""),
+            "usage_pending": defer_usage,
             "total_requests": _int_usage_value(key_stats.get("total_requests")),
             "total_tokens": total_tokens,
             "input_tokens": input_tokens,
@@ -5293,7 +5302,8 @@ def get_my_keys():
             "last_used_at": litellm_timestamp_iso_utc(key_stats.get("last_used_at")),
         })
 
-    keys_info.sort(key=lambda item: item.get("last_used_at") or "", reverse=True)
+    if not defer_usage:
+        keys_info.sort(key=lambda item: item.get("last_used_at") or "", reverse=True)
 
     user_total_requests = sum(_int_usage_value(item.get("total_requests")) for item in keys_info)
     user_total_tokens = sum(_int_usage_value(item.get("total_tokens")) for item in keys_info)
@@ -5330,6 +5340,7 @@ def get_my_keys():
         "email": email,
         "name": (user or {}).get("name", email),
         "keys": keys_info,
+        "usage_pending": defer_usage,
         "user_total_requests": user_total_requests,
         "user_total_tokens": user_total_tokens,
         "user_input_tokens": user_input_tokens,
@@ -5361,7 +5372,7 @@ def get_my_keys():
             "today_tokens": user_today_tokens,
             "today_token_breakdown": user_today_token_breakdown,
         },
-        "usage_source": "litellm_spendlogs_pg",
+        "usage_source": "deferred" if defer_usage else "litellm_spendlogs_pg",
         "usage_scope": "total_and_today",
         "usage_note": "total_* 为历史累计；today_* 为北京时间今天；last_used_at 为 PG 记录里的最后一次 token 消耗时间。",
         "token_pricing": litellm_spend_pricing_metadata(),
