@@ -70,7 +70,7 @@ def guide_context(base_url):
                 "name": "Claude Key",
                 "key_type": "claude",
                 "approval": "需要审批",
-                "models": "claude-opus-4-6",
+                "models": "claude-opus-4-8、claude-opus-4-7、claude-opus-4-6、claude-sonnet-4-6、claude-sonnet-4-5、claude-haiku-4-5",
                 "recommendation": "只有 GPT Key 明显不满足、且必须走真实 Claude/Bedrock 时再申请。",
             },
             {

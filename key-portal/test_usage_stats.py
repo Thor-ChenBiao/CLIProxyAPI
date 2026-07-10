@@ -10,6 +10,19 @@ import app as portal_app
 import usage_sync
 
 
+class ModelGroupConfigTests(unittest.TestCase):
+    def test_common_group_exposes_available_gpt_56_models(self):
+        models = portal_app.LITELLM_MODEL_GROUPS["common"]["models"]
+
+        self.assertIn("gpt-5.6-sol", models)
+        self.assertIn("gpt-5.6-terra", models)
+        self.assertNotIn("gpt-5.6-luna", models)
+
+    def test_fable_alias_is_available_only_to_gpt_group(self):
+        self.assertIn("claude-fable-5", portal_app.LITELLM_MODEL_GROUPS["common"]["models"])
+        self.assertNotIn("claude-fable-5", portal_app.LITELLM_MODEL_GROUPS["claude"]["models"])
+
+
 class UsageMergeTests(unittest.TestCase):
     def test_merge_usage_payloads_combines_nodes_and_preserves_details(self):
         detail = {
@@ -239,6 +252,52 @@ class AuthStatsTests(unittest.TestCase):
 
 
 class LiteLLMKeyTotalsTests(unittest.TestCase):
+    def test_user_key_stats_for_date_filters_spendlogs_by_user_tokens(self):
+        captured = []
+
+        def fake_psql_json(sql, timeout=15):
+            captured.append(sql)
+            return []
+
+        with patch.object(portal_app, "litellm_psql_json", side_effect=fake_psql_json), \
+             patch.object(portal_app, "beijing_today", return_value="2026-07-09"):
+            portal_app.litellm_user_key_stats_for_date("u@example.com", "2026-07-08")
+
+        self.assertIn("user_tokens AS", captured[0])
+        self.assertIn('"LiteLLM_SpendLogs"', captured[0])
+        self.assertIn("s.api_key = ut.token", captured[0])
+
+    def test_model_group_usage_uses_daily_history_and_today_spendlogs(self):
+        captured = []
+
+        def fake_psql_json(sql, timeout=15):
+            captured.append(sql)
+            return []
+
+        with patch.object(portal_app, "litellm_psql_json", side_effect=fake_psql_json):
+            portal_app.litellm_usage_by_model_group(7)
+
+        self.assertIn("daily_rows AS", captured[0])
+        self.assertIn("today_rows AS", captured[0])
+        self.assertIn('"LiteLLM_DailyUserSpend"', captured[0])
+        self.assertIn('"LiteLLM_SpendLogs"', captured[0])
+
+    def test_usage_history_uses_daily_history_and_today_spendlogs(self):
+        captured = []
+
+        def fake_psql_json(sql, timeout=15):
+            captured.append(sql)
+            return {"history": [], "by_month": {}, "by_year": {}}
+
+        with patch.object(portal_app, "litellm_psql_json", side_effect=fake_psql_json):
+            portal_app.litellm_usage_history_aggregated(120)
+
+        self.assertIn("daily_rows AS", captured[0])
+        self.assertIn("today_rows AS", captured[0])
+        self.assertIn('"LiteLLM_DailyUserSpend"', captured[0])
+        self.assertIn('"LiteLLM_SpendLogs"', captured[0])
+        self.assertEqual(len(captured), 1)
+
     def test_key_totals_filter_spend_rows_before_portal_key_creation(self):
         captured = {}
 
@@ -279,7 +338,8 @@ class LiteLLMKeyTotalsTests(unittest.TestCase):
             portal_app._litellm_key_totals_for_entries_uncached("u@example.com", [entry])
 
         self.assertIn("created_at_utc", captured["sql"])
-        self.assertIn('s."endTime" >= key_tokens.created_at_utc', captured["sql"])
+        self.assertIn("d.date >= (n.created_at_utc::date)::text", captured["sql"])
+        self.assertIn('s."endTime" >= n.created_at_utc', captured["sql"])
         self.assertIn("2026-05-24 06:25:09.000000", captured["sql"])
 
 

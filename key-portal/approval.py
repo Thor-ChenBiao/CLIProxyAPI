@@ -21,6 +21,7 @@ import requests
 import config
 import feishu
 import portal_state
+import speed_groups
 
 
 APPROVAL_CODE = config.FEISHU_APPROVAL_CODE
@@ -131,10 +132,28 @@ def _attach_instance_id(request_id, instance_id):
         conn.commit()
 
 
-def create_approval_request(email, name, label, model_group, reason="", daily_budget=""):
+def create_approval_request(
+    email,
+    name,
+    label,
+    model_group,
+    reason="",
+    daily_budget="",
+    speed_group="standard",
+):
     """Create a local approval record and submit to Feishu."""
+    request_payload = {
+        "speed_group": speed_groups.normalize_speed_group(speed_group),
+    }
     request_id = _insert_approval_request(
-        email, name, label, model_group, reason, daily_budget, REQUEST_TYPE_NEW_KEY, {}
+        email,
+        name,
+        label,
+        model_group,
+        reason,
+        daily_budget,
+        REQUEST_TYPE_NEW_KEY,
+        request_payload,
     )
 
     instance_id, error = _submit_feishu_approval(request_id, email, name, model_group, reason, daily_budget)
@@ -344,8 +363,24 @@ def _on_new_key_approved(row):
     label = row["label"]
     model_group = row["model_group"]
     max_budget = _parse_budget(row.get("daily_budget"))
+    request_payload = row.get("request_payload") or {}
+    if isinstance(request_payload, str):
+        try:
+            request_payload = json.loads(request_payload)
+        except (TypeError, ValueError):
+            request_payload = {}
+    speed_group = speed_groups.normalize_speed_group(
+        (request_payload or {}).get("speed_group")
+    )
 
-    api_key, error = assign_key_to_user(email, name, label, model_group, max_budget=max_budget)
+    api_key, error = assign_key_to_user(
+        email,
+        name,
+        label,
+        model_group,
+        max_budget=max_budget,
+        speed_group=speed_group,
+    )
     if error:
         if "500" in str(error) or "timeout" in str(error).lower() or "connection" in str(error).lower():
             print(f"[Approval] Transient error for {email}, will retry: {error}")
@@ -459,7 +494,7 @@ def _notify_user_approved(email, model_group, api_key, max_budget=None):
         budget_info = f"\n\n**总额度：**${max_budget}（{estimate}）"
 
     model_tips = {
-        "claude": "当前 Claude 仅支持 Opus 4.6，模型名请选 claude-opus-4-6（暂不支持 4.7）。",
+        "claude": "Claude Key 可用模型：claude-opus-4-8、claude-opus-4-7、claude-opus-4-6、claude-sonnet-4-6、claude-sonnet-4-5、claude-haiku-4-5。",
         "deepseek": "可用模型：deepseek-chat（V3）、deepseek-reasoner（R1）。",
         "gemini": "可用模型：gemini-2.5-pro、gemini-2.5-flash。",
     }

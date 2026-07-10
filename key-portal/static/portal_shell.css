@@ -93,6 +93,119 @@
     min-width: 0;
 }
 
+.key-speed-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.key-speed-choice-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.key-speed-choice {
+    display: flex;
+    min-height: 82px;
+    padding: 13px 14px;
+    border: 1px solid #d5dee9;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #526176;
+    cursor: pointer;
+    flex-direction: column;
+    justify-content: center;
+    transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.key-speed-choice strong {
+    color: #172033;
+    font-size: 14px;
+}
+
+.key-speed-choice span {
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.key-speed-choice-input:focus-visible + .key-speed-choice {
+    outline: 3px solid rgba(15, 118, 110, 0.2);
+    outline-offset: 2px;
+}
+
+.key-speed-choice-input:checked + .key-speed-choice {
+    border-color: #0f766e;
+    background: #eefaf7;
+    box-shadow: inset 0 0 0 1px #0f766e;
+}
+
+.key-speed-control {
+    display: inline-grid;
+    grid-template-columns: repeat(2, 68px);
+    grid-template-rows: 32px 16px;
+    gap: 0;
+    width: 136px;
+    vertical-align: middle;
+}
+
+.key-speed-button {
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: 0;
+}
+
+.key-speed-button:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+.key-speed-button:nth-child(2) {
+    margin-left: -1px;
+    border-radius: 0 6px 6px 0;
+}
+
+.key-speed-button.active[data-speed="standard"] {
+    border-color: #475569;
+    background: #475569;
+    color: #ffffff;
+}
+
+.key-speed-button.active[data-speed="fast"] {
+    border-color: #0f766e;
+    background: #0f766e;
+    color: #ffffff;
+}
+
+.key-speed-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+}
+
+.key-speed-status {
+    grid-column: 1 / -1;
+    align-self: end;
+    min-height: 14px;
+    color: #64748b;
+    font-size: 10px;
+    line-height: 1.2;
+    text-align: center;
+}
+
+.key-speed-status.error {
+    color: #b42318;
+}
+
+@media (max-width: 620px) {
+    .key-speed-choice-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .portal-avatar {
     width: 34px;
     height: 34px;

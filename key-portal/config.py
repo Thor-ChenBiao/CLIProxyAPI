@@ -47,7 +47,7 @@ KEY_PORTAL_ADMIN_EMAILS = [
     email.strip().lower()
     for email in os.environ.get(
         "KEY_PORTAL_ADMIN_EMAILS",
-        "biao.chen@zilliz.com,xiaofan.luan@zilliz.com",
+        "biao.chen@zilliz.com,xiaofan.luan@zilliz.com,santiago.wu@zilliz.com",
     ).split(",")
     if email.strip()
 ]

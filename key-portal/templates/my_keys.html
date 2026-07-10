@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的 Keys - Key Portal</title>
     <script src="/static/i18n.js?v=20260525-2"></script>
+    <script src="/static/key_speed_groups.js?v=20260710-1"></script>
     {% include "_portal_shell.html" %}
     <style>
         :root {
@@ -332,6 +333,7 @@
                             <th>Key</th>
                             <th>标签</th>
                             <th>Key 类型</th>
+                            <th>运行模式</th>
                             <th>创建时间</th>
                             <th>最后消耗</th>
                             <th>请求数</th>
@@ -413,6 +415,53 @@
         function topupButtonHtml(keyInfo, style) {
             if (!keyInfo?.can_topup) return '';
             return `<button ${style || 'class="btn btn-topup"'} onclick='openTopupModal(${jsArg(keyInfo.key)}, ${jsArg(modelGroupLabel(keyInfo.model_group || 'common'))}, ${jsArg(keyInfo.label || '')}, ${Number(keyInfo.max_budget || 0)})'>追加额度</button>`;
+        }
+
+        function speedGroupControlHtml(keyInfo) {
+            const current = KeySpeedGroups.normalize(keyInfo?.speed_group);
+            const editable = Boolean(keyInfo?.can_change_speed);
+            const disabled = editable ? '' : 'disabled';
+            const status = editable ? '' : '暂不可修改';
+            return `
+                <div class="key-speed-control" data-current="${current}" data-editable="${editable}">
+                    <button type="button" class="key-speed-button ${current === 'standard' ? 'active' : ''}" data-speed="standard" aria-pressed="${current === 'standard'}" ${disabled} onclick='setKeySpeedGroup(this, ${jsArg(keyInfo?.key)}, "standard")'>普通</button>
+                    <button type="button" class="key-speed-button ${current === 'fast' ? 'active' : ''}" data-speed="fast" aria-pressed="${current === 'fast'}" ${disabled} onclick='setKeySpeedGroup(this, ${jsArg(keyInfo?.key)}, "fast")'>Fast</button>
+                    <span class="key-speed-status">${status}</span>
+                </div>
+            `;
+        }
+
+        async function setKeySpeedGroup(button, apiKey, nextGroup) {
+            const control = button.closest('.key-speed-control');
+            if (!control || control.dataset.editable !== 'true') return;
+            const previous = KeySpeedGroups.normalize(control.dataset.current);
+            const requested = KeySpeedGroups.normalize(nextGroup);
+            if (previous === requested) return;
+
+            const buttons = Array.from(control.querySelectorAll('.key-speed-button'));
+            const status = control.querySelector('.key-speed-status');
+            buttons.forEach(item => { item.disabled = true; });
+            status.classList.remove('error');
+            status.textContent = '保存中...';
+            try {
+                const payload = await KeySpeedGroups.update(apiKey, requested);
+                const current = KeySpeedGroups.normalize(payload.speed_group);
+                control.dataset.current = current;
+                buttons.forEach(item => {
+                    const active = item.dataset.speed === current;
+                    item.classList.toggle('active', active);
+                    item.setAttribute('aria-pressed', String(active));
+                });
+                status.textContent = '已生效';
+                window.setTimeout(() => {
+                    if (status.textContent === '已生效') status.textContent = '';
+                }, 1800);
+            } catch (error) {
+                status.classList.add('error');
+                status.textContent = error.message || '更新失败';
+            } finally {
+                buttons.forEach(item => { item.disabled = false; });
+            }
         }
 
         function rememberEmail(email) {
@@ -627,6 +676,7 @@
                     <td><span class="key-value">${escapeHtml(normalized.key)}</span></td>
                     <td>${escapeHtml(normalized.label || '默认')}</td>
                     <td>${escapeHtml(modelGroupLabel(normalized.model_group || 'common'))}</td>
+                    <td>${speedGroupControlHtml(normalized)}</td>
                     <td>${formatDate(normalized.created_at)}</td>
                     <td class="last-used-cell"><div>${formatDate(normalized.last_used_at)}</div><div class="token-detail">${usageScopeLabel(normalized)}</div></td>
                     <td>${formatNumber(normalized.total_requests)}</td>
@@ -648,6 +698,7 @@
                         <div>${tokenUsageHtml(normalized)}</div>
                     </div>
                     <div class="key-card-meta">创建：${formatDate(normalized.created_at)}<br>最后消耗：${formatDate(normalized.last_used_at)} · ${usageScopeLabel(normalized)}</div>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><strong style="font-size:12px;">运行模式</strong>${speedGroupControlHtml(normalized)}</div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${actions}</div>
                 `;
                 cards.appendChild(card);
