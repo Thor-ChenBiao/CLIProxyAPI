@@ -234,6 +234,31 @@
             color: #4b5563;
             white-space: nowrap;
         }
+        .fast-key-count {
+            color: #0f766e;
+            font-size: 11px;
+            font-weight: 800;
+            margin-top: 3px;
+            white-space: nowrap;
+        }
+        .speed-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 3px 8px;
+            border: 1px solid #d7dee9;
+            border-radius: 6px;
+            color: #64748b;
+            background: #f8fafc;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .speed-badge.fast {
+            color: #0f766e;
+            border-color: #99d8c8;
+            background: #e9f8f3;
+        }
         .chart-detail-row > td {
             padding: 0 12px 14px 42px;
             background: #fff;
@@ -456,8 +481,8 @@
         function exportToExcel() {
             const isAggregated = currentAggregation === 'day' || currentAggregation === 'month' || currentAggregation === 'year';
             let csv = isAggregated
-                ? 'Period,Identifier,Email,Keys Count,Total Requests,Total Tokens,Input Tokens,Output Tokens,Estimated Cost USD\n'
-                : 'Identifier,Email,Keys Count,Total Requests,Total Tokens,Input Tokens,Output Tokens,Estimated Cost USD\n';
+                ? 'Period,Identifier,Email,Keys Count,Fast Keys Count,Total Requests,Total Tokens,Input Tokens,Output Tokens,Estimated Cost USD\n'
+                : 'Identifier,Email,Keys Count,Fast Keys Count,Total Requests,Total Tokens,Input Tokens,Output Tokens,Estimated Cost USD\n';
 
             allUsersData.forEach(user => {
                 const breakdown = user.token_breakdown || {};
@@ -465,9 +490,9 @@
                 const outputTokens = user.output_tokens ?? breakdown.output_tokens ?? 0;
                 const costUsd = user.estimated_cost_usd ?? breakdown.cost_usd ?? 0;
                 if (isAggregated) {
-                    csv += `"${user.period || ''}","${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0},${inputTokens},${outputTokens},${costUsd}\n`;
+                    csv += `"${user.period || ''}","${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.fast_key_count || 0},${user.total_requests || 0},${user.total_tokens || 0},${inputTokens},${outputTokens},${costUsd}\n`;
                 } else {
-                    csv += `"${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.total_requests || 0},${user.total_tokens || 0},${inputTokens},${outputTokens},${costUsd}\n`;
+                    csv += `"${user.name || ''}","${user.email || ''}",${user.key_count || 0},${user.fast_key_count || 0},${user.total_requests || 0},${user.total_tokens || 0},${inputTokens},${outputTokens},${costUsd}\n`;
                 }
             });
 
@@ -484,6 +509,15 @@
 
         function formatNumber(num) {
             return Number(num || 0).toLocaleString();
+        }
+
+        function keyCountHtml(total, fast) {
+            return `${formatNumber(total)}<div class="fast-key-count">Fast ${formatNumber(fast)}</div>`;
+        }
+
+        function speedGroupHtml(speedGroup) {
+            const isFast = String(speedGroup || '').toLowerCase() === 'fast';
+            return `<span class="speed-badge${isFast ? ' fast' : ''}">${isFast ? 'Fast' : '普通'}</span>`;
         }
 
         function formatCost(value) {
@@ -595,7 +629,7 @@
 
                 allUsersData = data.users || [];
                 document.getElementById('totalUsers').textContent = formatNumber(data.summary?.total_users);
-                document.getElementById('totalKeys').textContent = formatNumber(data.summary?.total_keys);
+                document.getElementById('totalKeys').innerHTML = keyCountHtml(data.summary?.total_keys, data.summary?.total_fast_keys);
                 document.getElementById('totalRequests').textContent = formatNumber(data.summary?.total_requests);
                 document.getElementById('totalTokens').innerHTML = tokenUsageHtml(data.summary || {});
 
@@ -618,7 +652,7 @@
                 if (!response.ok || data.error || aggregationAtStart !== currentAggregation) return;
                 allUsersData = data.users || [];
                 document.getElementById('totalUsers').textContent = formatNumber(data.summary?.total_users);
-                document.getElementById('totalKeys').textContent = formatNumber(data.summary?.total_keys);
+                document.getElementById('totalKeys').innerHTML = keyCountHtml(data.summary?.total_keys, data.summary?.total_fast_keys);
                 document.getElementById('totalRequests').textContent = formatNumber(data.summary?.total_requests);
                 document.getElementById('totalTokens').innerHTML = tokenUsageHtml(data.summary || {});
                 renderTable(data.summary || {});
@@ -674,7 +708,7 @@
                     row.innerHTML = `
                         <td class="col-period"><div class="key-identity"><span class="toggle">${expanded ? '▾' : '▸'}</span><strong>${escapeHtml(user.period || '')}</strong></div></td>
                         <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
-                        <td class="col-keys">${formatNumber(user.key_count)}</td>
+                        <td class="col-keys">${keyCountHtml(user.key_count, user.fast_key_count)}</td>
                         <td class="col-requests">${formatNumber(user.total_requests)}</td>
                         <td class="col-tokens">${tokenUsageHtml(user)}</td>
                         <td>
@@ -687,7 +721,7 @@
                     row.innerHTML = `
                         <td class="col-rank"><div class="key-identity"><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="rank ${getRankClass(rank)}">${getRankEmoji(rank)}</span></div></td>
                         <td class="col-email"><strong>${escapeHtml(user.email || user.name || '')}</strong></td>
-                        <td class="col-keys">${formatNumber(user.key_count)}</td>
+                        <td class="col-keys">${keyCountHtml(user.key_count, user.fast_key_count)}</td>
                         <td class="col-requests">${formatNumber(user.total_requests)}</td>
                         <td class="col-tokens">${tokenUsageHtml(user)}</td>
                         <td>
@@ -788,6 +822,7 @@
                                 <th>Key</th>
                                 <th>标签</th>
                                 <th>Key 类型</th>
+                                <th>运行模式</th>
                                 <th>请求数</th>
                                 <th>Token 使用</th>
                                 <th>成功 / 失败</th>
@@ -809,6 +844,7 @@
                     <td><div class="key-identity"><span class="toggle">${expanded ? '▾' : '▸'}</span><span class="key-code" title="${escapeAttr(maskedKey(apiKey.key))}">${escapeHtml(maskedKey(apiKey.key))}</span></div></td>
                     <td>${escapeHtml(apiKey.label || '')}</td>
                     <td>${escapeHtml(modelGroupLabel(apiKey.model_group || 'common'))}</td>
+                    <td>${speedGroupHtml(apiKey.speed_group)}</td>
                     <td>${formatNumber(apiKey.total_requests)}</td>
                     <td>${tokenUsageHtml(apiKey)}</td>
                     <td>${formatNumber(success)} / ${formatNumber(failure)}</td>
@@ -817,7 +853,7 @@
             if (!expanded) return keyRow;
             return keyRow + `
                 <tr class="chart-detail-row">
-                    <td colspan="6">${renderChartPanel(rowKey, user, apiKey.key)}</td>
+                    <td colspan="7">${renderChartPanel(rowKey, user, apiKey.key)}</td>
                 </tr>
             `;
         }

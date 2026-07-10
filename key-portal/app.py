@@ -1611,6 +1611,42 @@ SELECT coalesce(json_object_agg(
     return result
 
 
+def annotate_user_stats_speed_groups(stats):
+    api_keys = []
+    seen = set()
+    for stat in stats or []:
+        candidates = list(stat.get("_api_keys", []) or [])
+        candidates.extend(
+            item.get("key")
+            for item in stat.get("keys", []) or []
+            if isinstance(item, dict)
+        )
+        for api_key in candidates:
+            api_key = str(api_key or "").strip()
+            if api_key and api_key not in seen:
+                seen.add(api_key)
+                api_keys.append(api_key)
+
+    speed_info_by_key = litellm_speed_groups_for_entries(api_keys)
+    for stat in stats or []:
+        stat_keys = [str(key or "").strip() for key in stat.get("_api_keys", []) or []]
+        for item in stat.get("keys", []) or []:
+            if not isinstance(item, dict):
+                continue
+            api_key = str(item.get("key") or "").strip()
+            if api_key:
+                stat_keys.append(api_key)
+                speed_info = speed_info_by_key.get(api_key, {})
+                item["speed_group"] = speed_info.get("speed_group", speed_groups.STANDARD)
+                item["can_change_speed"] = bool(speed_info.get("editable"))
+        stat["fast_key_count"] = sum(
+            1
+            for api_key in set(stat_keys)
+            if speed_info_by_key.get(api_key, {}).get("speed_group") == speed_groups.FAST
+        )
+    return speed_info_by_key
+
+
 def litellm_spend_identity_sql():
     return "coalesce(nullif(v.metadata->>'email', ''), nullif(v.user_id, ''), nullif(s.\"user\", ''), 'unknown')"
 
@@ -5428,6 +5464,7 @@ def build_all_users_stats_response(aggregation, live_today=False):
         aggregation = "total"
         stats, metadata = get_all_users_total_stats_from_db(include_metadata=True)
 
+    speed_info_by_key = annotate_user_stats_speed_groups(stats)
     total_users = len(set(s.get("email", "") for s in stats))
     total_requests = sum(s.get("total_requests", 0) for s in stats)
     total_tokens = sum(s.get("total_tokens", 0) for s in stats)
@@ -5456,6 +5493,12 @@ def build_all_users_stats_response(aggregation, live_today=False):
         }
         total_keys = len(unique_keys)
 
+    total_fast_keys = sum(
+        1
+        for api_key in unique_keys
+        if speed_info_by_key.get(api_key, {}).get("speed_group") == speed_groups.FAST
+    )
+
     return {
         "users": stats,
         "summary": {
@@ -5470,6 +5513,7 @@ def build_all_users_stats_response(aggregation, live_today=False):
             "estimated_cost_usd": token_breakdown["cost_usd"],
             "spend_usd": spend_usd,
             "total_keys": total_keys,
+            "total_fast_keys": total_fast_keys,
         },
         "aggregation": aggregation,
         "source": metadata.get("source", "litellm_spendlogs"),
@@ -5710,6 +5754,8 @@ def api_get_user_keys():
     if not user and not key_entries:
         return jsonify({"error": "用户不存在"}), 404
 
+    speed_info_by_key = litellm_speed_groups_for_entries(key_entries)
+
     if date:
         local_by_candidate = {}
         for entry in key_entries:
@@ -5759,6 +5805,7 @@ def api_get_user_keys():
             seen.add(api_key)
             key_meta = user_data.get("keys", {}).get(api_key, {}) or (local_entry or {})
             model_group = normalize_model_group(key_meta.get("model_group") or inferred_group)
+            speed_info = speed_info_by_key.get(api_key, {})
             spend_usd = round(_float_usage_value(row.get("spend_usd", 0)), 6)
             breakdown = build_litellm_token_breakdown(
                 row.get("total_tokens", 0),
@@ -5773,6 +5820,8 @@ def api_get_user_keys():
                 "label": key_meta.get("label") or display_label,
                 "model_group": model_group,
                 "source": key_meta.get("source", "litellm"),
+                "speed_group": speed_info.get("speed_group", speed_groups.STANDARD),
+                "can_change_speed": bool(speed_info.get("editable")),
                 "max_budget": _key_budget(key_meta, api_key),
                 "can_topup": False,
                 "created_at": key_meta.get("created_at", ""),
@@ -5835,11 +5884,14 @@ def api_get_user_keys():
         spend_usd = round(_float_usage_value(key_stats.get("spend_usd", 0)), 6)
         breakdown = build_litellm_token_breakdown(key_stats.get("total_tokens", 0), key_stats.get("input_tokens", 0), key_stats.get("output_tokens", 0), key_stats.get("cached_tokens", 0), key_stats.get("reasoning_tokens", 0), spend_usd)
         max_budget = _key_budget(key_meta, api_key)
+        speed_info = speed_info_by_key.get(api_key, {})
         keys_info.append({
             "key": api_key,
             "label": key_meta.get("label", ""),
             "model_group": key_meta.get("model_group", "common"),
             "source": key_meta.get("source", "cliproxy"),
+            "speed_group": speed_info.get("speed_group", speed_groups.STANDARD),
+            "can_change_speed": bool(speed_info.get("editable")),
             "max_budget": max_budget,
             "can_topup": key_meta.get("source") == "litellm" and approval.requires_approval(normalize_model_group(key_meta.get("model_group", "common"))) and max_budget is not None,
             "created_at": key_meta.get("created_at", ""),

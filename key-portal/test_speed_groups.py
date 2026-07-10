@@ -259,6 +259,62 @@ class SpeedGroupApiTests(unittest.TestCase):
         self.assertEqual(key_info["speed_group"], "fast")
         self.assertTrue(key_info["can_change_speed"])
 
+    def test_admin_user_keys_returns_speed_group(self):
+        speed_info = {
+            "usr_pool_test": {
+                "editable": True,
+                "metadata": {"speed_group": "fast"},
+                "speed_group": "fast",
+            },
+        }
+        with portal_app.app.test_client() as client, \
+             self.portal_session(), \
+             patch.object(portal_app, "load_user_keys", return_value=self.user_data), \
+             patch.object(portal_app, "litellm_key_totals_for_entries", return_value={}), \
+             patch.object(
+                 portal_app,
+                 "litellm_speed_groups_for_entries",
+                 return_value=speed_info,
+             ) as speed_lookup, \
+             patch.object(portal_app, "_key_budget", return_value=None):
+            response = client.get("/api/user-keys?email=u@zilliz.com")
+
+        self.assertEqual(response.status_code, 200)
+        key_info = response.get_json()["keys"][0]
+        self.assertEqual(key_info["speed_group"], "fast")
+        self.assertTrue(key_info["can_change_speed"])
+        speed_lookup.assert_called_once()
+
+    def test_user_stats_speed_groups_are_batched(self):
+        stats = [
+            {
+                "email": "u@zilliz.com",
+                "key_count": 2,
+                "_api_keys": ["sk-standard", "sk-fast"],
+            },
+            {
+                "email": "other@zilliz.com",
+                "key_count": 1,
+                "keys": [{"key": "sk-other-fast"}],
+            },
+        ]
+        speed_info = {
+            "sk-standard": {"editable": True, "speed_group": "standard"},
+            "sk-fast": {"editable": True, "speed_group": "fast"},
+            "sk-other-fast": {"editable": True, "speed_group": "fast"},
+        }
+        with patch.object(
+            portal_app,
+            "litellm_speed_groups_for_entries",
+            return_value=speed_info,
+        ) as speed_lookup:
+            portal_app.annotate_user_stats_speed_groups(stats)
+
+        self.assertEqual(stats[0]["fast_key_count"], 1)
+        self.assertEqual(stats[1]["fast_key_count"], 1)
+        self.assertEqual(stats[1]["keys"][0]["speed_group"], "fast")
+        speed_lookup.assert_called_once()
+
 
 class SpeedGroupCreationTests(unittest.TestCase):
     def portal_session(self):
@@ -385,6 +441,15 @@ class SpeedGroupTemplateTests(unittest.TestCase):
 
         self.assertIn("defer_usage: true", html)
         self.assertIn("usagePending", html)
+
+    def test_admin_users_shows_fast_key_counts_and_rows(self):
+        html = (
+            Path(__file__).parent / "templates" / "admin_users.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("fast_key_count", html)
+        self.assertIn("<th>运行模式</th>", html)
+        self.assertIn("apiKey.speed_group", html)
 
 if __name__ == "__main__":
     unittest.main()
