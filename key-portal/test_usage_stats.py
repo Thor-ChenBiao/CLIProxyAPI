@@ -343,6 +343,115 @@ class LiteLLMKeyTotalsTests(unittest.TestCase):
         self.assertIn("2026-05-24 06:25:09.000000", captured["sql"])
 
 
+class UsageSummaryQueryTests(unittest.TestCase):
+    def setUp(self):
+        self.original_cache = dict(portal_app._litellm_usage_cache)
+        portal_app._litellm_usage_cache["data"] = None
+        portal_app._litellm_usage_cache["last_update"] = 0
+
+    def tearDown(self):
+        portal_app._litellm_usage_cache.clear()
+        portal_app._litellm_usage_cache.update(self.original_cache)
+
+    def test_missing_today_query_does_not_cache_fabricated_zeroes(self):
+        cumulative = {
+            "total_requests": 100,
+            "success_count": 99,
+            "failure_count": 1,
+            "total_tokens": 1000,
+            "input_tokens": 900,
+            "output_tokens": 100,
+            "cached_tokens": 300,
+            "reasoning_tokens": 10,
+            "spend_usd": 2.5,
+            "last_end_time": "2026-07-13T07:00:00Z",
+        }
+
+        with patch.object(portal_app, "litellm_database_url", return_value="postgresql://example/db"), \
+             patch.object(portal_app, "query_litellm_daily_spend_aggregate", return_value=cumulative), \
+             patch.object(portal_app, "query_litellm_today_spendlogs_aggregate", return_value=None):
+            result = portal_app.query_litellm_spendlogs_aggregate()
+
+        self.assertIsNone(result)
+        self.assertIsNone(portal_app._litellm_usage_cache["data"])
+
+    def test_cached_summary_reads_through_shared_snapshot(self):
+        class FakeSnapshot:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, loader):
+                self.calls += 1
+                return {"today": "2026-07-13", "today_tokens": 123}, None
+
+        fake_snapshot = FakeSnapshot()
+        portal_app._litellm_usage_cache["data"] = {"total_tokens": 1000}
+        portal_app._litellm_usage_cache["last_update"] = portal_app.time.time()
+
+        with patch.object(portal_app, "_usage_summary_snapshot", fake_snapshot, create=True), \
+             patch.object(portal_app, "_build_usage_summary_fast", side_effect=AssertionError("fresh snapshot must not query PG")):
+            data, error = portal_app.get_usage_summary_cached()
+
+        self.assertIsNone(error)
+        self.assertEqual(data["today_tokens"], 123)
+        self.assertEqual(fake_snapshot.calls, 1)
+
+    def test_pg_summary_failure_is_not_replaced_with_cluster_zeroes(self):
+        with patch.object(portal_app, "litellm_database_url", return_value="postgresql://example/db"), \
+             patch.object(portal_app, "query_litellm_today_spendlogs_aggregate", return_value=None), \
+             patch.object(portal_app, "query_litellm_spendlogs_aggregate", return_value=None), \
+             patch.object(portal_app, "get_cluster_usage_summary", return_value={"usage": {}}):
+            with self.assertRaisesRegex(RuntimeError, "today aggregate unavailable"):
+                portal_app._build_usage_summary_fast()
+
+    def test_today_summary_uses_daily_rows_plus_beijing_boundary_segment(self):
+        captured = []
+        payload = {
+            "today_requests": 12,
+            "today_success_count": 11,
+            "today_failure_count": 1,
+            "today_tokens": 1200,
+            "today_input_tokens": 1000,
+            "today_output_tokens": 200,
+            "today_cached_tokens": 700,
+            "today_reasoning_tokens": 0,
+            "today_spend_usd": 3.5,
+            "today_last_end_time": "2026-07-13T08:00:00Z",
+        }
+
+        def fake_psql(sql, timeout=15):
+            captured.append((sql, timeout))
+            return payload
+
+        with patch.object(portal_app, "litellm_database_url", return_value="postgresql://example/db"), \
+             patch.object(portal_app, "beijing_today", return_value="2026-07-13"), \
+             patch.object(portal_app, "litellm_psql_json", side_effect=fake_psql), \
+             patch.object(portal_app, "get_litellm_today_token_details", return_value=None, create=True):
+            result = portal_app.query_litellm_today_spendlogs_aggregate()
+
+        sql = captured[0][0]
+        self.assertIn('"LiteLLM_DailyUserSpend"', sql)
+        self.assertIn('"LiteLLM_SpendLogs"', sql)
+        self.assertIn("use_daily", sql)
+        self.assertNotIn("usage_object", sql)
+        self.assertEqual(result["today_tokens"], 1200)
+        self.assertEqual(result["today_cached_tokens"], 700)
+
+
+class UsageSummaryTemplateTests(unittest.TestCase):
+    def test_global_summary_does_not_render_error_payload_as_zeroes(self):
+        template_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
+        with open(template_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        start = source.index("async function loadUsageSummary()")
+        end = source.index("function startUsageSummaryPolling()", start)
+        block = source[start:end]
+
+        self.assertIn("if (!resp.ok || data.error)", block)
+        self.assertIn("throw new Error(data.error", block)
+
+
 class FlaskSmokeTests(unittest.TestCase):
     def test_read_only_usage_routes(self):
         with portal_app.app.test_client() as client, \

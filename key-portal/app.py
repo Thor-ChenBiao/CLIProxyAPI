@@ -30,6 +30,7 @@ import auth_stats_service
 import status_events
 import usage_realtime
 import speed_groups
+from usage_summary_snapshot import UsageSummarySnapshot
 from usage_sync import usage_date_from_timestamp
 
 # Import modular components
@@ -55,13 +56,12 @@ _stats_cache = {
 }
 
 _usage_summary_cache = {
-    "data": None,
-    "last_update": 0,
-    "ttl": 1,
     "full_refresh_interval": 60,
     "refreshing": False,
+    "last_full_refresh_attempt": 0,
 }
 _usage_summary_cache_lock = threading.Lock()
+_usage_summary_snapshot = UsageSummarySnapshot(ttl_seconds=2)
 
 _user_usage_summary_cache = {
     "data": {},
@@ -107,6 +107,14 @@ _litellm_usage_cache = {
     "ttl": 60,
 }
 _litellm_usage_cache_lock = threading.Lock()
+
+_today_token_details_cache = {
+    "data": None,
+    "last_update": 0,
+    "last_attempt": 0,
+    "ttl": 60,
+}
+_today_token_details_cache_lock = threading.Lock()
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -3321,33 +3329,110 @@ FROM rows;
     return data or []
 
 
-def query_litellm_today_spendlogs_aggregate():
-    database_url = litellm_database_url()
-    if not database_url:
-        return None
-    today = beijing_today()
-    today_sql = today.replace("'", "''")
+def query_litellm_today_token_details(today):
+    today_sql = str(today or beijing_today()).replace("'", "''")
     cached_sql = litellm_cached_tokens_sql()
     sql = f"""
 WITH bounds AS (
     SELECT
         ('{today_sql}'::date::timestamp - interval '8 hours') AS today_start_utc,
         ('{today_sql}'::date::timestamp + interval '16 hours') AS tomorrow_start_utc
-), today_totals AS (
+)
+SELECT json_build_object(
+    'today', '{today_sql}',
+    'today_cached_tokens', coalesce(sum({cached_sql}), 0)::bigint,
+    'today_reasoning_tokens', coalesce(sum((s.metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint
+)
+FROM "LiteLLM_SpendLogs" s, bounds
+WHERE s."endTime" >= bounds.today_start_utc
+  AND s."endTime" < bounds.tomorrow_start_utc;
+"""
+    payload = litellm_psql_json(sql, timeout=30)
+    return payload if isinstance(payload, dict) else None
+
+
+def _refresh_litellm_today_token_details(today):
+    payload = query_litellm_today_token_details(today)
+    with _today_token_details_cache_lock:
+        if payload:
+            _today_token_details_cache["data"] = dict(payload)
+            _today_token_details_cache["last_update"] = time.time()
+
+
+def get_litellm_today_token_details(today):
+    now = time.time()
+    with _today_token_details_cache_lock:
+        cached = _today_token_details_cache["data"]
+        same_day = cached and cached.get("today") == today
+        age = now - _today_token_details_cache["last_update"] if same_day else None
+        if same_day and age < _today_token_details_cache["ttl"]:
+            return dict(cached)
+        if now - _today_token_details_cache["last_attempt"] >= _today_token_details_cache["ttl"]:
+            _today_token_details_cache["last_attempt"] = now
+            threading.Thread(target=_refresh_litellm_today_token_details, args=(today,), daemon=True).start()
+        return dict(cached) if same_day else None
+
+
+def query_litellm_today_spendlogs_aggregate():
+    database_url = litellm_database_url()
+    if not database_url:
+        return None
+    today = beijing_today()
+    today_sql = today.replace("'", "''")
+    daily_cached_sql = litellm_daily_cached_tokens_sql("d")
+    sql = f"""
+WITH params AS (
+    SELECT
+        '{today_sql}'::date AS today_bj,
+        (now() AT TIME ZONE 'UTC')::date AS utc_today
+), bounds AS (
+    SELECT
+        (today_bj::timestamp - interval '8 hours') AS today_start_utc,
+        (today_bj::timestamp + interval '16 hours') AS tomorrow_start_utc,
+        utc_today::timestamp AS utc_midnight,
+        (today_bj::timestamp - interval '8 hours') < utc_today::timestamp AS use_daily,
+        utc_today::text AS utc_day
+    FROM params
+), raw_segment AS (
     SELECT
         count(*)::bigint AS today_requests,
-        count(*) FILTER (WHERE coalesce(status, 'success') != 'failure')::bigint AS today_success_count,
-        count(*) FILTER (WHERE coalesce(status, 'success') = 'failure')::bigint AS today_failure_count,
-        coalesce(sum(total_tokens), 0)::bigint AS today_tokens,
-        coalesce(sum(prompt_tokens), 0)::bigint AS today_input_tokens,
-        coalesce(sum(completion_tokens), 0)::bigint AS today_output_tokens,
-        coalesce(sum({cached_sql}), 0)::bigint AS today_cached_tokens,
-        coalesce(sum((metadata->'usage_object'->'completion_tokens_details'->>'reasoning_tokens')::bigint), 0)::bigint AS today_reasoning_tokens,
-        coalesce(sum(spend), 0)::float8 AS today_spend_usd,
-        max("endTime") AS today_last_end_time
+        count(*) FILTER (WHERE coalesce(s.status, 'success') != 'failure')::bigint AS today_success_count,
+        count(*) FILTER (WHERE coalesce(s.status, 'success') = 'failure')::bigint AS today_failure_count,
+        coalesce(sum(s.total_tokens), 0)::bigint AS today_tokens,
+        coalesce(sum(s.prompt_tokens), 0)::bigint AS today_input_tokens,
+        coalesce(sum(s.completion_tokens), 0)::bigint AS today_output_tokens,
+        coalesce(sum(s.spend), 0)::float8 AS today_spend_usd,
+        max(s."endTime") AS today_last_end_time
     FROM "LiteLLM_SpendLogs" s, bounds
-    WHERE "endTime" >= bounds.today_start_utc
-      AND "endTime" < bounds.tomorrow_start_utc
+    WHERE s."endTime" >= bounds.today_start_utc
+      AND s."endTime" < CASE WHEN bounds.use_daily THEN bounds.utc_midnight ELSE bounds.tomorrow_start_utc END
+), daily_current AS (
+    SELECT
+        coalesce(sum(d.api_requests), 0)::bigint AS today_requests,
+        coalesce(sum(d.successful_requests), 0)::bigint AS today_success_count,
+        coalesce(sum(d.failed_requests), 0)::bigint AS today_failure_count,
+        coalesce(sum(coalesce(d.prompt_tokens, 0) + coalesce(d.completion_tokens, 0)), 0)::bigint AS today_tokens,
+        coalesce(sum(d.prompt_tokens), 0)::bigint AS today_input_tokens,
+        coalesce(sum(d.completion_tokens), 0)::bigint AS today_output_tokens,
+        coalesce(sum({daily_cached_sql}), 0)::bigint AS today_cached_tokens,
+        coalesce(sum(d.spend), 0)::float8 AS today_spend_usd,
+        max(d.updated_at) AS today_last_end_time
+    FROM "LiteLLM_DailyUserSpend" d, bounds
+    WHERE bounds.use_daily
+      AND d.date = bounds.utc_day
+), today_totals AS (
+    SELECT
+        raw_segment.today_requests + daily_current.today_requests AS today_requests,
+        raw_segment.today_success_count + daily_current.today_success_count AS today_success_count,
+        raw_segment.today_failure_count + daily_current.today_failure_count AS today_failure_count,
+        raw_segment.today_tokens + daily_current.today_tokens AS today_tokens,
+        raw_segment.today_input_tokens + daily_current.today_input_tokens AS today_input_tokens,
+        raw_segment.today_output_tokens + daily_current.today_output_tokens AS today_output_tokens,
+        daily_current.today_cached_tokens AS today_cached_tokens,
+        0::bigint AS today_reasoning_tokens,
+        raw_segment.today_spend_usd + daily_current.today_spend_usd AS today_spend_usd,
+        greatest(raw_segment.today_last_end_time, daily_current.today_last_end_time) AS today_last_end_time
+    FROM raw_segment, daily_current
 )
 SELECT json_build_object(
     'today', '{today_sql}',
@@ -3363,9 +3448,13 @@ SELECT json_build_object(
     'today_last_end_time', today_last_end_time
 ) FROM today_totals;
 """
-    payload = litellm_psql_json(sql, timeout=8)
+    payload = litellm_psql_json(sql, timeout=5)
     if not payload:
         return None
+    token_details = get_litellm_today_token_details(today)
+    if token_details:
+        payload["today_cached_tokens"] = token_details.get("today_cached_tokens", payload.get("today_cached_tokens", 0))
+        payload["today_reasoning_tokens"] = token_details.get("today_reasoning_tokens", payload.get("today_reasoning_tokens", 0))
     return {
         "today": today,
         "today_requests": _int_usage_value(payload.get("today_requests")),
@@ -3434,7 +3523,7 @@ FROM totals, last_log;
     }
 
 
-def query_litellm_spendlogs_aggregate():
+def query_litellm_spendlogs_aggregate(today_totals=None, today_queried=False):
     database_url = litellm_database_url()
     if not database_url:
         return None
@@ -3448,9 +3537,13 @@ def query_litellm_spendlogs_aggregate():
     today = beijing_today()
     try:
         totals = query_litellm_daily_spend_aggregate()
-        today_totals = query_litellm_today_spendlogs_aggregate()
+        if not today_queried:
+            today_totals = query_litellm_today_spendlogs_aggregate()
         if not totals and not today_totals:
             print("[UsageSummary] LiteLLM aggregate query failed")
+            return None
+        if totals and not today_totals:
+            print("[UsageSummary] Today aggregate unavailable; preserving the previous snapshot")
             return None
         aggregate = {
             "today": today,
@@ -3572,7 +3665,7 @@ def _build_usage_summary_fast():
     with _litellm_usage_cache_lock:
         cached_litellm = dict(_litellm_usage_cache["data"]) if _litellm_usage_cache["data"] else None
     if not cached_litellm:
-        cached_litellm = query_litellm_spendlogs_aggregate()
+        cached_litellm = query_litellm_spendlogs_aggregate(today_totals=today, today_queried=True)
     if cached_litellm:
         summary = dict(cached_litellm)
         if today:
@@ -3599,6 +3692,8 @@ def _build_usage_summary_fast():
             "litellm_partial": True,
             "litellm_usage": today,
         }
+    elif litellm_database_url():
+        raise RuntimeError("LiteLLM today aggregate unavailable")
     else:
         cluster_summary = get_cluster_usage_summary()
         summary = build_usage_summary_response(cluster_summary)
@@ -3616,26 +3711,22 @@ def _build_usage_summary_fast():
 
 
 def get_usage_summary_cached():
+    data, err = _usage_summary_snapshot.get(_build_usage_summary_fast)
+    if err:
+        return None, err
+
     now = time.time()
     with _usage_summary_cache_lock:
-        cached = _usage_summary_cache["data"]
-        age = now - _usage_summary_cache["last_update"] if cached else None
-        if cached and age < _usage_summary_cache["ttl"]:
-            return dict(cached, cache_age_seconds=round(age, 3)), None
-        needs_full_refresh = False
         with _litellm_usage_cache_lock:
             full_age = now - _litellm_usage_cache["last_update"] if _litellm_usage_cache["data"] else None
-            needs_full_refresh = full_age is None or full_age >= _usage_summary_cache["full_refresh_interval"]
+        attempt_age = now - _usage_summary_cache["last_full_refresh_attempt"]
+        needs_full_refresh = full_age is None or full_age >= _usage_summary_cache["full_refresh_interval"]
+        needs_full_refresh = needs_full_refresh and attempt_age >= _usage_summary_cache["full_refresh_interval"]
         if needs_full_refresh and not _usage_summary_cache["refreshing"]:
             _usage_summary_cache["refreshing"] = True
+            _usage_summary_cache["last_full_refresh_attempt"] = now
             threading.Thread(target=_refresh_litellm_usage_cache, daemon=True).start()
-
-    summary = _build_usage_summary_fast()
-    now = time.time()
-    with _usage_summary_cache_lock:
-        _usage_summary_cache["data"] = summary
-        _usage_summary_cache["last_update"] = now
-    return dict(summary, cache_age_seconds=0), None
+    return data, None
 
 
 def get_cluster_auth_files():

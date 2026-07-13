@@ -784,6 +784,7 @@
         const RACE_LANE_HEIGHT = 32;
         const RACE_TRACK_BOTTOM_PAD = 42;
         const RACE_POLL_INTERVAL_MS = 1000;
+        const USAGE_SUMMARY_POLL_INTERVAL_MS = 5000;
         const RACE_PLAYBACK_LAG_MS = 2000;
         const RACE_NEWEST_SNAPSHOT_GUARD_MS = 450;
         let currentSpeedMetric = 'tokens';
@@ -901,7 +902,7 @@
         function startPersonalUsageSummaryPolling() {
             if (personalUsagePollTimer) return;
             loadPersonalUsageSummary();
-            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 1000);
+            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, USAGE_SUMMARY_POLL_INTERVAL_MS);
         }
 
         function stopPersonalUsageSummaryPolling() {
@@ -1697,6 +1698,7 @@
             try {
                 const resp = await fetch('/api/usage-summary');
                 const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || '用量统计加载失败');
                 applyUsageSummary(data);
             } catch (e) {
                 console.error('Load usage summary error:', e);
@@ -1708,7 +1710,7 @@
         function startUsageSummaryPolling() {
             if (usageSummaryPollTimer) return;
             loadUsageSummary();
-            usageSummaryPollTimer = setInterval(loadUsageSummary, 1000);
+            usageSummaryPollTimer = setInterval(loadUsageSummary, USAGE_SUMMARY_POLL_INTERVAL_MS);
         }
 
         function stopUsageSummaryPolling() {
