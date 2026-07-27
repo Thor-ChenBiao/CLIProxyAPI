@@ -10,6 +10,23 @@ import app as portal_app
 import usage_sync
 
 
+class ModelGroupConfigTests(unittest.TestCase):
+    def test_common_group_exposes_available_gpt_56_models(self):
+        models = portal_app.LITELLM_MODEL_GROUPS["common"]["models"]
+
+        self.assertIn("gpt-5.6-sol", models)
+        self.assertIn("gpt-5.6-terra", models)
+        self.assertNotIn("gpt-5.6-luna", models)
+
+    def test_fable_alias_is_available_only_to_gpt_group(self):
+        self.assertIn("claude-fable-5", portal_app.LITELLM_MODEL_GROUPS["common"]["models"])
+        self.assertNotIn("claude-fable-5", portal_app.LITELLM_MODEL_GROUPS["claude"]["models"])
+
+    def test_sonnet5_alias_is_available_only_to_gpt_group(self):
+        self.assertIn("claude-sonnet-5", portal_app.LITELLM_MODEL_GROUPS["common"]["models"])
+        self.assertNotIn("claude-sonnet-5", portal_app.LITELLM_MODEL_GROUPS["claude"]["models"])
+
+
 class UsageMergeTests(unittest.TestCase):
     def test_merge_usage_payloads_combines_nodes_and_preserves_details(self):
         detail = {
@@ -125,6 +142,114 @@ class UsageMergeTests(unittest.TestCase):
 
 
 class AuthStatsTests(unittest.TestCase):
+    @staticmethod
+    def usage_bucket(requests):
+        return {
+            "requests": requests,
+            "success": requests,
+            "failure": 0,
+            "tokens": requests * 100,
+            "input_tokens": requests * 80,
+            "output_tokens": requests * 20,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+        }
+
+    def test_auth_stats_reads_distinct_windows_from_persisted_snapshot(self):
+        files = [{
+            "node": "node-a",
+            "account": "account@example.com",
+            "auth_index": "auth-a",
+            "provider": "codex",
+        }]
+        row = {
+            "node": "node-a",
+            "source": "account@example.com",
+            "auth_index": "auth-a",
+            "last_1h": self.usage_bucket(1),
+            "last_5h": self.usage_bucket(2),
+            "last_24h": self.usage_bucket(3),
+            "last_7d": self.usage_bucket(4),
+            "total": self.usage_bucket(4),
+            "today": self.usage_bucket(3),
+            "history": {},
+        }
+        service = portal_app.auth_stats_service.AuthStatsService(
+            portal_state=object(),
+            nodes=[{"name": "node-a", "url": "http://node-a"}],
+            call_management_api_node=lambda *args, **kwargs: ({}, None),
+            get_cluster_usage=lambda: self.fail("persisted stats must not drain the live usage queue"),
+            get_cluster_auth_files=lambda: (files, []),
+            usage_summary_loader=lambda: ({"today_tokens": 300}, None),
+            parse_detail_time=portal_app.parse_detail_time,
+            parse_detail_time_utc=portal_app.parse_detail_time_utc,
+            build_token_breakdown=portal_app.build_token_breakdown,
+            usage_snapshot_loader=lambda: {
+                "auth_files": [row],
+                "errors": [],
+                "coverage_seconds": 8 * 24 * 3600,
+            },
+        )
+
+        node = service.build()["nodes"]["node-a"]
+
+        self.assertEqual(node["last_1h"]["requests"], 1)
+        self.assertEqual(node["last_5h"]["requests"], 2)
+        self.assertEqual(node["last_24h"]["requests"], 3)
+        self.assertEqual(node["last_7d"]["requests"], 4)
+
+    def test_seven_day_window_includes_three_day_old_usage(self):
+        now = datetime.utcnow()
+        details = []
+        for index, age in enumerate((timedelta(minutes=30), timedelta(hours=2), timedelta(hours=10), timedelta(days=3))):
+            details.append({
+                "node": "node-a",
+                "timestamp": (now - age).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "source": "account@example.com",
+                "auth_index": "auth-a",
+                "tokens": {"total_tokens": (index + 1) * 100},
+                "failed": False,
+            })
+        usage_payload = {
+            "usage": {
+                "apis": {
+                    "k1": {"models": {"m": {"details": details}}},
+                },
+            },
+        }
+        files = [{
+            "node": "node-a",
+            "account": "account@example.com",
+            "auth_index": "auth-a",
+            "provider": "codex",
+        }]
+        service = portal_app.auth_stats_service.AuthStatsService(
+            portal_state=object(),
+            nodes=[{"name": "node-a", "url": "http://node-a"}],
+            call_management_api_node=lambda *args, **kwargs: ({}, None),
+            get_cluster_usage=lambda: usage_payload,
+            get_cluster_auth_files=lambda: (files, []),
+            usage_summary_loader=lambda: ({}, None),
+            parse_detail_time=portal_app.parse_detail_time,
+            parse_detail_time_utc=portal_app.parse_detail_time_utc,
+            build_token_breakdown=portal_app.build_token_breakdown,
+        )
+
+        node = service.build()["nodes"]["node-a"]
+
+        self.assertEqual(node["last_1h"]["requests"], 1)
+        self.assertEqual(node["last_5h"]["requests"], 2)
+        self.assertEqual(node["last_24h"]["requests"], 3)
+        self.assertEqual(node["last_7d"]["requests"], 4)
+
+    def test_auth_stats_template_marks_incomplete_windows(self):
+        template_path = os.path.join(os.path.dirname(__file__), "templates", "admin_auth_stats.html")
+        with open(template_path, "r", encoding="utf-8") as template_file:
+            template = template_file.read()
+
+        self.assertIn("数据积累中", template)
+        self.assertIn("coverage_seconds", template)
+
     def test_duplicate_auth_index_and_account_are_matched_by_node(self):
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         usage_payload = {
@@ -239,7 +364,7 @@ class AuthStatsTests(unittest.TestCase):
 
 
 class LiteLLMKeyTotalsTests(unittest.TestCase):
-    def test_user_key_stats_for_date_filters_spendlogs_by_user_tokens(self):
+    def test_user_key_stats_for_date_uses_daily_user_spend_identity(self):
         captured = []
 
         def fake_psql_json(sql, timeout=15):
@@ -250,9 +375,11 @@ class LiteLLMKeyTotalsTests(unittest.TestCase):
              patch.object(portal_app, "beijing_today", return_value="2026-07-09"):
             portal_app.litellm_user_key_stats_for_date("u@example.com", "2026-07-08")
 
-        self.assertIn("user_tokens AS", captured[0])
-        self.assertIn('"LiteLLM_SpendLogs"', captured[0])
-        self.assertIn("s.api_key = ut.token", captured[0])
+        self.assertIn('"LiteLLM_DailyUserSpend"', captured[0])
+        self.assertNotIn('"LiteLLM_SpendLogs"', captured[0])
+        self.assertIn("d.date = '2026-07-08'", captured[0])
+        self.assertIn("v.metadata->>'email'", captured[0])
+        self.assertIn("d.user_id", captured[0])
 
     def test_model_group_usage_uses_daily_history_and_today_spendlogs(self):
         captured = []
@@ -328,6 +455,191 @@ class LiteLLMKeyTotalsTests(unittest.TestCase):
         self.assertIn("d.date >= (n.created_at_utc::date)::text", captured["sql"])
         self.assertIn('s."endTime" >= n.created_at_utc', captured["sql"])
         self.assertIn("2026-05-24 06:25:09.000000", captured["sql"])
+
+    def test_key_totals_resolve_pool_key_through_verification_alias(self):
+        captured = {}
+
+        class FakeCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql):
+                if '"LiteLLM_DailyUserSpend"' in sql:
+                    captured["sql"] = sql
+
+            def fetchone(self):
+                return [{}]
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def cursor(self):
+                return FakeCursor()
+
+        fake_psycopg = types.SimpleNamespace(connect=lambda *args, **kwargs: FakeConnection())
+        entry = {
+            "key": "usr_pool_0206_549dd675ffe9",
+            "label": "buqian",
+            "model_group": "common",
+        }
+
+        with patch.dict(sys.modules, {"psycopg": fake_psycopg}), \
+             patch.object(portal_app, "litellm_psycopg_database_url", return_value="postgresql://example/db"):
+            portal_app._litellm_key_totals_for_entries_uncached("buqian.zheng@zilliz.com", [entry])
+
+        sql = captured["sql"]
+        self.assertIn("matched_alias_tokens AS MATERIALIZED", sql)
+        self.assertIn("v.key_alias = n.raw_key", sql)
+        self.assertIn("':' || n.raw_key", sql)
+        self.assertIn("SELECT raw_key, api_key, created_at_utc FROM matched_alias_tokens", sql)
+
+    def test_user_usage_summary_includes_alias_resolved_key_totals(self):
+        key_totals = {
+            "usr_pool_0206_549dd675ffe9": {
+                "total_requests": 75_116,
+                "success_count": 75_100,
+                "failure_count": 16,
+                "total_tokens": 9_656_467_901,
+                "input_tokens": 9_600_000_000,
+                "output_tokens": 56_467_901,
+                "cached_tokens": 9_100_000_000,
+                "reasoning_tokens": 0,
+                "spend_usd": 12_345.67,
+            },
+        }
+        today = {
+            "today_requests": 884,
+            "today_tokens": 125_550_618,
+        }
+
+        with patch.object(portal_app, "litellm_key_totals_for_entries", return_value=key_totals), \
+             patch.object(portal_app, "litellm_user_today_usage_summary", return_value=today), \
+             patch.object(portal_app, "beijing_today", return_value="2026-07-23"):
+            summary = portal_app.litellm_user_usage_summary(
+                "buqian.zheng@zilliz.com",
+                ["usr_pool_0206_549dd675ffe9"],
+            )
+
+        self.assertEqual(summary["total_requests"], 75_116)
+        self.assertEqual(summary["total_tokens"], 9_656_467_901)
+        self.assertEqual(summary["today_requests"], 884)
+        self.assertEqual(summary["today_tokens"], 125_550_618)
+
+
+class UsageSummaryQueryTests(unittest.TestCase):
+    def setUp(self):
+        self.original_cache = dict(portal_app._litellm_usage_cache)
+        portal_app._litellm_usage_cache["data"] = None
+        portal_app._litellm_usage_cache["last_update"] = 0
+
+    def tearDown(self):
+        portal_app._litellm_usage_cache.clear()
+        portal_app._litellm_usage_cache.update(self.original_cache)
+
+    def test_missing_today_query_does_not_cache_fabricated_zeroes(self):
+        cumulative = {
+            "total_requests": 100,
+            "success_count": 99,
+            "failure_count": 1,
+            "total_tokens": 1000,
+            "input_tokens": 900,
+            "output_tokens": 100,
+            "cached_tokens": 300,
+            "reasoning_tokens": 10,
+            "spend_usd": 2.5,
+            "last_end_time": "2026-07-13T07:00:00Z",
+        }
+
+        with patch.object(portal_app, "litellm_database_url", return_value="postgresql://example/db"), \
+             patch.object(portal_app, "query_litellm_daily_spend_aggregate", return_value=cumulative), \
+             patch.object(portal_app, "query_litellm_today_spendlogs_aggregate", return_value=None):
+            result = portal_app.query_litellm_spendlogs_aggregate()
+
+        self.assertIsNone(result)
+        self.assertIsNone(portal_app._litellm_usage_cache["data"])
+
+    def test_cached_summary_reads_through_shared_snapshot(self):
+        class FakeSnapshot:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, loader):
+                self.calls += 1
+                return {"today": "2026-07-13", "today_tokens": 123}, None
+
+        fake_snapshot = FakeSnapshot()
+        portal_app._litellm_usage_cache["data"] = {"total_tokens": 1000}
+        portal_app._litellm_usage_cache["last_update"] = portal_app.time.time()
+
+        with patch.object(portal_app, "_usage_summary_snapshot", fake_snapshot, create=True), \
+             patch.object(portal_app, "_build_usage_summary_fast", side_effect=AssertionError("fresh snapshot must not query PG")):
+            data, error = portal_app.get_usage_summary_cached()
+
+        self.assertIsNone(error)
+        self.assertEqual(data["today_tokens"], 123)
+        self.assertEqual(fake_snapshot.calls, 1)
+
+    def test_pg_summary_failure_is_not_replaced_with_cluster_zeroes(self):
+        with patch.object(portal_app, "litellm_database_url", return_value="postgresql://example/db"), \
+             patch.object(portal_app, "query_litellm_today_spendlogs_aggregate", return_value=None), \
+             patch.object(portal_app, "query_litellm_spendlogs_aggregate", return_value=None), \
+             patch.object(portal_app, "get_cluster_usage_summary", return_value={"usage": {}}):
+            with self.assertRaisesRegex(RuntimeError, "today aggregate unavailable"):
+                portal_app._build_usage_summary_fast()
+
+    def test_today_summary_uses_daily_rows_plus_beijing_boundary_segment(self):
+        captured = []
+        payload = {
+            "today_requests": 12,
+            "today_success_count": 11,
+            "today_failure_count": 1,
+            "today_tokens": 1200,
+            "today_input_tokens": 1000,
+            "today_output_tokens": 200,
+            "today_cached_tokens": 700,
+            "today_reasoning_tokens": 0,
+            "today_spend_usd": 3.5,
+            "today_last_end_time": "2026-07-13T08:00:00Z",
+        }
+
+        def fake_psql(sql, timeout=15):
+            captured.append((sql, timeout))
+            return payload
+
+        with patch.object(portal_app, "litellm_database_url", return_value="postgresql://example/db"), \
+             patch.object(portal_app, "beijing_today", return_value="2026-07-13"), \
+             patch.object(portal_app, "litellm_psql_json", side_effect=fake_psql), \
+             patch.object(portal_app, "get_litellm_today_token_details", return_value=None, create=True):
+            result = portal_app.query_litellm_today_spendlogs_aggregate()
+
+        sql = captured[0][0]
+        self.assertIn('"LiteLLM_DailyUserSpend"', sql)
+        self.assertIn('"LiteLLM_SpendLogs"', sql)
+        self.assertIn("use_daily", sql)
+        self.assertNotIn("usage_object", sql)
+        self.assertEqual(result["today_tokens"], 1200)
+        self.assertEqual(result["today_cached_tokens"], 700)
+
+
+class UsageSummaryTemplateTests(unittest.TestCase):
+    def test_global_summary_does_not_render_error_payload_as_zeroes(self):
+        template_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
+        with open(template_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        start = source.index("async function loadUsageSummary()")
+        end = source.index("function startUsageSummaryPolling()", start)
+        block = source[start:end]
+
+        self.assertIn("if (!resp.ok || data.error)", block)
+        self.assertIn("throw new Error(data.error", block)
 
 
 class FlaskSmokeTests(unittest.TestCase):
@@ -636,6 +948,67 @@ class FlaskSmokeTests(unittest.TestCase):
         self.assertEqual(by_key["sk-alias"]["estimated_cost_usd"], 1.2346)
         self.assertEqual(by_key["sk-unused"]["total_requests"], 0)
         self.assertEqual(by_key["sk-unused"]["total_tokens"], 0)
+
+    def test_user_keys_for_date_returns_daily_usage_for_hashed_portal_key(self):
+        user_data = {
+            "users": {"u@example.com": {"name": "User", "api_keys": ["sk-fast"]}},
+            "keys": {
+                "sk-fast": {
+                    "email": "u@example.com",
+                    "label": "team-key",
+                    "model_group": "common",
+                    "source": "litellm",
+                },
+            },
+        }
+        daily_rows = [{
+            "api_key": portal_app._litellm_token_hash("sk-fast"),
+            "key_id": "common:team-key",
+            "key_label": "common:team-key",
+            "total_requests": 25_007,
+            "success_count": 25_000,
+            "failure_count": 7,
+            "total_tokens": 3_039_745_174,
+            "input_tokens": 3_029_331_678,
+            "output_tokens": 10_413_496,
+            "cached_tokens": 2_897_521_152,
+            "reasoning_tokens": 0,
+            "spend_usd": 4_840.436172,
+            "last_used_at": "2026-07-22T15:59:59Z",
+        }]
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_user_key_stats_for_date", return_value=daily_rows), \
+             patch.object(portal_app, "litellm_speed_groups_for_entries", return_value={"sk-fast": {"speed_group": "fast", "editable": True}}), \
+             patch.object(portal_app, "litellm_spend_pricing_metadata", return_value={}):
+            response = client.get("/api/user-keys?email=u@example.com&date=2026-07-22")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["source"], "litellm_daily_user_spend")
+        self.assertEqual(len(payload["keys"]), 1)
+        key = payload["keys"][0]
+        self.assertEqual(key["key"], "sk-fast")
+        self.assertEqual(key["total_requests"], 25_007)
+        self.assertEqual(key["total_tokens"], 3_039_745_174)
+        self.assertEqual(key["cached_tokens"], 2_897_521_152)
+        self.assertEqual(key["speed_group"], "fast")
+
+    def test_user_keys_for_date_returns_error_when_daily_usage_query_fails(self):
+        user_data = {
+            "users": {"u@example.com": {"name": "User", "api_keys": ["sk-test"]}},
+            "keys": {"sk-test": {"email": "u@example.com", "label": "test", "model_group": "common"}},
+        }
+        with portal_app.app.test_client() as client, \
+             patch.object(portal_app, "current_portal_session", return_value={"email": "u@example.com", "user": {}}), \
+             patch.object(portal_app, "load_user_keys", return_value=user_data), \
+             patch.object(portal_app, "litellm_user_key_stats_for_date", return_value=None), \
+             patch.object(portal_app, "litellm_speed_groups_for_entries", return_value={}):
+            response = client.get("/api/user-keys?email=u@example.com&date=2026-07-22")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("暂时不可用", response.get_json()["error"])
 
     def test_user_key_timeseries_accepts_key_listed_under_requested_admin_user(self):
         user_data = {

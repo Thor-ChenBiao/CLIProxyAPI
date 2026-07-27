@@ -3,8 +3,10 @@
 
 import json
 import os
+import ssl
 import sys
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -40,6 +42,51 @@ REQUIRE_PROVIDERS = [
     if item.strip()
 ]
 REQUEST_TIMEOUT_SECONDS = _env_int("HEALTH_AGENT_TIMEOUT_SECONDS", 5)
+TLS_CERT_FILE = os.environ.get(
+    "HEALTH_AGENT_TLS_CERT_FILE",
+    "/etc/nginx/ssl/token.zasdas.com/fullchain.pem",
+).strip()
+TLS_SERVER_NAME = os.environ.get("HEALTH_AGENT_TLS_SERVER_NAME", "token.zasdas.com").strip()
+TLS_MIN_VALID_DAYS = _env_int("HEALTH_AGENT_TLS_MIN_VALID_DAYS", 7)
+
+
+def _decode_certificate(path):
+    return ssl._ssl._test_decode_cert(path)
+
+
+def _evaluate_tls_certificate(now=None):
+    checks = {
+        "tls_certificate_file": TLS_CERT_FILE,
+        "tls_certificate_server_name": TLS_SERVER_NAME,
+        "tls_certificate_min_valid_days": TLS_MIN_VALID_DAYS,
+    }
+    if not TLS_CERT_FILE:
+        return True, "ok", checks
+
+    try:
+        certificate = _decode_certificate(TLS_CERT_FILE)
+        expires_at = ssl.cert_time_to_seconds(certificate["notAfter"])
+        if TLS_SERVER_NAME:
+            ssl.match_hostname(certificate, TLS_SERVER_NAME)
+    except (KeyError, OSError, ssl.CertificateError, ValueError) as exc:
+        checks["tls_certificate_error"] = str(exc)
+        return False, "TLS certificate unavailable", checks
+
+    current_time = time.time() if now is None else now
+    seconds_remaining = int(expires_at - current_time)
+    checks.update({
+        "tls_certificate_not_after": datetime.fromtimestamp(
+            expires_at, tz=timezone.utc
+        ).isoformat().replace("+00:00", "Z"),
+        "tls_certificate_seconds_remaining": seconds_remaining,
+        "tls_certificate_days_remaining": round(seconds_remaining / 86400, 2),
+    })
+
+    if seconds_remaining <= 0:
+        return False, "TLS certificate expired", checks
+    if seconds_remaining < TLS_MIN_VALID_DAYS * 86400:
+        return False, "TLS certificate expires too soon", checks
+    return True, "ok", checks
 
 
 def _get_json(path):
@@ -86,6 +133,11 @@ def evaluate_health():
         "min_usable_auth_files": MIN_USABLE_AUTH_FILES,
         "required_providers": REQUIRE_PROVIDERS,
     }
+
+    tls_healthy, tls_reason, tls_checks = _evaluate_tls_certificate()
+    checks.update(tls_checks)
+    if not tls_healthy:
+        return False, tls_reason, checks
 
     try:
         checks["cliproxy_health_status"] = _get_status("/healthz")

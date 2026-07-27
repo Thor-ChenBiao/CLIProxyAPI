@@ -1,0 +1,19 @@
+[Unit]
+Description=CLIProxyAPI auth usage aggregate agent
+After=network.target cliproxyapi.service
+Requires=cliproxyapi.service
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/CLIProxyAPI/key-portal
+EnvironmentFile=/home/ec2-user/litellm-proxy/secrets.env
+Environment=AUTH_USAGE_NODE_NAME=node-b
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ec2-user/litellm-proxy/venv/bin/python /home/ec2-user/CLIProxyAPI/key-portal/auth_usage_agent.py --node-name ${AUTH_USAGE_NODE_NAME}
+Restart=always
+RestartSec=2
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

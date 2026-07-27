@@ -25,16 +25,23 @@ KEY_PORTAL_DATABASE_URL = os.environ.get(
 KEY_PORTAL_REDIS_URL = os.environ.get(
     "KEY_PORTAL_REDIS_URL", os.environ.get("REDIS_URL", "")
 ).strip()
+KEY_PORTAL_FAST_MODE_REDIS_KEY = os.environ.get(
+    "KEY_PORTAL_FAST_MODE_REDIS_KEY",
+    os.environ.get("FAST_MODE_REDIS_KEY", "cliproxy:fast-mode:enabled"),
+).strip() or "cliproxy:fast-mode:enabled"
+KEY_PORTAL_FAST_MODE_DEFAULT_ENABLED = os.environ.get(
+    "KEY_PORTAL_FAST_MODE_DEFAULT_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
 try:
     KEY_PORTAL_SESSION_DAYS = int(os.environ.get("KEY_PORTAL_SESSION_DAYS", "30") or "30")
 except ValueError:
     KEY_PORTAL_SESSION_DAYS = 30
-# CLIProxyAPI v7.1.29 exposes live usage as a destructive management queue
-# instead of the old in-memory /usage-statistics snapshot. Key Portal is the
-# only intended local consumer when this is enabled.
+# Subscribe to CLIProxyAPI's live usage channel and persist minute aggregates.
+# The interval controls batch flush frequency, not HTTP polling.
 KEY_PORTAL_CLIPROXY_USAGE_QUEUE_ENABLED = os.environ.get(
     "KEY_PORTAL_CLIPROXY_USAGE_QUEUE_ENABLED", "true"
 ).strip().lower() in {"1", "true", "yes", "on"}
+KEY_PORTAL_LOCAL_NODE_NAME = os.environ.get("KEY_PORTAL_LOCAL_NODE_NAME", "node-a").strip() or "node-a"
 try:
     KEY_PORTAL_CLIPROXY_USAGE_QUEUE_COUNT = int(os.environ.get("KEY_PORTAL_CLIPROXY_USAGE_QUEUE_COUNT", "1000") or "1000")
 except ValueError:
@@ -108,6 +115,7 @@ STATUS_PUBLIC_URL = os.environ.get("STATUS_PUBLIC_URL", "").strip()
 STATUS_NODE_HEALTH_ALERT_DELAY_SECONDS = _env_int("STATUS_NODE_HEALTH_ALERT_DELAY_SECONDS", 300)
 STATUS_USAGE_RECORD_ENABLED = os.environ.get("STATUS_USAGE_RECORD_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 STATUS_USAGE_RECORD_LOOKBACK_DAYS = _env_int("STATUS_USAGE_RECORD_LOOKBACK_DAYS", 365)
+STATUS_USAGE_RECORD_QUERY_TIMEOUT_SECONDS = _env_int("STATUS_USAGE_RECORD_QUERY_TIMEOUT_SECONDS", 60)
 MODEL_GROUP_SPEND_ALERT_ENABLED = os.environ.get("MODEL_GROUP_SPEND_ALERT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 MODEL_GROUP_SPEND_ALERT_INTERVAL_MINUTES = _env_int("MODEL_GROUP_SPEND_ALERT_INTERVAL_MINUTES", 30)
 MODEL_GROUP_SPEND_ALERT_THRESHOLD_USD = _env_float("MODEL_GROUP_SPEND_ALERT_THRESHOLD_USD", 100.0)

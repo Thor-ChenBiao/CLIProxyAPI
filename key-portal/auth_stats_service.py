@@ -21,6 +21,7 @@ class AuthStatsService:
         parse_detail_time,
         parse_detail_time_utc,
         build_token_breakdown,
+        usage_snapshot_loader=None,
     ):
         self.portal_state = portal_state
         self.nodes = nodes
@@ -31,6 +32,7 @@ class AuthStatsService:
         self.parse_detail_time = parse_detail_time
         self.parse_detail_time_utc = parse_detail_time_utc
         self.build_token_breakdown = build_token_breakdown
+        self.usage_snapshot_loader = usage_snapshot_loader
         self.stats_cache = {"data": None, "last_update": 0, "ttl": 15, "refreshing": False}
         self.stats_cache_lock = threading.Lock()
         self.quota_fetch_cache = {"data": {}, "ttl": 1800}
@@ -359,12 +361,31 @@ class AuthStatsService:
     def apply_quota_window_usage(self, stats):
         for stat in stats.values():
             windows = (stat.get("quota") or {}).get("windows") or {}
-            bucket = windows.get("last_7d") or windows.get("last_5h") or {}
+            source_window = "last_7d" if windows.get("last_7d") else "last_5h"
+            bucket = windows.get(source_window) or {}
             reset_at = self.parse_detail_time_utc(bucket.get("reset_at"))
             window_seconds = int(bucket.get("limit_window_seconds") or 0)
             details = stat.get("_quota_usage_details") or []
             if not window_seconds:
                 stat["quota_window"] = {"tokens": 0, "requests": 0}
+                continue
+            persisted = (stat.get("_quota_usage_windows") or {}).get(source_window)
+            if isinstance(persisted, dict):
+                observed_start = self.parse_detail_time_utc(persisted.get("observed_start_at"))
+                observed_end = self.parse_detail_time_utc(persisted.get("observed_end_at"))
+                end = reset_at or observed_end or datetime.utcnow()
+                start = end - timedelta(seconds=window_seconds)
+                observed_seconds = (observed_end - observed_start).total_seconds() if observed_start and observed_end else 0
+                stat["quota_window"] = {
+                    "tokens": int(persisted.get("tokens", 0) or 0),
+                    "requests": int(persisted.get("requests", 0) or 0),
+                    "start_at": start.isoformat() + "Z",
+                    "reset_at": end.isoformat() + "Z",
+                    "observed_start_at": observed_start.isoformat() + "Z" if observed_start else "",
+                    "observed_end_at": observed_end.isoformat() + "Z" if observed_end else "",
+                    "observed_seconds": observed_seconds,
+                    "source_window": source_window,
+                }
                 continue
             if reset_at:
                 end = reset_at
@@ -383,7 +404,7 @@ class AuthStatsService:
                 "observed_start_at": observed_start.isoformat() + "Z" if observed_start else "",
                 "observed_end_at": observed_end.isoformat() + "Z" if observed_end else "",
                 "observed_seconds": observed_seconds,
-                "source_window": "last_7d" if windows.get("last_7d") else "last_5h",
+                "source_window": source_window,
             }
 
     def build_today_quota_usage(self, stats, today, today_used_tokens=None):
@@ -542,12 +563,24 @@ class AuthStatsService:
         return self._with_cache_metadata(data, self.stats_cache["last_update"], False)
 
     def build(self):
-        try:
-            usage_payload = self.get_cluster_usage()
-        except Exception:
-            usage_payload = None
-        if not usage_payload:
-            usage_payload = {"usage": {}, "node_errors": [{"node": "cluster", "error": "usage unavailable"}]}
+        usage_snapshot = None
+        if self.usage_snapshot_loader:
+            try:
+                usage_snapshot = self.usage_snapshot_loader()
+            except Exception as exc:
+                usage_snapshot = {
+                    "auth_files": [],
+                    "errors": [{"node": "cluster", "error": f"auth usage snapshot unavailable: {exc}"}],
+                    "coverage_seconds": 0,
+                }
+            usage_payload = {"usage": {}, "node_errors": []}
+        else:
+            try:
+                usage_payload = self.get_cluster_usage()
+            except Exception:
+                usage_payload = None
+            if not usage_payload:
+                usage_payload = {"usage": {}, "node_errors": [{"node": "cluster", "error": "usage unavailable"}]}
         files, auth_errors = self.get_cluster_auth_files()
         quota_errors = self.attach_proxy_quota_snapshots(files)
         now = datetime.utcnow()
@@ -557,7 +590,7 @@ class AuthStatsService:
             "last_1h": now - timedelta(hours=1),
             "last_5h": now - timedelta(hours=5),
             "last_24h": now - timedelta(hours=24),
-            "last_7d": now - timedelta(days=2),
+            "last_7d": now - timedelta(days=7),
             "total": None,
         }
         window_names = tuple(windows.keys())
@@ -710,6 +743,7 @@ class AuthStatsService:
                 },
                 "history": empty_history(),
                 "_quota_usage_details": [],
+                "_quota_usage_windows": {},
                 "quota": self.quota_from_snapshot(f),
             }
             for window_name in window_names:
@@ -743,59 +777,96 @@ class AuthStatsService:
                     return stat
             return None
 
-        for api_stats in (usage_payload.get("usage", {}).get("apis", {}) or {}).values():
-            for model_stats in (api_stats.get("models", {}) or {}).values():
-                for detail in model_stats.get("details", []) or []:
-                    if not isinstance(detail, dict):
+        if usage_snapshot is not None:
+            metric_names = (
+                "requests", "success", "failure", "tokens", "input_tokens",
+                "output_tokens", "cached_tokens", "reasoning_tokens",
+            )
+            for persisted in usage_snapshot.get("auth_files", []) or []:
+                if not isinstance(persisted, dict):
+                    continue
+                stat = find_stat(persisted)
+                if not stat:
+                    continue
+                for window_name in window_names:
+                    source_bucket = persisted.get(window_name)
+                    if not isinstance(source_bucket, dict):
                         continue
-                    stat = find_stat(detail)
-                    if not stat:
-                        continue
-                    when = self.parse_detail_time(detail.get("timestamp"))
-                    when_utc = self.parse_detail_time_utc(detail.get("timestamp"))
-                    tokens_info = detail.get("tokens") or {}
-                    tokens = int(tokens_info.get("total_tokens", 0) or 0)
-                    input_tokens = int(tokens_info.get("input_tokens", 0) or 0)
-                    output_tokens = int(tokens_info.get("output_tokens", 0) or 0)
-                    cached_tokens = int(tokens_info.get("cached_tokens", 0) or 0)
-                    reasoning_tokens = int(tokens_info.get("reasoning_tokens", 0) or 0)
-                    failed = bool(detail.get("failed", False))
-                    add_history(stat["history"], when, failed)
-                    if when_utc:
-                        stat["_quota_usage_details"].append((when_utc, tokens))
-                    detail_timestamp = str(detail.get("timestamp") or "")
-                    detail_date = detail_timestamp[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", detail_timestamp) else None
-                    if detail_date == today:
-                        stat["today"]["requests"] += 1
-                        stat["today"]["tokens"] += tokens
-                        stat["today"]["input_tokens"] += input_tokens
-                        stat["today"]["output_tokens"] += output_tokens
-                        stat["today"]["cached_tokens"] += cached_tokens
-                        stat["today"]["reasoning_tokens"] += reasoning_tokens
-                        if failed:
-                            stat["today"]["failure"] += 1
-                        else:
-                            stat["today"]["success"] += 1
-                    for window_name, start_time in windows.items():
-                        if start_time is not None and (when is None or when < start_time):
+                    target_bucket = stat[window_name]
+                    for metric in metric_names:
+                        target_bucket[metric] = int(source_bucket.get(metric, 0) or 0)
+                    for metadata_name in ("complete", "coverage_seconds", "observed_start_at", "observed_end_at"):
+                        if metadata_name in source_bucket:
+                            target_bucket[metadata_name] = source_bucket[metadata_name]
+                today_bucket = persisted.get("today")
+                if isinstance(today_bucket, dict):
+                    for metric in metric_names:
+                        stat["today"][metric] = int(today_bucket.get(metric, 0) or 0)
+                if isinstance(persisted.get("history"), dict):
+                    stat["history"] = persisted["history"]
+                for metadata_name in ("last_request_at", "last_error_at", "last_error_message", "last_error_status"):
+                    value = persisted.get(metadata_name)
+                    if value:
+                        stat[metadata_name] = value.isoformat() if isinstance(value, datetime) else value
+                stat["_quota_usage_windows"] = {
+                    name: persisted.get(name)
+                    for name in ("last_5h", "last_7d")
+                    if isinstance(persisted.get(name), dict)
+                }
+        else:
+            for api_stats in (usage_payload.get("usage", {}).get("apis", {}) or {}).values():
+                for model_stats in (api_stats.get("models", {}) or {}).values():
+                    for detail in model_stats.get("details", []) or []:
+                        if not isinstance(detail, dict):
                             continue
-                        bucket = stat[window_name]
-                        bucket["requests"] += 1
-                        bucket["tokens"] += tokens
-                        bucket["input_tokens"] += input_tokens
-                        bucket["output_tokens"] += output_tokens
-                        bucket["cached_tokens"] += cached_tokens
-                        bucket["reasoning_tokens"] += reasoning_tokens
-                        if failed:
-                            bucket["failure"] += 1
-                        else:
-                            bucket["success"] += 1
-                    if when and (not stat["last_request_at"] or when > self.parse_detail_time(stat["last_request_at"])):
-                        stat["last_request_at"] = detail.get("timestamp", "")
-                    if failed and when and (not stat["last_error_at"] or when > self.parse_detail_time(stat["last_error_at"])):
-                        stat["last_error_at"] = detail.get("timestamp", "")
-                        stat["last_error_message"] = detail_error_message(detail)
-                        stat["last_error_status"] = detail_error_status(detail)
+                        stat = find_stat(detail)
+                        if not stat:
+                            continue
+                        when = self.parse_detail_time(detail.get("timestamp"))
+                        when_utc = self.parse_detail_time_utc(detail.get("timestamp"))
+                        tokens_info = detail.get("tokens") or {}
+                        tokens = int(tokens_info.get("total_tokens", 0) or 0)
+                        input_tokens = int(tokens_info.get("input_tokens", 0) or 0)
+                        output_tokens = int(tokens_info.get("output_tokens", 0) or 0)
+                        cached_tokens = int(tokens_info.get("cached_tokens", 0) or 0)
+                        reasoning_tokens = int(tokens_info.get("reasoning_tokens", 0) or 0)
+                        failed = bool(detail.get("failed", False))
+                        add_history(stat["history"], when, failed)
+                        if when_utc:
+                            stat["_quota_usage_details"].append((when_utc, tokens))
+                        detail_timestamp = str(detail.get("timestamp") or "")
+                        detail_date = detail_timestamp[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", detail_timestamp) else None
+                        if detail_date == today:
+                            stat["today"]["requests"] += 1
+                            stat["today"]["tokens"] += tokens
+                            stat["today"]["input_tokens"] += input_tokens
+                            stat["today"]["output_tokens"] += output_tokens
+                            stat["today"]["cached_tokens"] += cached_tokens
+                            stat["today"]["reasoning_tokens"] += reasoning_tokens
+                            if failed:
+                                stat["today"]["failure"] += 1
+                            else:
+                                stat["today"]["success"] += 1
+                        for window_name, start_time in windows.items():
+                            if start_time is not None and (when is None or when < start_time):
+                                continue
+                            bucket = stat[window_name]
+                            bucket["requests"] += 1
+                            bucket["tokens"] += tokens
+                            bucket["input_tokens"] += input_tokens
+                            bucket["output_tokens"] += output_tokens
+                            bucket["cached_tokens"] += cached_tokens
+                            bucket["reasoning_tokens"] += reasoning_tokens
+                            if failed:
+                                bucket["failure"] += 1
+                            else:
+                                bucket["success"] += 1
+                        if when and (not stat["last_request_at"] or when > self.parse_detail_time(stat["last_request_at"])):
+                            stat["last_request_at"] = detail.get("timestamp", "")
+                        if failed and when and (not stat["last_error_at"] or when > self.parse_detail_time(stat["last_error_at"])):
+                            stat["last_error_at"] = detail.get("timestamp", "")
+                            stat["last_error_message"] = detail_error_message(detail)
+                            stat["last_error_status"] = detail_error_status(detail)
 
         node_summary = {
             node["name"]: {
@@ -850,21 +921,33 @@ class AuthStatsService:
                     summary_buckets[index]["success"] += bucket.get("success", 0)
                     summary_buckets[index]["failure"] += bucket.get("failure", 0)
 
-        for summary in node_summary.values():
+        for node_name, summary in node_summary.items():
             for window_name in window_names:
                 enrich_window(summary[window_name])
+                if usage_snapshot is not None and window_name != "total":
+                    coverage_by_node = usage_snapshot.get("coverage_by_node") or {}
+                    coverage_seconds = int(coverage_by_node.get(node_name, usage_snapshot.get("coverage_seconds", 0)) or 0)
+                    required_seconds = int((now - windows[window_name]).total_seconds())
+                    summary[window_name]["complete"] = coverage_seconds >= required_seconds
+                    summary[window_name]["coverage_seconds"] = min(coverage_seconds, required_seconds)
 
         self.apply_quota_window_usage(stats)
-        today_used_tokens = int(((usage_payload.get("usage") or {}).get("tokens_by_day") or {}).get(today, 0) or 0)
+        if usage_snapshot is not None:
+            today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in stats.values())
+        else:
+            today_used_tokens = int(((usage_payload.get("usage") or {}).get("tokens_by_day") or {}).get(today, 0) or 0)
         today_quota_usage = self.build_today_quota_usage(stats, today, today_used_tokens)
         for stat in stats.values():
             stat.pop("_quota_usage_details", None)
+            stat.pop("_quota_usage_windows", None)
 
         return {
             "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),
             "nodes": node_summary,
             "configured_nodes": self.configured_nodes(),
             "today_quota_usage": today_quota_usage,
-            "errors": usage_payload.get("node_errors", []) + auth_errors + quota_errors,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "errors": (usage_snapshot.get("errors", []) if usage_snapshot is not None else usage_payload.get("node_errors", [])) + auth_errors + quota_errors,
+            "coverage_seconds": int((usage_snapshot or {}).get("coverage_seconds", 0) or 0),
+            "continuous_since": (usage_snapshot or {}).get("continuous_since", ""),
+            "generated_at": (usage_snapshot or {}).get("generated_at") or datetime.utcnow().isoformat() + "Z",
         }

@@ -65,6 +65,7 @@ def print_schedule(config):
     print(f"  - Expiry check: every {config.KEY_CHECK_INTERVAL_MINUTES} min")
     print("  - Broadcast:    every 1 sec while clients are connected")
     print("  - Approval poll: every 30 sec")
+    print(f"  - Auth usage:    {'live subscription; flush every ' + str(config.KEY_PORTAL_CLIPROXY_USAGE_QUEUE_POLL_SECONDS) + ' sec' if config.KEY_PORTAL_CLIPROXY_USAGE_QUEUE_ENABLED else 'disabled'}")
     print(f"  - NLB monitor:  {'every ' + str(config.NLB_MONITOR_INTERVAL_SECONDS) + ' sec' if config.NLB_MONITOR_ENABLED else 'disabled'}")
     print(f"  - Usage record: {'daily at 20:00 Asia/Shanghai' if config.STATUS_USAGE_RECORD_ENABLED else 'disabled'}")
     print(f"  - Model group spend: {'every ' + str(config.MODEL_GROUP_SPEND_ALERT_INTERVAL_MINUTES) + ' min' if config.MODEL_GROUP_SPEND_ALERT_ENABLED else 'disabled'}")

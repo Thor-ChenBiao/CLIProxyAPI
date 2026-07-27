@@ -1,6 +1,6 @@
 # CLIProxyAPI 集群架构
 
-最后更新: 2026-06-01
+最后更新: 2026-07-26
 
 ## 当前结论
 
@@ -17,6 +17,18 @@
 ```
 
 Key Portal 仍是单 active 服务，只在 node-a 运行；其它节点的门户页面入口应回源到 node-a 的 `172.31.17.144:18080`。
+
+TLS 证书由 node-a 统一签发和分发，不再由各节点独立续期:
+
+```text
+Let's Encrypt HTTP-01
+  → NLB TCP:80
+  → cliproxy-acme-http-a target group
+  → node-a Nginx /var/lib/acme-challenge
+  → acme.sh staging
+  → 先验证并部署 node-b
+  → 再验证并部署 node-a
+```
 
 ## 节点信息
 
@@ -83,11 +95,12 @@ Nginx 仍负责来源 IP / 网络层访问控制、管理入口 allowlist，以�
 
 | 服务 | 端口 | 部署节点 | 当前 systemd / 入口 | 说明 |
 |------|------|---------|---------------------|------|
-| Nginx | `0.0.0.0:443`, `[::]:443` | active: node-a/b；node-c/node-d retired | `nginx.service` | TLS 终止、路径路由、来源访问控制 |
+| Nginx | `0.0.0.0:443`, `[::]:443`；node-a 另监听 `:80` | active: node-a/b；node-c/node-d retired | `nginx.service` | TLS 终止、路径路由、来源访问控制；node-a 的 80 端口只提供 HTTP-01 和 HTTPS redirect |
 | LiteLLM | `127.0.0.1:4000` | active: node-a/b；node-c/node-d retired | `litellm-proxy.service` → `/home/ec2-user/litellm-proxy/venv/bin/litellm --config /home/ec2-user/litellm-proxy/config.yaml --host 127.0.0.1 --port 4000 --telemetry False` | 用户 API key 校验、模型权限、预算、限流、审计和 SpendLogs；node-a/node-b systemd 内存限制均为 `MemoryHigh=3584M`, `MemoryMax=4G` |
 | cliproxyapi | `127.0.0.1:8317` | active: node-a/b；node-c/node-d retired | `cliproxyapi.service` → `/home/ec2-user/CLIProxyAPI/cliproxyapi` | Go 代理核心，上游适配、OAuth/provider/auth-file 管理，不再作为用户 key allowlist 的唯一入口 |
 | Key Portal | `0.0.0.0:18080` | 仅 node-a active | `key-portal.service` → `/usr/bin/python3 /home/ec2-user/CLIProxyAPI/key-portal/app.py` | 用户密钥管理、审批、用量面板、运维页面 |
 | Key Portal health-agent | `127.0.0.1:18081` | active: node-a/b；node-c/node-d retired | `key-portal-health.service` → `/usr/bin/python3 /home/ec2-user/CLIProxyAPI/key-portal/health_agent.py` | NLB-facing 业务健康检查 |
+| TLS certificate renewal | 无常驻端口 | 仅 node-a | `cliproxy-cert-renew.timer` → `cliproxy-cert-renew.service` | 每日检查 acme.sh Webroot 续期，并按 node-b → node-a 顺序验证、备份、部署和 reload |
 
 ## 认证与授权边界
 
@@ -107,6 +120,7 @@ health-agent 检查内容:
 3. 本机 cliproxyapi management `/v0/management/auth-files`。
 4. 可用 auth file 数量不少于 `HEALTH_AGENT_MIN_USABLE_AUTH_FILES`。
 5. 如果设置 `HEALTH_AGENT_REQUIRE_PROVIDERS`，指定 provider 至少有一个可用 auth file。
+6. 本机 TLS 证书匹配 `token.zasdas.com`，且剩余有效期不少于 `HEALTH_AGENT_TLS_MIN_VALID_DAYS`（默认 7 天）。
 
 返回 200 表示节点可承载新流量；返回 503 表示节点应被 NLB 摘除或人工检查。
 
@@ -180,6 +194,7 @@ Claude key 的 Bedrock 回归必须同时覆盖 OpenAI Chat Completions 和 Anth
 | 端口 | 来源 | 用途 |
 |------|------|------|
 | 22 | 管理员 IP + 本安全组 | SSH |
+| 80 | 172.31.0.0/16 | NLB HTTP-01；ACME target group 禁用 client IP preservation 后由 NLB 内网地址访问 |
 | 443 | 0.0.0.0/0 | HTTPS (NLB) |
 | 8317 | 172.31.0.0/16 + 本安全组 | 历史/内部 proxy 访问；当前本机链路主要使用 loopback |
 | 18080 | 172.31.0.0/16 | Key Portal 回源 |
@@ -192,16 +207,20 @@ Claude key 的 Bedrock 回归必须同时覆盖 OpenAI Chat Completions 和 Anth
 | 443 | 0.0.0.0/0 | HTTPS (NLB) |
 | 8317 | 172.31.0.0/16 + node-a 安全组 | 历史/内部 proxy 访问；如果 cliproxyapi 只监听 loopback，则不是 NLB 必需路径 |
 
-NLB 只需要能访问各 target 的 TCP 443；`4000`、`8317`、`18081` 应保持本机/内网可见，不应作为公网入口。
+正式业务 target 只需允许 NLB 访问 TCP 443。node-a 额外允许 VPC 内网访问 TCP 80，用于独立 ACME target group；`4000`、`8317`、`18081` 应保持本机/内网可见，不应作为公网入口。
 
 ## NLB 信息
 
 - 名称: `cliproxy-nlb`
 - ARN: `arn:aws:elasticloadbalancing:us-east-2:967519196399:loadbalancer/net/cliproxy-nlb/873bf6ea679ef9dc`
-- Target Group ARN: `arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-tls-targets/1cd4d8f8d022ef51`
-- 协议: TCP 443
-- 健康检查: HTTPS `/healthz`, matcher `200-399`
-- 当前 active targets: node-a (`i-0afbeaa90d8dc91e1`), node-b (`i-08055c52390086849`)
+- 业务 listener: TCP 443
+- 业务 Target Group ARN: `arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-tls-targets/1cd4d8f8d022ef51`
+- 业务健康检查: HTTPS `/healthz`, matcher `200-399`
+- 业务 active targets: node-a (`i-0afbeaa90d8dc91e1`), node-b (`i-08055c52390086849`)
+- ACME listener: TCP 80
+- ACME Target Group ARN: `arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-acme-http-a/40c570e8ff0daa77`
+- ACME 健康检查: HTTP `/acme-healthz`, matcher `200`
+- ACME active target: 仅 node-a；`preserve_client_ip.enabled=false`, `load_balancing.cross_zone.enabled=true`
 - node-c (`i-07d065661a87679df`) 已于 2026-06-01 deregister 并 terminate，EIP `18.189.167.58` / allocation `eipalloc-03c24af52b89b5cbc` 已释放，根卷 `vol-05029dcf130ff9126` 随实例删除
 - node-d (`i-0fd32ef2df7d69857`) 已于 2026-05-25 deregister 并 terminate，EIP `3.19.6.233` 已释放，根卷 `vol-0d32e1c525fe3b0e9` 已删除
 

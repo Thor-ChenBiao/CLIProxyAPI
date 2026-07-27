@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily CLIProxyAPI certificate renewal and convergence check
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

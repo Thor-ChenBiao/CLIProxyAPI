@@ -1,6 +1,6 @@
 # CLIProxyAPI upstream update runbook
 
-_Last updated: 2026-06-01_
+_Last updated: 2026-07-27_
 
 ## Current baseline
 
@@ -8,16 +8,17 @@ _Last updated: 2026-06-01_
 |---|---|
 | Upstream remote | `origin` = `https://github.com/router-for-me/CLIProxyAPI.git` |
 | Private remote | `thor` = `https://github.com/Thor-ChenBiao/CLIProxyAPI.git` |
-| Current upstream core | `origin/main` at `7d9980e8`, tag `v7.1.29` |
-| Current local upgrade branch | `upgrade/v7.1.29-clean-overlay-20260529T141850Z` |
+| Current production core | tag `v7.2.56`, binary `v7.2.56-overlay.1` |
+| Target upstream core | tag `v7.2.102`, commit `8423cce2` |
+| Current local upgrade branch | `codex/upgrade-v7.2.102-overlay-20260727T013455Z` |
 | Core policy after this update | Keep CLIProxyAPI core identical to `origin/main`; keep local changes in `key-portal/` and `ops/` only |
 | Current active runtime nodes | node-a, node-b |
-| Historical 2026-05-29 rollout nodes | node-a, node-b, node-c |
+| Rollout order | node-b canary first, then node-a |
 
 The important invariant is:
 
 ```bash
-git diff --name-only origin/main -- . ':(exclude)key-portal/**' ':(exclude)ops/**'
+git diff --name-only v7.2.102 -- . ':(exclude)key-portal/**' ':(exclude)ops/**'
 ```
 
 Expected output: nothing. If it prints files, local core has drifted from upstream and should be reviewed before upgrading.
@@ -200,7 +201,7 @@ The 2026-05-29 Bedrock run passed the main Bedrock path but exposed two policy r
 
 Treat these as failures in future upgrade validation until the model allowlist/alias policy is tightened or the architecture document is intentionally updated.
 
-## Next upstream update procedure
+## v7.2.102 update procedure
 
 1. Fetch upstream:
 
@@ -209,71 +210,89 @@ Treat these as failures in future upgrade validation until the model allowlist/a
    git describe --tags --always origin/main
    ```
 
-2. Create a fresh update branch from upstream:
+2. Create a fresh worktree from the exact release tag. Do not switch the dirty
+   production worktree and do not build from a moving `origin/main` ref:
 
    ```bash
    TS=$(date -u +%Y%m%dT%H%M%SZ)
-   git switch -C "upgrade/next-clean-overlay-$TS" origin/main
+   git worktree add \
+     /home/ec2-user/CLIProxyAPI-v7.2.102 \
+     -b "codex/upgrade-v7.2.102-overlay-$TS" \
+     v7.2.102
    ```
 
-3. Restore only local overlay from the current private branch or backup branch:
+3. Restore the production overlay baseline and then apply only reviewed current
+   overlay source changes. Exclude logs, backups, caches, virtual environments,
+   auth files, and runtime data:
 
    ```bash
-   git restore --source=<previous-overlay-branch> --staged --worktree -- key-portal ops
+   git cherry-pick bb2071a2
    ```
 
-4. Confirm no core drift:
+4. Confirm no core drift. `v7.2.102` already contains the required Claude
+   Sonnet 5 registry entry, so no local model registry patch is required:
 
    ```bash
-   git diff --name-only origin/main -- . ':(exclude)key-portal/**' ':(exclude)ops/**'
+   git diff --name-only v7.2.102 -- . ':(exclude)key-portal/**' ':(exclude)ops/**'
    ```
 
 5. If upstream changed management usage APIs again, update Key Portal in `key-portal/app.py` and tests in `key-portal/test_usage_stats.py`.
 
 6. Run validations from the previous section.
 
-7. Build the deploy binary:
+7. Build the deploy binary with explicit release metadata:
 
    ```bash
-   go build -o /tmp/cliproxyapi-next-check ./cmd/server
-   sha256sum /tmp/cliproxyapi-next-check
+   VERSION=v7.2.102-overlay.1
+   COMMIT=$(git rev-parse --short=8 HEAD)
+   BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+   # Production currently uses the static no-plugin build and has no plugin configuration.
+   CGO_ENABLED=0 go build -buildvcs=false \
+     -ldflags="-s -w -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE" \
+     -o /tmp/cliproxyapi-v7.2.102-overlay.1 \
+     ./cmd/server
+   sha256sum /tmp/cliproxyapi-v7.2.102-overlay.1
    ```
 
-8. Roll out node by node: node-a first, then node-b. If a future node-c/new node is deliberately reactivated, add it to the rollout set only after it is back in the active architecture document.
+8. Roll out node by node: deregister and drain node-b, upgrade and observe it,
+   restore it to healthy service, then repeat for node-a. Never touch node-a if
+   the node-b canary has not passed.
 
 ## Node rollout commands
 
-### node-a
+Before replacing a binary, deregister that node from
+`cliproxy-tls-targets`, wait for connection draining to finish, and record the
+old binary checksum, version, auth-file health summary, and backup path. After
+local validation, register the node again and wait for target health before
+continuing.
 
-```bash
-TS=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP="/home/ec2-user/CLIProxyAPI/cliproxyapi.bak-pre-next-switch-$TS"
-cp -a /home/ec2-user/CLIProxyAPI/cliproxyapi "$BACKUP"
-install -m 0755 /tmp/cliproxyapi-next-check /home/ec2-user/CLIProxyAPI/cliproxyapi
-sudo systemctl restart cliproxyapi.service
-curl -fsS http://127.0.0.1:8317/healthz
-curl -sS -H 'X-Management-Key: admin123' 'http://127.0.0.1:8317/v0/management/usage-queue?count=1'
-```
-
-### node-b
+### node-b canary
 
 ```bash
 KEY=~/.ssh/cluster-key
-for item in node-b:172.31.26.28; do
-  name=${item%%:*}
-  host=${item#*:}
-  TS=$(date -u +%Y%m%dT%H%M%SZ)
-  remote_tmp="/tmp/cliproxyapi-next-check-$TS"
-  scp -i "$KEY" /tmp/cliproxyapi-next-check "ec2-user@$host:$remote_tmp"
-  ssh -i "$KEY" "ec2-user@$host" "set -euo pipefail
-    BACKUP=\"/home/ec2-user/CLIProxyAPI/cliproxyapi.bak-pre-next-switch-$TS\"
-    cp -a /home/ec2-user/CLIProxyAPI/cliproxyapi \"\$BACKUP\"
-    install -m 0755 '$remote_tmp' /home/ec2-user/CLIProxyAPI/cliproxyapi
-    sudo systemctl restart cliproxyapi.service
-    curl -fsS http://127.0.0.1:8317/healthz
-    systemctl is-active cliproxyapi.service
-  "
-done
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+remote_tmp="/tmp/cliproxyapi-v7.2.102-overlay.1-$TS"
+scp -i "$KEY" /tmp/cliproxyapi-v7.2.102-overlay.1 node-b:"$remote_tmp"
+ssh -i "$KEY" node-b "set -euo pipefail
+  BACKUP=\"/home/ec2-user/CLIProxyAPI/cliproxyapi.bak-pre-v72102-$TS\"
+  cp -a /home/ec2-user/CLIProxyAPI/cliproxyapi \"\$BACKUP\"
+  install -m 0755 '$remote_tmp' /home/ec2-user/CLIProxyAPI/cliproxyapi
+  sudo systemctl restart cliproxyapi.service
+  curl -fsS http://127.0.0.1:8317/healthz
+  systemctl is-active cliproxyapi.service
+"
+```
+
+### node-a after node-b observation
+
+```bash
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+BACKUP="/home/ec2-user/CLIProxyAPI/cliproxyapi.bak-pre-v72102-$TS"
+cp -a /home/ec2-user/CLIProxyAPI/cliproxyapi "$BACKUP"
+install -m 0755 /tmp/cliproxyapi-v7.2.102-overlay.1 /home/ec2-user/CLIProxyAPI/cliproxyapi
+sudo systemctl restart cliproxyapi.service
+curl -fsS http://127.0.0.1:8317/healthz
+systemctl is-active cliproxyapi.service
 ```
 
 ## Rollback
@@ -282,7 +301,7 @@ Use the backup binary from the affected node.
 
 ```bash
 sudo systemctl stop cliproxyapi.service
-cp -a /home/ec2-user/CLIProxyAPI/cliproxyapi.bak-pre-v7129-switch-YYYYMMDDTHHMMSSZ /home/ec2-user/CLIProxyAPI/cliproxyapi
+cp -a /home/ec2-user/CLIProxyAPI/cliproxyapi.bak-pre-v72102-YYYYMMDDTHHMMSSZ /home/ec2-user/CLIProxyAPI/cliproxyapi
 sudo systemctl start cliproxyapi.service
 curl -fsS http://127.0.0.1:8317/healthz
 ```

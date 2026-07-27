@@ -1,6 +1,6 @@
 # 新增 CLIProxyAPI 节点 Runbook
 
-最后更新: 2026-06-01
+最后更新: 2026-07-26
 
 本文档说明未来新增或恢复工作节点时需要做什么、哪些配置可以复制、哪些必须按节点定制。当前生产 active 节点以 `ops/ARCHITECTURE.md` 为准；截至 2026-06-01，active 节点只有 node-a/node-b，node-c/node-d 均已从 NLB 摘除并 terminate，EIP 已释放。
 
@@ -14,6 +14,7 @@
 6. 新节点加入 NLB 前，必须确认本机业务 health-agent 返回 200，且 Nginx `/healthz` 已代理到 health-agent 并返回 200。
 7. NLB 是 TCP 443 passthrough，TLS 在每个节点的 Nginx 上终止。
 8. node-a 可作为开发工作区，但不要覆盖、重启或扰动 node-a 正在运行的服务；实验部署先放 node-b。
+9. TLS 证书只由 node-a 的 acme.sh HTTP-01 流程签发，再由集群部署脚本分发；工作节点不要独立运行 acme.sh。
 
 ## 当前参考架构
 
@@ -65,6 +66,13 @@ Target Group:
 - Port: 443
 - Health check: HTTPS `/healthz`, matcher `200-399`
 
+独立 ACME HTTP-01 Target Group 只包含 node-a，新增工作节点不要注册到该组:
+
+- Name: `cliproxy-acme-http-a`
+- ARN: `arn:aws:elasticloadbalancing:us-east-2:967519196399:targetgroup/cliproxy-acme-http-a/40c570e8ff0daa77`
+- Listener / protocol / port: TCP 80
+- Health check: HTTP `/acme-healthz`, matcher `200`
+
 ## Security Group 要求
 
 新节点沿用 node-b 安全组时应满足:
@@ -95,6 +103,7 @@ Nginx 文件:
 - `/etc/nginx/proxy_params`
 - `/etc/nginx/ssl/token.zasdas.com/fullchain.pem`
 - `/etc/nginx/ssl/token.zasdas.com/key.pem`
+- `/usr/local/sbin/cliproxy-install-token-cert.sh`
 
 systemd 文件:
 
@@ -354,7 +363,7 @@ sudo dnf install -y nginx python3-pip git rsync tar gzip findutils jq shadow-uti
 
 ### 4. 同步应用和配置
 
-同步应用目录、LiteLLM 目录、Nginx 配置、SSL 证书、systemd unit、Bedrock env。
+同步应用目录、LiteLLM 目录、Nginx 配置、当前 SSL 证书、证书安装器、systemd unit、Bedrock env。新增节点投入生产前，还必须扩展 node-a 的集群证书部署配置，使后续续期会覆盖该节点。
 
 不要同步认证文件。
 

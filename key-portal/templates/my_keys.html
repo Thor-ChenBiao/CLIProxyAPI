@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的 Keys - Key Portal</title>
     <script src="/static/i18n.js?v=20260525-2"></script>
+    <script src="/static/key_speed_groups.js?v=20260710-1"></script>
     {% include "_portal_shell.html" %}
     <style>
         :root {
@@ -332,6 +333,7 @@
                             <th>Key</th>
                             <th>标签</th>
                             <th>Key 类型</th>
+                            <th>运行模式</th>
                             <th>创建时间</th>
                             <th>最后消耗</th>
                             <th>请求数</th>
@@ -401,6 +403,7 @@
         };
         let currentTopupKey = null;
         let currentLookup = null;
+        let emailLookupGeneration = 0;
 
         function modelGroupLabel(modelGroup) {
             return MODEL_GROUP_LABELS[modelGroup] || MODEL_GROUP_LABELS.common;
@@ -413,6 +416,53 @@
         function topupButtonHtml(keyInfo, style) {
             if (!keyInfo?.can_topup) return '';
             return `<button ${style || 'class="btn btn-topup"'} onclick='openTopupModal(${jsArg(keyInfo.key)}, ${jsArg(modelGroupLabel(keyInfo.model_group || 'common'))}, ${jsArg(keyInfo.label || '')}, ${Number(keyInfo.max_budget || 0)})'>追加额度</button>`;
+        }
+
+        function speedGroupControlHtml(keyInfo) {
+            const current = KeySpeedGroups.normalize(keyInfo?.speed_group);
+            const editable = Boolean(keyInfo?.can_change_speed);
+            const disabled = editable ? '' : 'disabled';
+            const status = editable ? '' : '暂不可修改';
+            return `
+                <div class="key-speed-control" data-current="${current}" data-editable="${editable}">
+                    <button type="button" class="key-speed-button ${current === 'standard' ? 'active' : ''}" data-speed="standard" aria-pressed="${current === 'standard'}" ${disabled} onclick='setKeySpeedGroup(this, ${jsArg(keyInfo?.key)}, "standard")'>普通</button>
+                    <button type="button" class="key-speed-button ${current === 'fast' ? 'active' : ''}" data-speed="fast" aria-pressed="${current === 'fast'}" ${disabled} onclick='setKeySpeedGroup(this, ${jsArg(keyInfo?.key)}, "fast")'>Fast</button>
+                    <span class="key-speed-status">${status}</span>
+                </div>
+            `;
+        }
+
+        async function setKeySpeedGroup(button, apiKey, nextGroup) {
+            const control = button.closest('.key-speed-control');
+            if (!control || control.dataset.editable !== 'true') return;
+            const previous = KeySpeedGroups.normalize(control.dataset.current);
+            const requested = KeySpeedGroups.normalize(nextGroup);
+            if (previous === requested) return;
+
+            const buttons = Array.from(control.querySelectorAll('.key-speed-button'));
+            const status = control.querySelector('.key-speed-status');
+            buttons.forEach(item => { item.disabled = true; });
+            status.classList.remove('error');
+            status.textContent = '保存中...';
+            try {
+                const payload = await KeySpeedGroups.update(apiKey, requested);
+                const current = KeySpeedGroups.normalize(payload.speed_group);
+                control.dataset.current = current;
+                buttons.forEach(item => {
+                    const active = item.dataset.speed === current;
+                    item.classList.toggle('active', active);
+                    item.setAttribute('aria-pressed', String(active));
+                });
+                status.textContent = '已生效';
+                window.setTimeout(() => {
+                    if (status.textContent === '已生效') status.textContent = '';
+                }, 1800);
+            } catch (error) {
+                status.classList.add('error');
+                status.textContent = error.message || '更新失败';
+            } finally {
+                buttons.forEach(item => { item.disabled = false; });
+            }
         }
 
         function rememberEmail(email) {
@@ -550,6 +600,9 @@
         }
 
         function tokenUsageHtml(item) {
+            if (item?.usage_pending) {
+                return '<div class="token-detail">用量加载中...</div>';
+            }
             const breakdown = item?.token_breakdown || item || {};
             return `
                 <div>${formatNumber(item?.total_tokens ?? breakdown.total_tokens)}</div>
@@ -594,7 +647,7 @@
                 .replace(/'/g, '&#39;');
         }
 
-        function renderKeysResult({ title, detail, totalRequests, totalTokens, tokenBreakdown, estimatedCostUsd, keys }) {
+        function renderKeysResult({ title, detail, totalRequests, totalTokens, tokenBreakdown, estimatedCostUsd, keys, usagePending = false }) {
             const userInfo = document.getElementById('userInfo');
             const keysList = document.getElementById('keysList');
             const tbody = document.getElementById('keysTableBody');
@@ -602,11 +655,12 @@
 
             document.getElementById('userName').textContent = title;
             document.getElementById('userEmail').textContent = detail;
-            document.getElementById('totalRequests').textContent = formatNumber(totalRequests);
+            document.getElementById('totalRequests').textContent = usagePending ? '...' : formatNumber(totalRequests);
             document.getElementById('totalTokens').innerHTML = tokenUsageHtml({
                 total_tokens: totalTokens,
                 token_breakdown: tokenBreakdown,
-                estimated_cost_usd: estimatedCostUsd
+                estimated_cost_usd: estimatedCostUsd,
+                usage_pending: usagePending
             });
             document.getElementById('keyCount').textContent = keys.length;
 
@@ -617,7 +671,8 @@
                     ...key,
                     estimated_cost_usd: key.estimated_cost_usd ?? key.spend_usd,
                     total_requests: key.total_requests || 0,
-                    total_tokens: key.total_tokens || 0
+                    total_tokens: key.total_tokens || 0,
+                    usage_pending: usagePending || Boolean(key.usage_pending)
                 };
                 const actions = normalized.can_revoke === false
                     ? '<span class="token-detail">SpendLogs 归因记录</span>'
@@ -627,9 +682,10 @@
                     <td><span class="key-value">${escapeHtml(normalized.key)}</span></td>
                     <td>${escapeHtml(normalized.label || '默认')}</td>
                     <td>${escapeHtml(modelGroupLabel(normalized.model_group || 'common'))}</td>
+                    <td>${speedGroupControlHtml(normalized)}</td>
                     <td>${formatDate(normalized.created_at)}</td>
-                    <td class="last-used-cell"><div>${formatDate(normalized.last_used_at)}</div><div class="token-detail">${usageScopeLabel(normalized)}</div></td>
-                    <td>${formatNumber(normalized.total_requests)}</td>
+                    <td class="last-used-cell"><div>${normalized.usage_pending ? '加载中...' : formatDate(normalized.last_used_at)}</div><div class="token-detail">${normalized.usage_pending ? '' : usageScopeLabel(normalized)}</div></td>
+                    <td>${normalized.usage_pending ? '...' : formatNumber(normalized.total_requests)}</td>
                     <td class="usage-cell">${tokenUsageHtml(normalized)}</td>
                     <td class="action-cell">${actions}</td>
                 `;
@@ -644,10 +700,11 @@
                         <div class="token-detail">${escapeHtml(modelGroupLabel(normalized.model_group || 'common'))}</div>
                     </div>
                     <div class="key-card-stats">
-                        <div><strong>请求数：</strong>${formatNumber(normalized.total_requests)}</div>
+                        <div><strong>请求数：</strong>${normalized.usage_pending ? '...' : formatNumber(normalized.total_requests)}</div>
                         <div>${tokenUsageHtml(normalized)}</div>
                     </div>
-                    <div class="key-card-meta">创建：${formatDate(normalized.created_at)}<br>最后消耗：${formatDate(normalized.last_used_at)} · ${usageScopeLabel(normalized)}</div>
+                    <div class="key-card-meta">创建：${formatDate(normalized.created_at)}<br>最后消耗：${normalized.usage_pending ? '加载中...' : `${formatDate(normalized.last_used_at)} · ${usageScopeLabel(normalized)}`}</div>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:10px;"><strong style="font-size:12px;">运行模式</strong>${speedGroupControlHtml(normalized)}</div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${actions}</div>
                 `;
                 cards.appendChild(card);
@@ -655,6 +712,42 @@
 
             userInfo.style.display = 'block';
             keysList.style.display = 'block';
+        }
+
+        function renderMyKeysPayload(data) {
+            const keys = Array.isArray(data.keys) ? data.keys : [];
+            const email = String(data.email || '').toLowerCase();
+            const summary = data.summary || {};
+            renderKeysResult({
+                title: data.name || email,
+                detail: email,
+                totalRequests: data.user_total_requests ?? summary.total_requests ?? keys.reduce((sum, key) => sum + Number(key.total_requests || 0), 0),
+                totalTokens: data.user_total_tokens ?? summary.total_tokens ?? keys.reduce((sum, key) => sum + Number(key.total_tokens || 0), 0),
+                tokenBreakdown: data.user_token_breakdown || summary.token_breakdown,
+                estimatedCostUsd: data.user_estimated_cost_usd ?? summary.estimated_cost_usd ?? keys.reduce((sum, key) => sum + Number(key.estimated_cost_usd ?? key.spend_usd ?? 0), 0),
+                keys,
+                usagePending: Boolean(data.usage_pending)
+            });
+            return email;
+        }
+
+        async function hydrateMyKeysUsage(generation) {
+            try {
+                const response = await fetch('/api/my-keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+                if (generation !== emailLookupGeneration || currentLookup?.type !== 'email') return;
+                if (!response.ok) throw new Error(data.error || '用量查询失败');
+                renderMyKeysPayload(data);
+            } catch (error) {
+                if (generation !== emailLookupGeneration || currentLookup?.type !== 'email') return;
+                const errorDiv = document.getElementById('error');
+                errorDiv.textContent = 'Key 已加载，用量查询失败：' + error.message;
+                errorDiv.style.display = 'block';
+            }
         }
 
         async function searchByEmail() {
@@ -665,41 +758,35 @@
             errorDiv.style.display = 'none';
             userInfo.style.display = 'none';
             keysList.style.display = 'none';
+            const generation = ++emailLookupGeneration;
 
             try {
                 const response = await fetch('/api/my-keys', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
+                    body: JSON.stringify({ defer_usage: true })
                 });
                 const data = await response.json();
+                if (generation !== emailLookupGeneration) return;
 
                 if (response.ok) {
-                    const keys = Array.isArray(data.keys) ? data.keys : [];
-                    const email = String(data.email || '').toLowerCase();
+                    const email = renderMyKeysPayload(data);
                     currentLookup = { type: 'email', value: email };
                     rememberEmail(email);
-                    const summary = data.summary || {};
-                    renderKeysResult({
-                        title: data.name || email,
-                        detail: email,
-                        totalRequests: data.user_total_requests ?? summary.total_requests ?? keys.reduce((sum, key) => sum + Number(key.total_requests || 0), 0),
-                        totalTokens: data.user_total_tokens ?? summary.total_tokens ?? keys.reduce((sum, key) => sum + Number(key.total_tokens || 0), 0),
-                        tokenBreakdown: data.user_token_breakdown || summary.token_breakdown,
-                        estimatedCostUsd: data.user_estimated_cost_usd ?? summary.estimated_cost_usd ?? keys.reduce((sum, key) => sum + Number(key.estimated_cost_usd ?? key.spend_usd ?? 0), 0),
-                        keys
-                    });
+                    hydrateMyKeysUsage(generation);
                 } else {
                     errorDiv.textContent = data.error || '查询失败';
                     errorDiv.style.display = 'block';
                 }
             } catch (error) {
+                if (generation !== emailLookupGeneration) return;
                 errorDiv.textContent = '网络错误：' + error.message;
                 errorDiv.style.display = 'block';
             }
         }
 
         async function searchKeys() {
+            emailLookupGeneration += 1;
             const apiKey = document.getElementById('keyInput').value.trim();
             const errorDiv = document.getElementById('error');
             const userInfo = document.getElementById('userInfo');

@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew and deploy token.zasdas.com certificate across CLIProxyAPI nodes
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sysconfig/cliproxy-cert-renew
+ExecStart=/usr/local/sbin/cliproxy-renew-token-cert.sh

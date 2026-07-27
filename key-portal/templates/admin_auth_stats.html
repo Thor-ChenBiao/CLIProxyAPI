@@ -58,8 +58,12 @@
         .btn.green { color: var(--green); background: var(--green-soft); border-color: #bfe8d1; }
         .btn.orange { color: var(--orange); background: var(--orange-soft); border-color: #ffd88b; }
         .btn.red { color: var(--red); background: var(--red-soft); border-color: #ffc1c1; }
+        .btn:disabled { cursor: not-allowed; opacity: 0.58; transform: none; }
         .alert-mute-note { flex-basis: 100%; color: var(--muted); font-size: 12px; text-align: right; line-height: 1.4; }
         .alert-mute-note.muted { color: var(--orange); font-weight: 850; }
+        .fast-mode-note { flex-basis: 100%; color: var(--muted); font-size: 12px; text-align: right; line-height: 1.4; }
+        .fast-mode-note.enabled { color: var(--green); font-weight: 850; }
+        .fast-mode-note.disabled { color: var(--red); font-weight: 850; }
         .meta {
             display: inline-flex;
             align-items: center;
@@ -184,6 +188,7 @@
         .traffic-bar-fill.danger { background: #ee8585; }
         .traffic-ratio { color: var(--muted); font-size: 11px; font-weight: 850; margin-left: 4px; white-space: nowrap; }
         .traffic-avg { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+        .traffic-coverage { display: block; color: var(--orange); font-size: 11px; font-weight: 850; margin-top: 4px; }
         .traffic-status { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 900; white-space: nowrap; }
         .traffic-status.good { color: var(--green); background: var(--green-soft); }
         .traffic-status.warn { color: var(--orange); background: var(--orange-soft); }
@@ -302,6 +307,7 @@
             body { padding: 16px; }
             .topbar, .table-head { align-items: stretch; flex-direction: column; }
             .actions { justify-content: flex-start; min-width: 0; }
+            .alert-mute-note, .fast-mode-note { text-align: left; }
             .auth-main { grid-template-columns: 1fr; }
 	            .traffic-panel { grid-column: auto; }
 	            .detail-grid { grid-template-columns: 1fr; }
@@ -320,11 +326,13 @@
                 <p class="subtitle">认证明细优先展示 5 小时和 7 天两个关键窗口；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度。</p>
             </div>
             <div class="actions" id="authStatsActions">
+                <button class="btn secondary" id="fastModeToggle" type="button" disabled>全局 Fast：加载中</button>
                 <button class="btn orange" id="alertMuteToggle" type="button">屏蔽告警</button>
                 <a class="btn secondary" href="/">返回首页</a>
                 <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
                 <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
                 <div class="alert-mute-note" id="alertMuteNote">飞书告警正常发送</div>
+                <div class="fast-mode-note" id="fastModeNote">正在读取两个节点共享的 Fast 状态</div>
             </div>
         </div>
         <div id="authStatsMeta" class="meta">加载中...</div>
@@ -369,6 +377,7 @@
         let lastAuthStatsNodeSignals = new Map();
         let lastAuthStatsGroupedRows = new Map();
         let alertMuteState = { muted: false, updated_at: '', updated_by: '', reason: '' };
+        let fastModeState = { enabled: null, available: false, updated_at: '', updated_by: '', reason: '' };
 
         function formatNumberFull(num) {
             return Number(num || 0).toLocaleString('zh-CN');
@@ -852,15 +861,31 @@
             return `飞书告警已屏蔽，不影响健康检查、事件记录和恢复处理${updated}${operator}`;
         }
 
+        function fastModeNoteText() {
+            if (!fastModeState.available) return '全局 Fast 状态不可用，请检查 Redis 或刷新页面';
+            const updated = fastModeState.updated_at ? ` · ${formatDateTime(fastModeState.updated_at)} 更新` : '';
+            const operator = fastModeState.updated_by ? ` · ${fastModeState.updated_by}` : '';
+            if (fastModeState.enabled) {
+                return `全局 Fast 已开启：仅 Fast Key 使用 priority，其他 Key 强制 default${updated}${operator}`;
+            }
+            return `全局 Fast 已关闭：所有 Key 强制 default；原有 Fast 分组已保留${updated}${operator}`;
+        }
+
         function renderNodeManagementActions() {
             const actionsEl = document.getElementById('authStatsActions');
+            const fastAvailable = fastModeState.available;
+            const fastButtonClass = !fastAvailable ? 'secondary' : (fastModeState.enabled ? 'green' : 'red');
+            const fastButtonText = !fastAvailable ? '全局 Fast：不可用' : `全局 Fast：${fastModeState.enabled ? '已开启' : '已关闭'}`;
             actionsEl.innerHTML = `
+                <button class="btn ${fastButtonClass}" id="fastModeToggle" type="button" ${fastAvailable ? '' : 'disabled'}>${fastButtonText}</button>
                 <button class="btn ${alertMuteState.muted ? 'green' : 'orange'}" id="alertMuteToggle" type="button">${alertMuteState.muted ? '恢复告警' : '屏蔽告警'}</button>
                 <a class="btn secondary" href="/">返回首页</a>
                 <a class="btn secondary" href="/admin/users" target="_blank">用户用量</a>
                 <a class="btn primary" href="/litellm/ui/" target="_blank">LiteLLM 管理后台</a>
-                <div class="alert-mute-note ${alertMuteState.muted ? 'muted' : ''}" id="alertMuteNote">${escapeHtml(alertMuteNoteText())}</div>`;
+                <div class="alert-mute-note ${alertMuteState.muted ? 'muted' : ''}" id="alertMuteNote">${escapeHtml(alertMuteNoteText())}</div>
+                <div class="fast-mode-note ${fastAvailable ? (fastModeState.enabled ? 'enabled' : 'disabled') : ''}" id="fastModeNote">${escapeHtml(fastModeNoteText())}</div>`;
             bindAlertMuteToggle();
+            bindFastModeToggle();
         }
 
         function nodeSummaryState(n, signals) {
@@ -964,6 +989,14 @@
             return { cls: 'good', text: '正常' };
         }
 
+        function formatCoverageDuration(seconds) {
+            const value = Math.max(0, Number(seconds || 0));
+            if (value < 60) return `${Math.floor(value)} 秒`;
+            if (value < 3600) return `${Math.floor(value / 60)} 分钟`;
+            if (value < 86400) return `${Math.floor(value / 3600)} 小时`;
+            return `${Math.floor(value / 86400)} 天`;
+        }
+
         function trafficWindowCell(item, bucket, windowTotalRequests, mode) {
             const requests = Number(bucket?.requests || 0);
             const success = Number(bucket?.success || 0);
@@ -977,11 +1010,13 @@
             const avgText = authCount > 0 ? `每认证平均 ${avgDisplay} 请求` : '';
             const fillText = mode === 'node' ? `占集群 ${formatQuotaPercent(fill)}` : `占列表 ${formatQuotaPercent(fill)}`;
             const totalLabel = mode === 'node' ? '节点合计' : '认证文件';
-            const detailTitle = `数据口径：${totalLabel}请求数为加和值，不是最大值；进度条表示该行请求数占当前窗口列表总请求数的比例 ${formatQuotaPercent(fill)}。请求 ${formatNumberFull(requests)} / 总请求 ${formatNumberFull(windowTotalRequests)} · Tokens ${formatNumberFull(tokens)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}${avgText ? ' · ' + avgText : ''} · ${tokenBreakdownText(bucket)}`;
+            const coverageText = bucket?.complete === false ? `数据积累中 · 已覆盖 ${formatCoverageDuration(bucket?.coverage_seconds)}` : '';
+            const detailTitle = `数据口径：${totalLabel}请求数为加和值，不是最大值；进度条表示该行请求数占当前窗口列表总请求数的比例 ${formatQuotaPercent(fill)}。请求 ${formatNumberFull(requests)} / 总请求 ${formatNumberFull(windowTotalRequests)} · Tokens ${formatNumberFull(tokens)} · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}${avgText ? ' · ' + avgText : ''}${coverageText ? ' · ' + coverageText : ''} · ${tokenBreakdownText(bucket)}`;
             return `<div class="traffic-window" title="${escapeHtml(detailTitle)}">
                 <strong title="${escapeHtml(formatNumberFull(requests))} 请求">${formatNumberFull(requests)}<span class="traffic-ratio">${fillText}</span></strong>
                 <span>${formatCompactNumber(tokens)} Tokens · 成功 ${formatNumberFull(success)} · 失败 ${formatNumberFull(failure)} · 失败率 ${formatPercent(bucket?.failure_rate)}</span>
                 ${avgText ? `<span class="traffic-avg">${escapeHtml(avgText)}</span>` : ''}
+                ${coverageText ? `<span class="traffic-coverage">${escapeHtml(coverageText)}</span>` : ''}
                 <div class="traffic-bar"><span class="traffic-bar-fill ${failLevel}" style="--fill:${fill}%"></span></div>
             </div>`;
         }
@@ -1301,6 +1336,45 @@
             button.addEventListener('click', () => setAlertMuteState(!alertMuteState.muted, button));
         }
 
+        async function loadFastModeState() {
+            const resp = await fetch(`/api/auth-stats/fast-mode?_=${Date.now()}`, {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json' },
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+            fastModeState = { ...data, available: true };
+            renderNodeManagementActions();
+        }
+
+        async function setFastModeState(enabled, button) {
+            const message = enabled
+                ? '确认开启全局 Fast 吗？开启后只有标记为 Fast 的 Key 会使用 priority，其他 Key 仍强制 default。'
+                : '确认关闭全局 Fast 吗？关闭后两个节点上的所有 Key 都会强制使用 default；Fast 分组会保留。';
+            if (!confirm(message)) return;
+            if (button) button.disabled = true;
+            try {
+                const resp = await fetch('/api/auth-stats/fast-mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                fastModeState = { ...data, available: true };
+                renderNodeManagementActions();
+            } catch (e) {
+                alert(`切换全局 Fast 失败：${e.message}`);
+                if (button) button.disabled = false;
+            }
+        }
+
+        function bindFastModeToggle() {
+            const button = document.getElementById('fastModeToggle');
+            if (!button || !fastModeState.available) return;
+            button.addEventListener('click', () => setFastModeState(!fastModeState.enabled, button));
+        }
+
         async function loadAuthStats(force = false) {
             if (authStatsLoading) return;
             if (force && authStatsRetryTimer) {
@@ -1324,7 +1398,7 @@
                 const summaryEl = document.getElementById('authStatsSummary');
                 const metaEl = document.getElementById('authStatsMeta');
                 const generated = formatDateTime(data.generated_at);
-                metaEl.textContent = `生成时间：${generated} 北京时间；认证文件和流量实时读取节点管理接口，Key Portal 不主动查询 provider 原生额度；页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 刷新`;
+                metaEl.textContent = `生成时间：${generated} 北京时间；认证状态读取节点管理接口，流量来自 PG 分钟聚合；页面可见时每 ${AUTH_STATS_REFRESH_MS / 1000}s 刷新`;
                 renderWarnings(data.errors || []);
 
                 const rows = sortAuthRows(data.auth_files || []);
@@ -1372,6 +1446,11 @@
 
         bindViewTabs();
         loadAlertMuteState().catch((e) => console.warn('load alert mute state failed', e));
+        loadFastModeState().catch((e) => {
+            fastModeState = { ...fastModeState, available: false };
+            renderNodeManagementActions();
+            console.warn('load global Fast mode state failed', e);
+        });
         loadAuthStats();
         setInterval(() => {
             if (document.visibilityState === 'visible') loadAuthStats();

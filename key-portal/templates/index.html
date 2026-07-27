@@ -16,6 +16,7 @@
     </script>
     <script src="/static/socket.io.min.js?v=20260521-1"></script>
     <script src="/static/i18n.js?v=20260525-2"></script>
+    <script src="/static/key_speed_groups.js?v=20260710-1"></script>
     {% include "_portal_shell.html" %}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -395,6 +396,27 @@
                         </div>
                     </div>
 
+                    <div style="margin-bottom: 24px; text-align: left;">
+                        <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">运行模式 *</label>
+                        <div class="key-speed-choice-grid">
+                            <div>
+                                <input class="key-speed-choice-input" type="radio" id="regSpeedStandard" name="regSpeedGroup" value="standard" checked>
+                                <label class="key-speed-choice" for="regSpeedStandard">
+                                    <strong>普通模式</strong>
+                                    <span>稳定节省账号池额度，适合持续运行。</span>
+                                </label>
+                            </div>
+                            <div>
+                                <input class="key-speed-choice-input" type="radio" id="regSpeedFast" name="regSpeedGroup" value="fast">
+                                <label class="key-speed-choice" for="regSpeedFast">
+                                    <strong>Fast 模式</strong>
+                                    <span>适合人工交互，响应更快但额度消耗也更快。</span>
+                                </label>
+                            </div>
+                        </div>
+                        <p style="font-size: 13px; color: #7c5b00; margin-top: 8px;">离线任务、批处理和后台任务要求使用普通模式。</p>
+                    </div>
+
                     <div id="regApprovalFields" style="display: none; margin-bottom: 24px; text-align: left;">
                         <label style="display: block; margin-bottom: 8px; color: #333; font-weight: 500;">申请理由 *</label>
                         <textarea id="regReason" rows="3" placeholder="Bedrock / Claude 按量计费成本较高，请说明必须使用它完成任务的紧急或必要场景；常规用量推荐优先使用 GPT Key。"
@@ -762,6 +784,7 @@
         const RACE_LANE_HEIGHT = 32;
         const RACE_TRACK_BOTTOM_PAD = 42;
         const RACE_POLL_INTERVAL_MS = 1000;
+        const USAGE_SUMMARY_POLL_INTERVAL_MS = 5000;
         const RACE_PLAYBACK_LAG_MS = 2000;
         const RACE_NEWEST_SNAPSHOT_GUARD_MS = 450;
         let currentSpeedMetric = 'tokens';
@@ -879,7 +902,7 @@
         function startPersonalUsageSummaryPolling() {
             if (personalUsagePollTimer) return;
             loadPersonalUsageSummary();
-            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, 1000);
+            personalUsagePollTimer = setInterval(loadPersonalUsageSummary, USAGE_SUMMARY_POLL_INTERVAL_MS);
         }
 
         function stopPersonalUsageSummaryPolling() {
@@ -1675,6 +1698,7 @@
             try {
                 const resp = await fetch('/api/usage-summary');
                 const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || '用量统计加载失败');
                 applyUsageSummary(data);
             } catch (e) {
                 console.error('Load usage summary error:', e);
@@ -1686,7 +1710,7 @@
         function startUsageSummaryPolling() {
             if (usageSummaryPollTimer) return;
             loadUsageSummary();
-            usageSummaryPollTimer = setInterval(loadUsageSummary, 1000);
+            usageSummaryPollTimer = setInterval(loadUsageSummary, USAGE_SUMMARY_POLL_INTERVAL_MS);
         }
 
         function stopUsageSummaryPolling() {
@@ -2287,6 +2311,7 @@
             const identifier = document.getElementById('regIdentifier').value.trim();
             const email = portalSessionEmail;
             const modelGroup = document.getElementById('regModelGroup')?.value || 'common';
+            const speedGroup = document.querySelector('input[name="regSpeedGroup"]:checked')?.value || 'standard';
             const reason = document.getElementById('regReason')?.value.trim() || '';
             const dailyBudget = document.getElementById('regDailyBudget')?.value.trim() || '';
             const btn = document.getElementById('regBtn');
@@ -2317,7 +2342,7 @@
                 const resp = await fetch('/api/register-key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, name: identifier, label: identifier, model_group: modelGroup, reason, daily_budget: dailyBudget })
+                    body: JSON.stringify({ email, name: identifier, label: identifier, model_group: modelGroup, speed_group: speedGroup, reason, daily_budget: dailyBudget })
                 });
 
                 const data = await resp.json();
@@ -2341,6 +2366,7 @@
                         document.getElementById('regModelGroup').value = 'common';
                         document.getElementById('regReason').value = '';
                         document.getElementById('regDailyBudget').value = '';
+                        document.getElementById('regSpeedStandard').checked = true;
                         updateModelGroupHint();
                         return;
                     }
@@ -2417,6 +2443,7 @@ export OPENAI_API_KEY="${apiKey}"`;
                         email: assignedEmail,
                         model_group: modelGroup,
                         model_group_label: modelGroupLabel(modelGroup),
+                        speed_group: speedGroup,
                         created_at: new Date().toISOString()
                     });
 
@@ -2486,6 +2513,7 @@ export OPENAI_API_KEY="${apiKey}"`;
                     // Clear form
                     document.getElementById('regIdentifier').value = '';
                     document.getElementById('regModelGroup').value = 'common';
+                    document.getElementById('regSpeedStandard').checked = true;
                     updateModelGroupHint();
 
                     // Refresh pool status

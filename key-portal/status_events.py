@@ -238,28 +238,28 @@ class StatusEventsService:
         window_end_label = window_end.strftime("%Y-%m-%d %H:%M")
         window_start_sql = self.sql_literal(window_start_label)
         window_end_sql = self.sql_literal(window_end_label)
+        query_timeout = self.int_usage_value(
+            getattr(self.config, "STATUS_USAGE_RECORD_QUERY_TIMEOUT_SECONDS", 60)
+        ) or 60
+        query_timeout = max(15, min(query_timeout, 180))
         sql = f"""
-WITH windows AS (
+WITH aggregated AS (
     SELECT
-        (g::date + time '20:00') AS window_start_bj,
-        (g::date + time '20:00' + interval '1 day') AS window_end_bj
-    FROM generate_series(
-        ({window_end_sql}::timestamp::date - interval '{lookback_days} days'),
-        ({window_end_sql}::timestamp::date - interval '1 day'),
-        interval '1 day'
-    ) AS g
+        date_trunc('day', s."endTime" - interval '12 hours') + interval '12 hours' AS window_start_utc,
+        count(*)::bigint AS total_requests,
+        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens
+    FROM "LiteLLM_SpendLogs" s
+    WHERE s."endTime" >= {window_end_sql}::timestamp - interval '{lookback_days} days' - interval '8 hours'
+      AND s."endTime" < {window_end_sql}::timestamp - interval '8 hours'
+    GROUP BY 1
 ), daily AS (
     SELECT
-        w.window_end_bj::date::text AS date,
-        to_char(w.window_start_bj, 'YYYY-MM-DD HH24:MI') AS window_start,
-        to_char(w.window_end_bj, 'YYYY-MM-DD HH24:MI') AS window_end,
-        count(s.*)::bigint AS total_requests,
-        coalesce(sum(s.total_tokens), 0)::bigint AS total_tokens
-    FROM windows w
-    LEFT JOIN "LiteLLM_SpendLogs" s
-      ON s."endTime" >= w.window_start_bj - interval '8 hours'
-     AND s."endTime" < w.window_end_bj - interval '8 hours'
-    GROUP BY 1, 2, 3
+        (window_start_utc + interval '1 day' + interval '8 hours')::date::text AS date,
+        to_char(window_start_utc + interval '8 hours', 'YYYY-MM-DD HH24:MI') AS window_start,
+        to_char(window_start_utc + interval '1 day' + interval '8 hours', 'YYYY-MM-DD HH24:MI') AS window_end,
+        total_requests,
+        total_tokens
+    FROM aggregated
 ), record_row AS (
     SELECT date, window_start, window_end, total_tokens, total_requests
     FROM daily
@@ -285,7 +285,7 @@ SELECT json_build_object(
     'source', 'litellm_spendlogs'
 );
 """
-        payload = self.litellm_psql_json(sql, timeout=15)
+        payload = self.litellm_psql_json(sql, timeout=query_timeout)
         if not payload:
             return {
                 "today": today,
@@ -461,6 +461,7 @@ LEFT JOIN top_users ON top_users.model_group = grouped.model_group;
             return None
         snapshot = self.daily_usage_record_snapshot()
         if snapshot.get("error"):
+            print(f"[StatusEvents] Usage record check skipped: {snapshot.get('error')}")
             return None
         today_tokens = self.int_usage_value(snapshot.get("today_tokens"))
         record_tokens = self.int_usage_value(snapshot.get("previous_record_tokens"))
