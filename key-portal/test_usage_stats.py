@@ -249,6 +249,9 @@ class AuthStatsTests(unittest.TestCase):
 
         self.assertIn("数据积累中", template)
         self.assertIn("coverage_seconds", template)
+        self.assertIn("当前原生额度占用", template)
+        self.assertIn("native_usage_percent", template)
+        self.assertIn("Token 容量辅助估算", template)
 
     def test_duplicate_auth_index_and_account_are_matched_by_node(self):
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -318,6 +321,154 @@ class AuthStatsTests(unittest.TestCase):
             parse_detail_time_utc=portal_app.parse_detail_time_utc,
             build_token_breakdown=portal_app.build_token_breakdown,
         )
+
+    def test_codex_primary_window_is_classified_by_duration(self):
+        service = self.auth_stats_service()
+        quota = service.quota_from_snapshot({
+            "provider": "codex",
+            "quota_snapshot": {
+                "type": "codex",
+                "payload": {
+                    "plan_type": "pro",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 62,
+                            "limit_window_seconds": 7 * 24 * 3600,
+                            "reset_after_seconds": 3600,
+                        },
+                    },
+                },
+            },
+        })
+
+        self.assertIsNone(quota["windows"]["last_5h"])
+        self.assertEqual(quota["windows"]["last_7d"]["used_percent"], 62)
+        self.assertEqual(quota["windows"]["last_7d"]["limit_window_seconds"], 7 * 24 * 3600)
+
+    def test_codex_primary_and_secondary_windows_keep_actual_durations(self):
+        service = self.auth_stats_service()
+        quota = service.quota_from_snapshot({
+            "provider": "codex",
+            "quota_snapshot": {
+                "type": "codex",
+                "payload": {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 20,
+                            "limit_window_seconds": 5 * 3600,
+                        },
+                        "secondary_window": {
+                            "used_percent": 40,
+                            "limit_window_seconds": 7 * 24 * 3600,
+                        },
+                    },
+                },
+            },
+        })
+
+        self.assertEqual(quota["windows"]["last_5h"]["used_percent"], 20)
+        self.assertEqual(quota["windows"]["last_7d"]["used_percent"], 40)
+
+    def test_native_quota_usage_does_not_require_local_token_history(self):
+        service = self.auth_stats_service()
+        stats = {}
+        for index in range(10):
+            stats[str(index)] = {
+                "today": {"tokens": 0},
+                "disabled": False,
+                "unavailable": False,
+                "quota_window": {"tokens": 0},
+                "quota": {
+                    "windows": {
+                        "last_7d": {
+                            "used_percent": 60 + (index % 3),
+                            "limit_window_seconds": 7 * 24 * 3600,
+                            "reset_at": "2026-08-05T04:00:00Z",
+                        },
+                    },
+                },
+            }
+        stats["disabled-a"] = {
+            "today": {"tokens": 0},
+            "disabled": True,
+            "unavailable": False,
+            "quota_window": {"tokens": 0},
+            "quota": {"windows": {}},
+        }
+
+        result = service.build_today_quota_usage(stats, "2026-08-01", 1000)
+
+        self.assertTrue(result["native_quota_configured"])
+        self.assertEqual(result["native_inferred_account_count"], 10)
+        self.assertEqual(result["native_usage_percent"], 60.9)
+        self.assertEqual(result["native_remaining_percent"], 39.1)
+        self.assertEqual(result["account_count"], 10)
+        self.assertEqual(result["total_account_count"], 11)
+        self.assertEqual(result["disabled_account_count"], 1)
+        self.assertFalse(result["configured"])
+
+    def test_aligned_quota_usage_enables_capacity_inference(self):
+        loader_requests = []
+
+        def load_quota_usage(requests):
+            loader_requests.extend(requests)
+            return {
+                "node-a|auth-a": {
+                    "node": "node-a",
+                    "auth_index": "auth-a",
+                    "start_at": "2026-07-29T04:00:00Z",
+                    "end_at": "2026-08-01T00:00:00Z",
+                    "requests": 12,
+                    "tokens": 620_000,
+                    "coverage_seconds": 244800,
+                    "required_seconds": 244800,
+                    "complete": True,
+                },
+            }
+
+        service = portal_app.auth_stats_service.AuthStatsService(
+            portal_state=object(),
+            nodes=[],
+            call_management_api_node=lambda *args, **kwargs: ({}, None),
+            get_cluster_usage=lambda: {},
+            get_cluster_auth_files=lambda: ([], []),
+            usage_summary_loader=lambda: ({}, None),
+            parse_detail_time=portal_app.parse_detail_time,
+            parse_detail_time_utc=portal_app.parse_detail_time_utc,
+            build_token_breakdown=portal_app.build_token_breakdown,
+            quota_usage_loader=load_quota_usage,
+        )
+        stats = {
+            "node-a:auth-a": {
+                "node": "node-a",
+                "auth_index": "auth-a",
+                "disabled": False,
+                "unavailable": False,
+                "today": {"tokens": 1000},
+                "_quota_usage_details": [],
+                "_quota_usage_windows": {},
+                "quota": {
+                    "windows": {
+                        "last_7d": {
+                            "used_percent": 62,
+                            "limit_window_seconds": 7 * 24 * 3600,
+                            "reset_at": "2026-08-05T04:00:00Z",
+                        },
+                    },
+                },
+            },
+        }
+
+        self.assertEqual(service.attach_aligned_quota_usage(stats), [])
+        service.apply_quota_window_usage(stats)
+        result = service.build_today_quota_usage(stats, "2026-08-01", 1000)
+
+        self.assertEqual(len(loader_requests), 1)
+        self.assertTrue(stats["node-a:auth-a"]["quota_window"]["complete"])
+        self.assertEqual(stats["node-a:auth-a"]["quota_window"]["tokens"], 620_000)
+        self.assertTrue(result["configured"])
+        self.assertEqual(result["single_account_window_token_limit"], 1_000_000)
+        self.assertEqual(result["inferred_account_count"], 1)
 
     def test_today_quota_usage_does_not_extrapolate_from_one_sample(self):
         service = self.auth_stats_service()

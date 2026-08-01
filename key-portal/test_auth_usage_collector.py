@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from auth_usage_collector import AuthUsageCollector
 
@@ -7,6 +8,11 @@ from auth_usage_collector import AuthUsageCollector
 class FakeStore:
     def __init__(self):
         self.calls = []
+        self.reset_calls = []
+
+    def reset_collection_coverage(self, node_names):
+        self.reset_calls.append(list(node_names))
+        return True
 
     def ingest_results(self, results, collection_complete=True, coverage_nodes=None):
         self.calls.append((results, collection_complete, coverage_nodes))
@@ -14,6 +20,26 @@ class FakeStore:
 
 
 class AuthUsageCollectorTests(unittest.TestCase):
+    def test_start_preserves_coverage_until_a_real_collection_gap(self):
+        class FakeThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+        store = FakeStore()
+        collector = AuthUsageCollector(
+            store=store,
+            nodes=[{"name": "node-a", "url": "http://127.0.0.1:8317"}],
+            management_key="secret",
+        )
+
+        with patch("auth_usage_collector.threading.Thread", FakeThread):
+            self.assertTrue(collector.start())
+
+        self.assertEqual(store.reset_calls, [])
+
     def test_agent_builds_single_local_node_collector(self):
         from auth_usage_agent import build_collector
 

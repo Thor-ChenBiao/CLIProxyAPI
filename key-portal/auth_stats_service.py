@@ -22,6 +22,7 @@ class AuthStatsService:
         parse_detail_time_utc,
         build_token_breakdown,
         usage_snapshot_loader=None,
+        quota_usage_loader=None,
     ):
         self.portal_state = portal_state
         self.nodes = nodes
@@ -33,6 +34,7 @@ class AuthStatsService:
         self.parse_detail_time_utc = parse_detail_time_utc
         self.build_token_breakdown = build_token_breakdown
         self.usage_snapshot_loader = usage_snapshot_loader
+        self.quota_usage_loader = quota_usage_loader
         self.stats_cache = {"data": None, "last_update": 0, "ttl": 15, "refreshing": False}
         self.stats_cache_lock = threading.Lock()
         self.quota_fetch_cache = {"data": {}, "ttl": 1800}
@@ -152,6 +154,42 @@ class AuthStatsService:
         if not parsed:
             return None
         return sorted(parsed, key=lambda item: item.get("remaining_percent", 101))[0]
+
+    @staticmethod
+    def _quota_window_key(window_seconds, fallback):
+        seconds = int(window_seconds or 0)
+        if seconds >= 24 * 3600:
+            return "last_7d"
+        if seconds > 0:
+            return "last_5h"
+        return fallback
+
+    def _codex_quota_windows(self, rate_limit):
+        windows = {"last_5h": None, "last_7d": None}
+        candidates = (
+            (rate_limit.get("primary_window") or rate_limit.get("primaryWindow"), "last_5h"),
+            (rate_limit.get("secondary_window") or rate_limit.get("secondaryWindow"), "last_7d"),
+        )
+        for raw_window, fallback in candidates:
+            parsed = self._quota_window_from_used_percent(raw_window, "原生额度窗口")
+            if not parsed:
+                continue
+            window_key = self._quota_window_key(parsed.get("limit_window_seconds"), fallback)
+            parsed["limit_label"] = "7d 原生窗口" if window_key == "last_7d" else "5h 原生窗口"
+            current = windows.get(window_key)
+            if current is None or parsed.get("remaining_percent", 101) < current.get("remaining_percent", 101):
+                windows[window_key] = parsed
+        return windows
+
+    @staticmethod
+    def _preferred_quota_window(windows):
+        if not isinstance(windows, dict):
+            return "", {}
+        if windows.get("last_7d"):
+            return "last_7d", windows["last_7d"]
+        if windows.get("last_5h"):
+            return "last_5h", windows["last_5h"]
+        return "", {}
 
     def _quota_cache_key(self, auth_file):
         return "|".join([
@@ -311,18 +349,13 @@ class AuthStatsService:
         quota_type = str(snapshot.get("type") or provider).strip().lower()
         if quota_type == "codex":
             rate_limit = payload.get("rate_limit") or payload.get("rateLimit") or {}
-            primary = rate_limit.get("primary_window") or rate_limit.get("primaryWindow")
-            secondary = rate_limit.get("secondary_window") or rate_limit.get("secondaryWindow")
             return {
                 "status": "success",
                 "provider": "codex",
                 "plan_type": payload.get("plan_type") or payload.get("planType") or auth_file.get("plan_type") or "",
                 "fetched_at": snapshot.get("fetched_at") or "",
                 "source": "proxy_snapshot",
-                "windows": {
-                    "last_5h": self._quota_window_from_used_percent(primary, "5h 原生窗口"),
-                    "last_7d": self._quota_window_from_used_percent(secondary, "7d 原生窗口"),
-                },
+                "windows": self._codex_quota_windows(rate_limit),
             }
         if quota_type == "claude":
             return {
@@ -358,16 +391,87 @@ class AuthStatsService:
             return ordered[middle]
         return (ordered[middle - 1] + ordered[middle]) / 2
 
+    def attach_aligned_quota_usage(self, stats):
+        if not self.quota_usage_loader:
+            return []
+        requests = []
+        stat_by_key = {}
+        now = datetime.utcnow()
+        for stat in stats.values():
+            if stat.get("disabled") or stat.get("unavailable"):
+                continue
+            source_window, bucket = self._preferred_quota_window(
+                (stat.get("quota") or {}).get("windows") or {}
+            )
+            reset_at = self.parse_detail_time_utc(bucket.get("reset_at"))
+            window_seconds = int(bucket.get("limit_window_seconds") or 0)
+            node = str(stat.get("node") or "").strip()
+            auth_index = str(stat.get("auth_index") or "").strip()
+            if not source_window or not reset_at or window_seconds <= 0 or not node or not auth_index:
+                continue
+            start_at = reset_at - timedelta(seconds=window_seconds)
+            end_at = min(reset_at, now)
+            if end_at <= start_at:
+                continue
+            key = f"{node}|{auth_index}"
+            stat_by_key[key] = (stat, source_window, reset_at, window_seconds)
+            requests.append({
+                "node": node,
+                "auth_index": auth_index,
+                "start_at": start_at.isoformat() + "Z",
+                "end_at": end_at.isoformat() + "Z",
+            })
+        if not requests:
+            return []
+        try:
+            aligned_by_key = self.quota_usage_loader(requests) or {}
+        except Exception as exc:
+            return [{"node": "cluster", "error": f"quota-aligned usage unavailable: {exc}"}]
+        for key, aligned in aligned_by_key.items():
+            item = stat_by_key.get(key)
+            if not item or not isinstance(aligned, dict):
+                continue
+            stat, source_window, reset_at, window_seconds = item
+            stat["_aligned_quota_usage"] = {
+                **aligned,
+                "source_window": source_window,
+                "reset_at": reset_at.isoformat() + "Z",
+                "window_seconds": window_seconds,
+            }
+        return []
+
     def apply_quota_window_usage(self, stats):
         for stat in stats.values():
             windows = (stat.get("quota") or {}).get("windows") or {}
-            source_window = "last_7d" if windows.get("last_7d") else "last_5h"
-            bucket = windows.get(source_window) or {}
+            source_window, bucket = self._preferred_quota_window(windows)
             reset_at = self.parse_detail_time_utc(bucket.get("reset_at"))
             window_seconds = int(bucket.get("limit_window_seconds") or 0)
             details = stat.get("_quota_usage_details") or []
             if not window_seconds:
                 stat["quota_window"] = {"tokens": 0, "requests": 0}
+                continue
+            aligned = stat.get("_aligned_quota_usage")
+            if isinstance(aligned, dict):
+                observed_start = self.parse_detail_time_utc(aligned.get("observed_start_at"))
+                observed_end = self.parse_detail_time_utc(aligned.get("observed_end_at"))
+                start = self.parse_detail_time_utc(aligned.get("start_at"))
+                end = reset_at or self.parse_detail_time_utc(aligned.get("end_at")) or datetime.utcnow()
+                coverage_seconds = int(aligned.get("coverage_seconds", 0) or 0)
+                required_seconds = int(aligned.get("required_seconds", 0) or 0)
+                stat["quota_window"] = {
+                    "tokens": int(aligned.get("tokens", 0) or 0),
+                    "requests": int(aligned.get("requests", 0) or 0),
+                    "start_at": start.isoformat() + "Z" if start else "",
+                    "reset_at": end.isoformat() + "Z",
+                    "observed_start_at": observed_start.isoformat() + "Z" if observed_start else "",
+                    "observed_end_at": observed_end.isoformat() + "Z" if observed_end else "",
+                    "observed_seconds": coverage_seconds,
+                    "coverage_seconds": coverage_seconds,
+                    "required_seconds": required_seconds,
+                    "complete": bool(aligned.get("complete")),
+                    "aligned": True,
+                    "source_window": source_window,
+                }
                 continue
             persisted = (stat.get("_quota_usage_windows") or {}).get(source_window)
             if isinstance(persisted, dict):
@@ -384,6 +488,8 @@ class AuthStatsService:
                     "observed_start_at": observed_start.isoformat() + "Z" if observed_start else "",
                     "observed_end_at": observed_end.isoformat() + "Z" if observed_end else "",
                     "observed_seconds": observed_seconds,
+                    "coverage_seconds": int(persisted.get("coverage_seconds", 0) or 0),
+                    "complete": bool(persisted.get("complete", False)),
                     "source_window": source_window,
                 }
                 continue
@@ -408,37 +514,61 @@ class AuthStatsService:
             }
 
     def build_today_quota_usage(self, stats, today, today_used_tokens=None):
-        account_count = len(stats)
+        all_stats = list(stats.values())
+        usable_stats = [
+            stat for stat in all_stats
+            if not stat.get("disabled") and not stat.get("unavailable")
+        ]
+        account_count = len(usable_stats)
+        total_account_count = len(all_stats)
+        disabled_account_count = sum(bool(stat.get("disabled")) for stat in all_stats)
+        unavailable_account_count = sum(
+            bool(stat.get("unavailable")) and not stat.get("disabled")
+            for stat in all_stats
+        )
         if today_used_tokens is None:
-            today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in stats.values())
+            today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in all_stats)
         else:
             today_used_tokens = int(today_used_tokens or 0)
         candidates = []
         source_windows = set()
         candidate_daily_limits = []
         candidate_window_limits = []
+        native_used_percents = []
+        native_source_windows = set()
+        native_window_seconds = set()
+        native_reset_times = []
         quota_snapshot_count = 0
         quota_window_usage_count = 0
         partial_history_count = 0
-        for stat in stats.values():
+        for stat in usable_stats:
             quota_window = stat.get("quota_window") or {}
             quota_window_tokens = int(quota_window.get("tokens", 0) or 0)
             windows = (stat.get("quota") or {}).get("windows") or {}
-            bucket = windows.get("last_7d") or windows.get("last_5h") or {}
+            source_window, bucket = self._preferred_quota_window(windows)
             if bucket:
                 quota_snapshot_count += 1
             if quota_window_tokens > 0:
                 quota_window_usage_count += 1
             used_percent = self._number_or_none(bucket.get("used_percent"))
             window_seconds = self._number_or_none(bucket.get("limit_window_seconds")) or 0
-            observed_seconds = self._number_or_none(quota_window.get("observed_seconds")) or 0
-            coverage_ratio = observed_seconds / window_seconds if window_seconds else 0
-            # Provider quota percentages describe the whole native window (often 7d),
-            # but v7.1.29 local queue history starts only when Key Portal consumes it.
-            # Do not infer full-account limits from a partial local history window.
-            if quota_window_tokens > 0 and window_seconds > 0 and coverage_ratio < 0.8:
+            if used_percent is not None and 0 <= used_percent <= 100:
+                native_used_percents.append(used_percent)
+                if source_window:
+                    native_source_windows.add(source_window)
+                if window_seconds > 0:
+                    native_window_seconds.add(int(window_seconds))
+                reset_at = self.parse_detail_time_utc(bucket.get("reset_at"))
+                if reset_at:
+                    native_reset_times.append(reset_at)
+            complete = quota_window.get("complete")
+            if complete is None:
+                observed_seconds = self._number_or_none(quota_window.get("observed_seconds")) or 0
+                coverage_ratio = observed_seconds / window_seconds if window_seconds else 0
+                complete = coverage_ratio >= 0.8
+            if quota_window_tokens > 0 and window_seconds > 0 and not complete:
                 partial_history_count += 1
-            if quota_window_tokens <= 0 or used_percent is None or used_percent < 1 or window_seconds <= 0 or coverage_ratio < 0.8:
+            if quota_window_tokens <= 0 or used_percent is None or used_percent < 1 or window_seconds <= 0 or not complete:
                 continue
             window_limit = quota_window_tokens / (used_percent / 100)
             daily_limit = window_limit * 86400 / window_seconds
@@ -447,13 +577,16 @@ class AuthStatsService:
             if math.isfinite(window_limit) and window_limit > 0:
                 candidate_window_limits.append(window_limit)
                 candidates.append(window_limit)
-                source_windows.add(quota_window.get("source_window") or ("last_7d" if windows.get("last_7d") else "last_5h"))
+                source_windows.add(quota_window.get("source_window") or source_window)
         single_account_window_limit = int(round(self._median(candidate_window_limits))) if candidate_window_limits else 0
         single_account_daily_limit = int(round(self._median(candidate_daily_limits))) if candidate_daily_limits else 0
         min_inferred_samples = min(account_count, max(3, math.ceil(account_count * 0.2))) if account_count else 0
         has_enough_samples = len(candidates) >= min_inferred_samples if min_inferred_samples else False
+        has_enough_native_samples = len(native_used_percents) >= min_inferred_samples if min_inferred_samples else False
         total_daily_limit = account_count * single_account_daily_limit if has_enough_samples and single_account_daily_limit else 0
         usage_ratio = round(today_used_tokens / total_daily_limit, 6) if total_daily_limit else 0
+        native_usage_percent = round(sum(native_used_percents) / len(native_used_percents), 2) if native_used_percents else 0
+        native_usage_ratio = round(native_usage_percent / 100, 6) if native_used_percents else 0
         source = "unavailable"
         inference_status = "success" if candidates else "missing_quota_snapshot"
         if candidates:
@@ -466,11 +599,19 @@ class AuthStatsService:
             inference_status = "missing_quota_window_usage"
         elif quota_snapshot_count:
             inference_status = "insufficient_quota_window_percent"
+        native_inference_status = "success" if has_enough_native_samples else "missing_quota_snapshot"
+        if native_used_percents and not has_enough_native_samples:
+            native_inference_status = "insufficient_sample_size"
+        native_reset_at = min(native_reset_times).isoformat() + "Z" if native_reset_times else ""
+        native_reset_at_latest = max(native_reset_times).isoformat() + "Z" if native_reset_times else ""
         return {
             "date": today,
             "today_used_tokens": today_used_tokens,
             "account_count": account_count,
-            "account_count_source": "auth_files",
+            "total_account_count": total_account_count,
+            "disabled_account_count": disabled_account_count,
+            "unavailable_account_count": unavailable_account_count,
+            "account_count_source": "usable_auth_files",
             "single_account_daily_token_limit": single_account_daily_limit,
             "single_account_daily_token_limit_source": source,
             "single_account_window_token_limit": single_account_window_limit,
@@ -488,6 +629,20 @@ class AuthStatsService:
             "quota_window_usage_count": quota_window_usage_count,
             "partial_history_count": partial_history_count,
             "inference_status": inference_status,
+            "native_quota_configured": has_enough_native_samples,
+            "native_inference_status": native_inference_status,
+            "native_usage_ratio": native_usage_ratio,
+            "native_usage_percent": native_usage_percent,
+            "native_remaining_percent": round(max(0, 100 - native_usage_percent), 2) if native_used_percents else 0,
+            "native_usage_percent_median": round(self._median(native_used_percents), 2) if native_used_percents else 0,
+            "native_usage_percent_min": round(min(native_used_percents), 2) if native_used_percents else 0,
+            "native_usage_percent_max": round(max(native_used_percents), 2) if native_used_percents else 0,
+            "native_inferred_account_count": len(native_used_percents),
+            "native_source_windows": sorted(native_source_windows),
+            "native_window_seconds": next(iter(native_window_seconds)) if len(native_window_seconds) == 1 else 0,
+            "native_window_seconds_values": sorted(native_window_seconds),
+            "native_reset_at": native_reset_at,
+            "native_reset_at_latest": native_reset_at_latest,
         }
 
     def _refresh_today_quota_usage_from_summary(self, result):
@@ -931,6 +1086,7 @@ class AuthStatsService:
                     summary[window_name]["complete"] = coverage_seconds >= required_seconds
                     summary[window_name]["coverage_seconds"] = min(coverage_seconds, required_seconds)
 
+        quota_usage_errors = self.attach_aligned_quota_usage(stats)
         self.apply_quota_window_usage(stats)
         if usage_snapshot is not None:
             today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in stats.values())
@@ -940,13 +1096,14 @@ class AuthStatsService:
         for stat in stats.values():
             stat.pop("_quota_usage_details", None)
             stat.pop("_quota_usage_windows", None)
+            stat.pop("_aligned_quota_usage", None)
 
         return {
             "auth_files": sorted(stats.values(), key=lambda x: (x["node"], x["account"])),
             "nodes": node_summary,
             "configured_nodes": self.configured_nodes(),
             "today_quota_usage": today_quota_usage,
-            "errors": (usage_snapshot.get("errors", []) if usage_snapshot is not None else usage_payload.get("node_errors", [])) + auth_errors + quota_errors,
+            "errors": (usage_snapshot.get("errors", []) if usage_snapshot is not None else usage_payload.get("node_errors", [])) + auth_errors + quota_errors + quota_usage_errors,
             "coverage_seconds": int((usage_snapshot or {}).get("coverage_seconds", 0) or 0),
             "continuous_since": (usage_snapshot or {}).get("continuous_since", ""),
             "generated_at": (usage_snapshot or {}).get("generated_at") or datetime.utcnow().isoformat() + "Z",

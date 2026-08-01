@@ -151,6 +151,117 @@ class AuthUsageStore:
             conn.commit()
         return True
 
+    def load_quota_windows(self, requests):
+        """Return usage aligned to provider quota windows."""
+        if not self.ensure_schema():
+            return {}
+        normalized = {}
+        for request in requests or []:
+            if not isinstance(request, dict):
+                continue
+            node = str(request.get("node") or "").strip()
+            auth_index = str(request.get("auth_index") or request.get("authIndex") or "").strip()
+            start_at = self._timestamp(request.get("start_at"))
+            end_at = self._timestamp(request.get("end_at"))
+            if not node or not auth_index or not start_at or not end_at or end_at <= start_at:
+                continue
+            normalized[(node, auth_index)] = {
+                "node": node,
+                "auth_index": auth_index,
+                "start_at": start_at,
+                "end_at": end_at,
+            }
+        if not normalized:
+            return {}
+
+        values_sql = ", ".join(
+            ["(%s, %s, %s::timestamptz, %s::timestamptz)"] * len(normalized)
+        )
+        params = []
+        for item in normalized.values():
+            params.extend([
+                item["node"],
+                item["auth_index"],
+                item["start_at"],
+                item["end_at"],
+            ])
+        sql = f"""
+WITH requested(node, auth_index, start_at, end_at) AS (
+    VALUES {values_sql}
+), aggregated AS (
+    SELECT
+        requested.node,
+        requested.auth_index,
+        requested.start_at,
+        requested.end_at,
+        coalesce(sum(usage.requests), 0)::bigint AS requests,
+        coalesce(sum(usage.tokens), 0)::bigint AS tokens,
+        min(usage.bucket_start) AS observed_start_at,
+        max(usage.last_request_at) AS observed_end_at
+    FROM requested
+    LEFT JOIN key_portal_auth_usage_minute usage
+      ON usage.node = requested.node
+     AND usage.auth_index = requested.auth_index
+     AND usage.bucket_start >= requested.start_at
+     AND usage.bucket_start <= requested.end_at
+    GROUP BY requested.node, requested.auth_index, requested.start_at, requested.end_at
+)
+SELECT
+    aggregated.*,
+    node_state.continuous_since,
+    node_state.last_collected_at,
+    now() AS now_utc
+FROM aggregated
+LEFT JOIN key_portal_auth_usage_node_state node_state
+  ON node_state.node = aggregated.node
+ORDER BY aggregated.node, aggregated.auth_index;
+"""
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET LOCAL statement_timeout = 30000")
+                cursor.execute(sql, params)
+                rows = [dict(row) for row in cursor.fetchall()]
+
+        result = {}
+        for row in rows:
+            now_utc = row.get("now_utc") or datetime.now(UTC)
+            start_at = row.get("start_at")
+            end_at = min(row.get("end_at") or now_utc, now_utc)
+            continuous_since = row.get("continuous_since")
+            last_collected_at = row.get("last_collected_at")
+            collector_current = bool(
+                last_collected_at
+                and (now_utc - last_collected_at).total_seconds() <= 10
+            )
+            complete = bool(
+                collector_current
+                and continuous_since
+                and start_at
+                and continuous_since <= start_at
+            )
+            required_seconds = max(0, int((end_at - start_at).total_seconds())) if start_at else 0
+            coverage_start = max(start_at, continuous_since) if start_at and continuous_since else None
+            coverage_end = min(end_at, last_collected_at) if last_collected_at else None
+            coverage_seconds = max(
+                0,
+                int((coverage_end - coverage_start).total_seconds()),
+            ) if collector_current and coverage_start and coverage_end and coverage_end >= coverage_start else 0
+            key = f"{row.get('node', '')}|{row.get('auth_index', '')}"
+            result[key] = {
+                "node": row.get("node", ""),
+                "auth_index": row.get("auth_index", ""),
+                "start_at": start_at.isoformat().replace("+00:00", "Z") if start_at else "",
+                "end_at": end_at.isoformat().replace("+00:00", "Z") if end_at else "",
+                "requests": int(row.get("requests", 0) or 0),
+                "tokens": int(row.get("tokens", 0) or 0),
+                "observed_start_at": row.get("observed_start_at").isoformat().replace("+00:00", "Z") if row.get("observed_start_at") else "",
+                "observed_end_at": row.get("observed_end_at").isoformat().replace("+00:00", "Z") if row.get("observed_end_at") else "",
+                "coverage_seconds": coverage_seconds,
+                "required_seconds": required_seconds,
+                "complete": complete,
+            }
+        return result
+
     @staticmethod
     def _timestamp(value):
         text = str(value or "").strip()

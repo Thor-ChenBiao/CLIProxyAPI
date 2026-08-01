@@ -794,13 +794,19 @@
         }
 
         function renderTodayQuotaCard(q) {
-            const configured = Boolean(q?.configured);
+            const capacityConfigured = Boolean(q?.configured);
+            const nativeConfigured = Boolean(q?.native_quota_configured);
             const used = Number(q?.today_used_tokens || 0);
-            const total = Number(q?.total_daily_token_limit || 0);
-            const percent = Number(q?.usage_percent || 0);
+            const capacityPercent = Number(q?.usage_percent || 0);
+            const nativePercent = Number(q?.native_usage_percent || 0);
+            const nativeRemaining = Number(q?.native_remaining_percent || 0);
             const accountCount = Number(q?.account_count || 0);
+            const totalAccountCount = Number(q?.total_account_count || accountCount);
+            const disabledAccountCount = Number(q?.disabled_account_count || 0);
+            const unavailableAccountCount = Number(q?.unavailable_account_count || 0);
             const dailyLimit = Number(q?.single_account_daily_token_limit || 0);
             const inferredCount = Number(q?.inferred_account_count || 0);
+            const nativeCount = Number(q?.native_inferred_account_count || 0);
             const minSamples = Number(q?.min_inferred_samples || 0);
             const minLimit = Number(q?.inferred_daily_token_limit_min || 0);
             const maxLimit = Number(q?.inferred_daily_token_limit_max || 0);
@@ -809,47 +815,55 @@
                 ? ` · 窗口 ${sourceWindows.map(name => name === 'last_7d' ? '7天' : (name === 'last_5h' ? '5小时' : name)).join('/')}`
                 : '';
             const quotaSnapshotCount = Number(q?.quota_snapshot_count || 0);
-            const quotaWindowUsageCount = Number(q?.quota_window_usage_count || 0);
             const partialHistoryCount = Number(q?.partial_history_count || 0);
             const inferenceStatus = q?.inference_status || '';
+            const nativeInferenceStatus = q?.native_inference_status || '';
             const insufficientSamples = inferenceStatus === 'insufficient_sample_size';
             const insufficientHistory = inferenceStatus === 'insufficient_history_coverage';
-            const percentClass = configured && percent >= 90 ? 'danger' : (configured && percent >= 70 ? 'warn' : '');
-            const sourceText = configured
-                ? `${formatNumberFull(accountCount)} 个认证文件 · 单号日额度 ${formatCompactNumber(dailyLimit)}`
-                : `${formatNumberFull(accountCount)} 个认证文件 · 暂不推算单号日额度`;
-            const statusText = insufficientSamples
-                ? `有效推算样本 ${formatNumberFull(inferredCount)} 个，低于最低 ${formatNumberFull(minSamples)} 个；暂不推算总额度占用`
+            const nativeWindowSeconds = Number(q?.native_window_seconds || 0);
+            const nativeWindowText = nativeWindowSeconds >= 86400
+                ? `${Math.round(nativeWindowSeconds / 86400)} 天窗口`
+                : (nativeWindowSeconds > 0 ? `${Math.round(nativeWindowSeconds / 3600)} 小时窗口` : '原生窗口');
+            const nativeResetText = q?.native_reset_at ? formatDateTime(q.native_reset_at) : '未知';
+            const percentClass = nativeConfigured && nativePercent >= 90 ? 'danger' : (nativeConfigured && nativePercent >= 70 ? 'warn' : '');
+            const accountText = `${formatNumberFull(accountCount)} 个可用 · ${formatNumberFull(disabledAccountCount)} 个禁用${unavailableAccountCount ? ` · ${formatNumberFull(unavailableAccountCount)} 个不可用` : ''}`;
+            const capacityStatusText = insufficientSamples
+                ? `容量推算样本 ${formatNumberFull(inferredCount)} 个，低于最低 ${formatNumberFull(minSamples)} 个`
                 : (insufficientHistory
-                    ? `本地用量历史只覆盖了 ${formatNumberFull(partialHistoryCount)} 个账号的部分窗口；需要先积累接近完整额度窗口后再推算总额度占用`
+                    ? `${formatNumberFull(partialHistoryCount)} 个账号的固定额度窗口数据尚未完整覆盖`
                     : (inferenceStatus === 'missing_quota_window_usage'
-                        ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但本地窗口用量不足`
+                        ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但对齐窗口用量不足`
                         : (inferenceStatus === 'insufficient_quota_window_percent'
                             ? `已有 ${formatNumberFull(quotaSnapshotCount)} 个额度快照，但缺少有效占用百分比`
-                            : `proxy 认证文件列表未返回可推算额度快照，当前快照样本 ${formatNumberFull(quotaSnapshotCount)} 个`)));
-            const inferredText = configured
-                ? `基于 ${formatNumberFull(inferredCount)} 个账号 proxy 额度快照推算${sourceWindowText}${minLimit && maxLimit ? ` · 单号日额度范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
-                : `${statusText}；不由 Key Portal 主动查询 provider 原生额度`;
-            const totalDisplay = configured ? formatPercent(percent) : '样本不足';
-            const totalHint = configured ? `${formatCompactNumber(used)} / ${formatCompactNumber(total)}` : statusText;
+                            : `当前容量辅助样本 ${formatNumberFull(inferredCount)} 个`)));
+            const capacityText = capacityConfigured
+                ? `今日占日均容量 ${formatPercent(capacityPercent)} · 单号日容量 ${formatCompactNumber(dailyLimit)}${sourceWindowText}${minLimit && maxLimit ? ` · 范围 ${formatCompactNumber(minLimit)}-${formatCompactNumber(maxLimit)}` : ''}`
+                : capacityStatusText;
+            const nativeStatusText = nativeConfigured
+                ? `${formatNumberFull(nativeCount)} 个可用账号 proxy 原生快照 · 剩余 ${formatPercent(nativeRemaining)} · ${nativeWindowText}`
+                : (nativeInferenceStatus === 'insufficient_sample_size'
+                    ? `原生快照 ${formatNumberFull(nativeCount)} 个，低于最低 ${formatNumberFull(minSamples)} 个`
+                    : `proxy 未返回足够的原生额度快照`);
+            const totalDisplay = nativeConfigured ? formatPercent(nativePercent) : '样本不足';
+            const totalHint = nativeConfigured ? nativeStatusText : `认证文件 ${formatNumberFull(totalAccountCount)} 个 · ${nativeStatusText}`;
             return `<div class="node-card">
-                <h3>今日预估额度消耗 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
+                <h3>额度概览 <span class="node-pill">${escapeHtml(q?.date || '-')}</span></h3>
                 <div class="node-overview">
                     <div class="node-health">
                         <span>今日已用 Tokens</span>
                         <strong>${formatCompactNumber(used)}</strong>
-                        <small title="${formatNumberFull(used)}">${escapeHtml(sourceText)}</small>
+                        <small title="${formatNumberFull(used)}">${escapeHtml(accountText)}</small>
                     </div>
                     <div class="node-risk">
-                        <span>总额度占用</span>
+                        <span>当前原生额度占用</span>
                         <div class="node-failure ${percentClass}"><strong>${totalDisplay}</strong></div>
                         <small title="${escapeHtml(totalHint)}">${escapeHtml(totalHint)}</small>
                     </div>
                 </div>
                 <div class="node-mini-grid">
-                    <div class="node-mini"><span>推算样本</span><strong>${formatNumberFull(inferredCount)} / 最低 ${formatNumberFull(minSamples)}</strong></div>
-                    <div class="node-mini"><span>额度快照 / 窗口用量</span><strong>${formatNumberFull(quotaSnapshotCount)} / ${formatNumberFull(quotaWindowUsageCount)}</strong></div>
-                    <div class="node-mini"><span>推算说明</span><strong title="${escapeHtml(inferredText)}">${escapeHtml(inferredText)}</strong></div>
+                    <div class="node-mini"><span>原生快照</span><strong>${formatNumberFull(nativeCount)} / 最低 ${formatNumberFull(minSamples)}</strong></div>
+                    <div class="node-mini"><span>下次重置</span><strong>${escapeHtml(nativeResetText)}</strong></div>
+                    <div class="node-mini"><span>Token 容量辅助估算</span><strong title="${escapeHtml(capacityText)}">${escapeHtml(capacityText)}</strong></div>
                 </div>
             </div>`;
         }

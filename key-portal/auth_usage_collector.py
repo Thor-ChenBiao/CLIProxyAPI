@@ -153,7 +153,6 @@ class AuthUsageCollector:
         if self.started:
             return False
         self.started = True
-        self.store.reset_collection_coverage(self.node_names)
         for node in self.nodes:
             thread = threading.Thread(
                 target=self._subscribe_node,

@@ -3849,6 +3849,7 @@ auth_stats = auth_stats_service.AuthStatsService(
     parse_detail_time_utc=parse_detail_time_utc,
     build_token_breakdown=build_token_breakdown,
     usage_snapshot_loader=auth_usage.load_snapshot,
+    quota_usage_loader=auth_usage.load_quota_windows,
 )
 
 
