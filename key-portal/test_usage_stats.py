@@ -251,6 +251,8 @@ class AuthStatsTests(unittest.TestCase):
         self.assertIn("coverage_seconds", template)
         self.assertIn("当前原生额度占用", template)
         self.assertIn("native_usage_percent", template)
+        self.assertIn("按历史用量预计还能用", template)
+        self.assertIn("runway_hours_remaining", template)
         self.assertIn("Token 容量辅助估算", template)
 
     def test_duplicate_auth_index_and_account_are_matched_by_node(self):
@@ -469,6 +471,86 @@ class AuthStatsTests(unittest.TestCase):
         self.assertTrue(result["configured"])
         self.assertEqual(result["single_account_window_token_limit"], 1_000_000)
         self.assertEqual(result["inferred_account_count"], 1)
+
+    def test_runway_estimate_uses_recent_burn_rate_and_remaining_quota(self):
+        service = self.auth_stats_service()
+        now = datetime(2026, 8, 1, 0, 0, 0)
+        stats = {}
+        for index in range(10):
+            stats[str(index)] = {
+                "disabled": False,
+                "unavailable": False,
+                "today": {"tokens": 100},
+                "last_24h": {"tokens": 2400},
+                "quota_window": {
+                    "tokens": 6000,
+                    "complete": True,
+                    "source_window": "last_7d",
+                },
+                "quota": {
+                    "windows": {
+                        "last_7d": {
+                            "used_percent": 60,
+                            "limit_window_seconds": 7 * 24 * 3600,
+                            "reset_at": "2026-08-03T00:00:00Z",
+                        },
+                    },
+                },
+            }
+
+        result = service.build_today_quota_usage(
+            stats,
+            "2026-08-01",
+            1000,
+            history_coverage_seconds=24 * 3600,
+            now=now,
+        )
+
+        self.assertEqual(result["runway_status"], "success")
+        self.assertEqual(result["runway_history_tokens"], 24_000)
+        self.assertEqual(result["runway_remaining_tokens"], 40_000)
+        self.assertEqual(result["runway_burn_tokens_per_hour"], 1000)
+        self.assertEqual(result["runway_hours_remaining"], 40)
+        self.assertEqual(result["runway_hours_until_reset"], 48)
+        self.assertFalse(result["runway_will_last_until_reset"])
+        self.assertEqual(result["runway_margin_hours"], -8)
+        self.assertEqual(result["runway_exhaust_at"], "2026-08-02T16:00:00Z")
+
+    def test_runway_estimate_requires_a_complete_24_hour_history(self):
+        service = self.auth_stats_service()
+        stats = {
+            "account-a": {
+                "disabled": False,
+                "unavailable": False,
+                "today": {"tokens": 100},
+                "last_24h": {"tokens": 2400},
+                "quota_window": {
+                    "tokens": 5000,
+                    "complete": True,
+                    "source_window": "last_7d",
+                },
+                "quota": {
+                    "windows": {
+                        "last_7d": {
+                            "used_percent": 50,
+                            "limit_window_seconds": 7 * 24 * 3600,
+                            "reset_at": "2026-08-03T00:00:00Z",
+                        },
+                    },
+                },
+            },
+        }
+
+        result = service.build_today_quota_usage(
+            stats,
+            "2026-08-01",
+            100,
+            history_coverage_seconds=5 * 3600,
+            now=datetime(2026, 8, 1, 0, 0, 0),
+        )
+
+        self.assertEqual(result["runway_status"], "insufficient_history_coverage")
+        self.assertEqual(result["runway_hours_remaining"], 0)
 
     def test_today_quota_usage_does_not_extrapolate_from_one_sample(self):
         service = self.auth_stats_service()

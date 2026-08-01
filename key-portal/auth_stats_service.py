@@ -513,7 +513,15 @@ class AuthStatsService:
                 "source_window": source_window,
             }
 
-    def build_today_quota_usage(self, stats, today, today_used_tokens=None):
+    def build_today_quota_usage(
+        self,
+        stats,
+        today,
+        today_used_tokens=None,
+        history_coverage_seconds=0,
+        now=None,
+    ):
+        now = now or datetime.utcnow()
         all_stats = list(stats.values())
         usable_stats = [
             stat for stat in all_stats
@@ -535,6 +543,7 @@ class AuthStatsService:
         candidate_daily_limits = []
         candidate_window_limits = []
         native_used_percents = []
+        native_remaining_ratios = []
         native_source_windows = set()
         native_window_seconds = set()
         native_reset_times = []
@@ -554,6 +563,7 @@ class AuthStatsService:
             window_seconds = self._number_or_none(bucket.get("limit_window_seconds")) or 0
             if used_percent is not None and 0 <= used_percent <= 100:
                 native_used_percents.append(used_percent)
+                native_remaining_ratios.append(max(0, 1 - used_percent / 100))
                 if source_window:
                     native_source_windows.add(source_window)
                 if window_seconds > 0:
@@ -604,6 +614,47 @@ class AuthStatsService:
             native_inference_status = "insufficient_sample_size"
         native_reset_at = min(native_reset_times).isoformat() + "Z" if native_reset_times else ""
         native_reset_at_latest = max(native_reset_times).isoformat() + "Z" if native_reset_times else ""
+        runway_history_window_seconds = 24 * 3600
+        runway_history_coverage_seconds = max(0, int(history_coverage_seconds or 0))
+        runway_history_tokens = sum(
+            int((stat.get("last_24h") or {}).get("tokens", 0) or 0)
+            for stat in all_stats
+        )
+        runway_status = "success"
+        runway_remaining_tokens = 0
+        runway_burn_tokens_per_hour = 0
+        runway_hours_remaining = 0
+        runway_exhaust_at = ""
+        runway_hours_until_reset = 0
+        runway_will_last_until_reset = None
+        runway_margin_hours = 0
+        if not has_enough_native_samples:
+            runway_status = "missing_quota_snapshot"
+        elif not has_enough_samples or not single_account_window_limit:
+            runway_status = "missing_capacity_estimate"
+        elif len(native_window_seconds) != 1:
+            runway_status = "mixed_quota_windows"
+        elif runway_history_coverage_seconds < runway_history_window_seconds:
+            runway_status = "insufficient_history_coverage"
+        elif runway_history_tokens <= 0:
+            runway_status = "no_recent_usage"
+        else:
+            runway_remaining_tokens = int(round(
+                single_account_window_limit * sum(native_remaining_ratios)
+            ))
+            runway_burn_tokens_per_hour = runway_history_tokens / 24
+            if runway_burn_tokens_per_hour > 0:
+                runway_hours_remaining = runway_remaining_tokens / runway_burn_tokens_per_hour
+                runway_exhaust_at = (
+                    now + timedelta(hours=runway_hours_remaining)
+                ).isoformat() + "Z"
+                future_reset_times = [reset_at for reset_at in native_reset_times if reset_at > now]
+                if future_reset_times:
+                    runway_hours_until_reset = (
+                        min(future_reset_times) - now
+                    ).total_seconds() / 3600
+                    runway_will_last_until_reset = runway_hours_remaining >= runway_hours_until_reset
+                    runway_margin_hours = runway_hours_remaining - runway_hours_until_reset
         return {
             "date": today,
             "today_used_tokens": today_used_tokens,
@@ -643,6 +694,17 @@ class AuthStatsService:
             "native_window_seconds_values": sorted(native_window_seconds),
             "native_reset_at": native_reset_at,
             "native_reset_at_latest": native_reset_at_latest,
+            "runway_status": runway_status,
+            "runway_history_window_seconds": runway_history_window_seconds,
+            "runway_history_coverage_seconds": runway_history_coverage_seconds,
+            "runway_history_tokens": runway_history_tokens,
+            "runway_remaining_tokens": runway_remaining_tokens,
+            "runway_burn_tokens_per_hour": int(round(runway_burn_tokens_per_hour)),
+            "runway_hours_remaining": round(runway_hours_remaining, 2),
+            "runway_exhaust_at": runway_exhaust_at,
+            "runway_hours_until_reset": round(runway_hours_until_reset, 2),
+            "runway_will_last_until_reset": runway_will_last_until_reset,
+            "runway_margin_hours": round(runway_margin_hours, 2),
         }
 
     def _refresh_today_quota_usage_from_summary(self, result):
@@ -1092,7 +1154,12 @@ class AuthStatsService:
             today_used_tokens = sum(int((stat.get("today") or {}).get("tokens", 0) or 0) for stat in stats.values())
         else:
             today_used_tokens = int(((usage_payload.get("usage") or {}).get("tokens_by_day") or {}).get(today, 0) or 0)
-        today_quota_usage = self.build_today_quota_usage(stats, today, today_used_tokens)
+        today_quota_usage = self.build_today_quota_usage(
+            stats,
+            today,
+            today_used_tokens,
+            history_coverage_seconds=int((usage_snapshot or {}).get("coverage_seconds", 0) or 0),
+        )
         for stat in stats.values():
             stat.pop("_quota_usage_details", None)
             stat.pop("_quota_usage_windows", None)

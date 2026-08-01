@@ -825,6 +825,30 @@
                 ? `${Math.round(nativeWindowSeconds / 86400)} 天窗口`
                 : (nativeWindowSeconds > 0 ? `${Math.round(nativeWindowSeconds / 3600)} 小时窗口` : '原生窗口');
             const nativeResetText = q?.native_reset_at ? formatDateTime(q.native_reset_at) : '未知';
+            const runwayStatus = q?.runway_status || '';
+            const runwayHours = Number(q?.runway_hours_remaining || 0);
+            const runwayHistoryTokens = Number(q?.runway_history_tokens || 0);
+            const runwayRemainingTokens = Number(q?.runway_remaining_tokens || 0);
+            const runwayExhaustAt = q?.runway_exhaust_at || '';
+            const runwayWillLast = q?.runway_will_last_until_reset;
+            const runwayDurationText = runwayHours > 0 ? formatCountdown(Math.round(runwayHours * 3600)) : '已耗尽';
+            const runwayRelationText = runwayWillLast === true
+                ? '可撑到重置'
+                : (runwayWillLast === false ? '重置前可能耗尽' : '缺少重置时间');
+            const runwayText = runwayStatus === 'success'
+                ? `约 ${runwayDurationText} · ${runwayRelationText}`
+                : (runwayStatus === 'insufficient_history_coverage'
+                    ? '需积累完整 24 小时用量'
+                    : (runwayStatus === 'no_recent_usage'
+                        ? '近 24 小时无消耗'
+                        : (runwayStatus === 'mixed_quota_windows'
+                            ? '额度窗口不一致，暂不估算'
+                            : (runwayStatus === 'missing_capacity_estimate'
+                                ? 'Token 容量样本不足'
+                                : '原生额度样本不足'))));
+            const runwayHint = runwayStatus === 'success'
+                ? `按近 24 小时 ${formatCompactNumber(runwayHistoryTokens)} Tokens/天 · 剩余容量约 ${formatCompactNumber(runwayRemainingTokens)} Tokens${runwayExhaustAt ? ` · 按当前速度预计 ${formatDateTime(runwayExhaustAt)} 耗尽` : ''}`
+                : runwayText;
             const percentClass = nativeConfigured && nativePercent >= 90 ? 'danger' : (nativeConfigured && nativePercent >= 70 ? 'warn' : '');
             const accountText = `${formatNumberFull(accountCount)} 个可用 · ${formatNumberFull(disabledAccountCount)} 个禁用${unavailableAccountCount ? ` · ${formatNumberFull(unavailableAccountCount)} 个不可用` : ''}`;
             const capacityStatusText = insufficientSamples
@@ -863,6 +887,7 @@
                 <div class="node-mini-grid">
                     <div class="node-mini"><span>原生快照</span><strong>${formatNumberFull(nativeCount)} / 最低 ${formatNumberFull(minSamples)}</strong></div>
                     <div class="node-mini"><span>下次重置</span><strong>${escapeHtml(nativeResetText)}</strong></div>
+                    <div class="node-mini"><span>按历史用量预计还能用</span><strong title="${escapeHtml(runwayHint)}">${escapeHtml(runwayText)}</strong></div>
                     <div class="node-mini"><span>Token 容量辅助估算</span><strong title="${escapeHtml(capacityText)}">${escapeHtml(capacityText)}</strong></div>
                 </div>
             </div>`;
